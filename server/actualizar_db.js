@@ -8,17 +8,24 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-async function agregarColumna() {
+async function actualizarEsquema() {
     try {
-        console.log('⏳ Actualizando base de datos...');
-        // Agregamos la columna 'payment_reference' tipo TEXTO, si no existe.
+        console.log('⏳ Iniciando migración de esquema para pagos múltiples...');
+        
+        // 1. CORRECCIÓN PRINCIPAL: Modifica el tipo de dato de payment_method a TEXT 
+        // para permitir cadenas largas (múltiples métodos + referencias).
+        await pool.query("ALTER TABLE sales ALTER COLUMN payment_method TYPE TEXT;");
+        console.log('✅ ¡Éxito! Columna "payment_method" migrada a TEXT.');
+        
+        // 2. Mantenemos la adición de la columna 'payment_reference' (si no existe)
         await pool.query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_reference TEXT;");
-        console.log('✅ ¡Éxito! Columna "payment_reference" agregada.');
+        console.log('✅ ¡Éxito! Columna "payment_reference" agregada (si no existía).');
+        
     } catch (err) {
-        console.error('Error:', err.message);
+        console.error('❌ Error en la migración:', err.message);
     } finally {
         pool.end();
     }
 }
 
-agregarColumna();
+actualizarEsquema();
