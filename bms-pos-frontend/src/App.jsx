@@ -20,23 +20,27 @@ function App() {
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null); 
+  // NUEVO: Estado para el modal de captura de cliente (Crédito)
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   
-  // --- LÓGICA DE PAGO INTELIGENTE ---
+  // --- ESTADOS DE CRÉDITO Y PAGO ---
   const [paymentShares, setPaymentShares] = useState({}); 
-  // Estados para el Numpad (Teclado Numérico Táctil)
   const [isNumpadOpen, setIsNumpadOpen] = useState(false);
   const [currentMethod, setCurrentMethod] = useState('');
   const [currentInputValue, setCurrentInputValue] = useState('');
-  
-  // NUEVO: Estado para guardar las referencias bancarias
   const [paymentReferences, setPaymentReferences] = useState({});
-  // Local state para el Numpad, inicializado en el modal
   const [currentReference, setCurrentReference] = useState(''); 
-
-  // Data Dashboard
+  const [customerData, setCustomerData] = useState({ full_name: '', id_number: '', phone: '', institution: '' });
+  const [dueDays, setDueDays] = useState(15);
+  
+  // Data Dashboard y Reportes de Crédito
   const [stats, setStats] = useState({ total_usd: 0, total_ves: 0, total_transactions: 0 });
   const [recentSales, setRecentSales] = useState([]);
+  // NUEVO: Estado para créditos pendientes
+  const [pendingCredits, setPendingCredits] = useState([]); 
   const [lowStock, setLowStock] = useState([]);
+  // NUEVO: Estado para notificaciones de vencimiento
+  const [overdueCount, setOverdueCount] = useState(0); 
 
   useEffect(() => { fetchData(); }, []);
 
@@ -54,11 +58,15 @@ function App() {
       const statsRes = await axios.get(`${API_URL}/reports/daily`);
       setStats(statsRes.data);
       const recentRes = await axios.get(`${API_URL}/reports/recent-sales`);
-      
-      setRecentSales(recentRes.data); 
-      
+      setRecentSales(recentRes.data);
       const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
       setLowStock(stockRes.data);
+      
+      // NUEVO: Obtener créditos pendientes y contar vencidos
+      const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
+      setPendingCredits(creditsRes.data);
+      const overdue = creditsRes.data.filter(c => c.is_overdue).length;
+      setOverdueCount(overdue);
       
       setLoading(false);
     } catch (error) {
@@ -110,7 +118,7 @@ function App() {
       { name: 'Efectivo Ref', currency: 'Ref' },
       { name: 'Efectivo Bs', currency: 'Bs' },
       { name: 'Zelle', currency: 'Ref' },
-      { name: 'Crédito', currency: 'Ref' },
+      { name: 'Crédito', currency: 'Ref' }, // Método clave para gestión de clientes
       { name: 'Pago Móvil', currency: 'Bs' },
       { name: 'Punto de Venta', currency: 'Bs' },
   ];
@@ -118,7 +126,7 @@ function App() {
   // MÉTODOS QUE REQUIEREN REFERENCIA
   const methodsRequiringReference = ['Pago Móvil', 'Punto de Venta', 'Zelle'];
 
-  // --- LÓGICA DE PAGO INTELIGENTE ---
+  // --- LÓGICA DE PAGO INTELIGENTE (Cálculos de conversión) ---
   const updatePaymentShare = useCallback((method, value) => {
       setPaymentShares(prev => ({ ...prev, [method]: value }));
   }, []);
@@ -126,8 +134,8 @@ function App() {
   const handleOpenPayment = () => {
       if (cart.length === 0) return Swal.fire('Carrito Vacío', '', 'info');
       setPaymentShares({}); 
-      setPaymentReferences({}); // Reset referencias
-      setCurrentReference('');  // Reset estado local
+      setPaymentReferences({});
+      setCurrentReference('');
       setIsPaymentModalOpen(true);
   };
   
@@ -200,74 +208,131 @@ function App() {
       const remainingAmount = calculateRemainingAmount(method); 
       updatePaymentShare(method, remainingAmount);
       
-      // Si el método requiere referencia, usar un marcador de posición para auditoría
       if (methodsRequiringReference.includes(method)) {
          setPaymentReferences(prev => ({ ...prev, [method]: 'REF-RAPIDA' }));
       }
   }
 
-  const processSale = async () => {
-      if (isInsufficient) {
-          return Swal.fire('Monto Insuficiente', `Faltan Ref ${remainingUSD.toFixed(2)} por cubrir.`, 'warning');
+  // NUEVO: Función de validación y apertura de modal de cliente para Crédito
+  const handleCreditProcess = () => {
+      // 1. Verificar si solo se paga con Crédito o Crédito es el saldo pendiente
+      const creditAmount = parseFloat(paymentShares['Crédito']) || 0;
+      
+      // La venta es a crédito si:
+      // a) Solo se pagó con Crédito y el monto es > 0, O
+      // b) Se usó Crédito y la suma total cubre el total
+      const paidCreditOnly = Object.keys(paymentShares).length === 1 && creditAmount > 0;
+      const creditUsed = creditAmount > 0;
+
+      if (!creditUsed) {
+          // Si Crédito no fue utilizado, procesar como pago normal.
+          processSale(); 
+          return;
+      }
+      
+      // 2. Si se usó crédito, verificar que el saldo esté cubierto (o cubierto por el crédito)
+      // Si el crédito se usó para el pago completo o parcial y el restante se cubre
+      // No necesitamos verificar si hay un monto pendiente si el crédito cubre el resto.
+      
+      if (remainingUSD > 0.05 && !paidCreditOnly) {
+           return Swal.fire('Monto Insuficiente', `Faltan Ref ${remainingUSD.toFixed(2)} por cubrir con otros métodos.`, 'warning');
       }
 
-      // MODIFICACIÓN CRUCIAL: Incluir Referencia Bancaria
-      const methodsString = Object.entries(paymentShares)
+      // 3. Abrir modal de captura de cliente
+      setIsCustomerModalOpen(true);
+      setIsPaymentModalOpen(false); 
+  }
+  
+  // NUEVO: Función para procesar la venta a Crédito (después de capturar cliente)
+  const processCreditSale = async () => {
+      // Validar datos mínimos del cliente para Crédito
+      if (!customerData.full_name || !customerData.id_number) {
+          return Swal.fire('Datos Incompletos', 'Nombre y Cédula son obligatorios para ventas a crédito.', 'warning');
+      }
+      
+      // La venta es a crédito si el monto de Crédito > 0.
+      const isCreditSale = (parseFloat(paymentShares['Crédito']) || 0) > 0;
+      
+      // Si la venta es a crédito, el payment_method solo debe reflejar la porción pagada por otros medios.
+      // Si es 100% crédito, payment_method debe ser 'Crédito (Ref): RefX.XX'.
+
+      const paymentDescription = Object.entries(paymentShares)
           .filter(([_, amt]) => parseFloat(amt) > 0)
           .map(([method, amt]) => {
               const methodData = paymentMethods.find(m => m.name === method);
               const currencySymbol = methodData.currency === 'Ref' ? 'Ref' : 'Bs';
-              
-              // Obtener la referencia si existe y formatearla para el reporte
               const reference = paymentReferences[method] ? ` [Ref: ${paymentReferences[method]}]` : ''; 
-              
-              // UX: Renombrar para claridad
               return `${method.replace('Ref', '(Ref)').replace('Bs', '(Bs)')}: ${currencySymbol}${amt}${reference}`; 
           })
           .join(' + ');
-
+      
       try {
           const saleData = {
-              payment_method: methodsString || 'Pago Completo',
-              items: cart.map(i => ({ product_id: i.id, quantity: i.quantity, price_usd: i.price_usd }))
+              payment_method: paymentDescription || 'Pago Completo (0 USD)',
+              items: cart.map(i => ({ product_id: i.id, quantity: i.quantity, price_usd: i.price_usd })),
+              is_credit: isCreditSale, // Bandera para el backend
+              customer_data: customerData, // Datos del cliente
+              due_days: dueDays, // 15 o 30 días
           };
           
-          Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading() });
+          Swal.fire({ title: 'Procesando Crédito...', didOpen: () => Swal.showLoading() });
           await axios.post(`${API_URL}/sales`, saleData);
           
-          let changeMsg = '';
-          if (remainingUSD < -0.05) {
-              const vueltoRef = Math.abs(remainingUSD).toFixed(2);
-              const vueltoBs = Math.abs(remainingVES).toLocaleString('es-VE', { maximumFractionDigits: 2 });
-              changeMsg = `<br><b>Vuelto Estimado:</b> Ref ${vueltoRef} (${vueltoBs} Bs)`;
-          }
-
           Swal.fire({ 
               icon: 'success', 
-              title: '¡Venta Registrada!', 
-              html: `Inventario actualizado.${changeMsg}`, 
+              title: isCreditSale ? '¡Crédito Registrado!' : '¡Venta Registrada!', 
+              html: `Inventario actualizado. Total: Ref ${totalUSD.toFixed(2)}`, 
               confirmButtonColor: '#0056B3' 
           });
 
+          // Resetear estados
           setCart([]);
-          setIsPaymentModalOpen(false);
-          setIsMobileCartOpen(false);
-          fetchData();
+          setIsCustomerModalOpen(false);
+          setCustomerData({ full_name: '', id_number: '', phone: '', institution: '' });
+          fetchData(); 
       } catch (error) {
-          Swal.fire('Error', 'Fallo al procesar venta', 'error');
+          Swal.fire('Error', 'Fallo al procesar venta a crédito', 'error');
       }
-  };
+  }
+
+  // --- Funciones de Reporte de Crédito ---
+  const markAsPaid = async (saleId) => {
+      const result = await Swal.fire({
+          title: '¿Marcar como Pagado?',
+          text: "¿Estás seguro de que deseas saldar la cuenta por cobrar?",
+          icon: 'question',
+          showCancelButton: true,
+          confirmButtonColor: '#0056B3',
+          cancelButtonColor: '#E11D2B',
+          confirmButtonText: 'Sí, Saldo Ahora'
+      });
+      
+      if (result.isConfirmed) {
+          try {
+              await axios.post(`${API_URL}/sales/${saleId}/pay-credit`);
+              Swal.fire('¡Saldado!', 'El crédito ha sido marcado como PAGADO.', 'success');
+              fetchData();
+          } catch (error) {
+              Swal.fire('Error', 'No se pudo saldar el crédito.', 'error');
+          }
+      }
+  }
 
   const showSaleDetail = async (sale) => {
       try {
           const res = await axios.get(`${API_URL}/sales/${sale.id}`);
           
+          // Incluimos todos los datos de la venta para el detalle, incluyendo datos de cliente si existen
           setSelectedSaleDetail({ 
               id: sale.id, 
               items: res.data, 
               payment_method: sale.payment_method, 
               total_usd: sale.total_usd,
               total_ves: sale.total_ves,
+              status: sale.status,
+              full_name: sale.full_name,
+              id_number: sale.id_number,
+              due_date: sale.due_date,
           });
       } catch (error) { console.error(error); }
   };
@@ -281,18 +346,20 @@ function App() {
       const openNumpad = () => {
           setCurrentMethod(name);
           setCurrentInputValue(parseFloat(value) > 0 ? value.toString() : '');
-          // Inicializar la referencia local con la referencia guardada si existe
           setCurrentReference(paymentReferences[name] || ''); 
           setIsNumpadOpen(true);
       };
 
+      // Si es Crédito y el monto es > 0, se resalta como un crédito activo en la vista general
+      const isCreditActive = name === 'Crédito' && parseFloat(value) > 0;
+
       return (
           <div 
               onClick={openNumpad}
-              className={`flex justify-between items-center p-4 rounded-xl shadow-md cursor-pointer transition-all ${isSelected ? 'bg-blue-100 border-higea-blue border-2' : 'bg-gray-50 border border-gray-200 hover:bg-gray-100'}`}
+              className={`flex justify-between items-center p-4 rounded-xl shadow-md cursor-pointer transition-all ${isCreditActive ? 'bg-red-100 border-higea-red border-2' : (isSelected ? 'bg-blue-100 border-higea-blue border-2' : 'bg-gray-50 border border-gray-200 hover:bg-gray-100')}`}
           >
               <span className="font-bold text-gray-700">{name} ({currency})</span>
-              <span className="font-black text-xl text-gray-800">
+              <span className={`font-black text-xl ${isCreditActive ? 'text-higea-red' : 'text-gray-800'}`}>
                   {currencySymbol}{displayValue}
               </span>
           </div>
@@ -303,20 +370,10 @@ function App() {
   const NumpadModal = () => {
       const methodData = paymentMethods.find(m => m.name === currentMethod);
       const currencySymbol = methodData.currency === 'Ref' ? 'Ref' : 'Bs';
-      // Determinar si se requiere referencia
       const needsReference = methodsRequiringReference.includes(currentMethod);
       
-      // Obtener el saldo restante de la cuenta (no lo que se ha escrito en el numpad)
       const { remainingUSD: totalRemainingUSD } = calculatePaymentTotals();
       const totalRemainingVES = totalRemainingUSD * bcvRate;
-
-      // Calcular cuánto falta en la moneda actual del Numpad
-      let currentCurrencyRemaining = 0;
-      if (methodData.currency === 'Ref') {
-          currentCurrencyRemaining = totalRemainingUSD;
-      } else {
-          currentCurrencyRemaining = totalRemainingVES;
-      }
 
       const handleNumpadClick = (key) => {
           if (key === 'C') {
@@ -334,13 +391,10 @@ function App() {
           }
           
           let newValue = currentInputValue + key;
-
-          // Limitar a dos decimales
           if (newValue.includes('.')) {
               const parts = newValue.split('.');
               if (parts[1].length > 2) return;
           }
-          // Quitar cero inicial si no hay punto
           if (newValue.length > 1 && newValue.startsWith('0') && !newValue.includes('.')) {
               newValue = newValue.substring(1);
           }
@@ -351,18 +405,16 @@ function App() {
       const handleConfirm = () => {
           const finalValue = parseFloat(currentInputValue).toFixed(2) || '';
           
-          // VALIDACIÓN DE REFERENCIA OBLIGATORIA
           if (needsReference && finalValue > 0 && !currentReference.trim()) {
-              return Swal.fire('Referencia Requerida', 'Por favor, ingrese la referencia bancaria o el número de lote antes de confirmar.', 'warning');
+              return Swal.fire('Referencia Requerida', 'Por favor, ingrese la referencia bancaria.', 'warning');
           }
 
           updatePaymentShare(currentMethod, finalValue);
-          // Guardar la referencia en el estado principal
           setPaymentReferences(prev => ({ ...prev, [currentMethod]: currentReference.trim() }));
           
           setIsNumpadOpen(false);
           setCurrentInputValue('');
-          setCurrentReference(''); // Limpiar local state
+          setCurrentReference(''); 
       };
 
       const numpadKeys = [
@@ -408,7 +460,7 @@ function App() {
                               onChange={(e) => setCurrentReference(e.target.value.toUpperCase())}
                               placeholder="Ej: A1234, 1234567" 
                               className="w-full border-2 border-gray-200 focus:border-higea-blue rounded-xl p-3 text-lg font-bold text-gray-800 transition-colors"
-                              autoFocus // 1. Enfocar el campo al abrir
+                              autoFocus
                           />
                       </div>
                   )}
@@ -419,7 +471,7 @@ function App() {
                           <button 
                               key={key} 
                               onClick={() => handleNumpadClick(key)} 
-                              onMouseDown={(e) => e.preventDefault()} // 2. Prevenir robo de foco (FIX UX)
+                              onMouseDown={(e) => e.preventDefault()}
                               className={`p-4 rounded-xl text-2xl font-bold transition-colors ${key === 'C' ? 'bg-red-100 text-red-600' : 'bg-gray-100 hover:bg-gray-200'}`}
                           >
                               {key}
@@ -427,7 +479,7 @@ function App() {
                       ))}
                       <button 
                           onClick={handleNumpadClick.bind(null, 'DEL')} 
-                          onMouseDown={(e) => e.preventDefault()} // 2. Prevenir robo de foco (FIX UX)
+                          onMouseDown={(e) => e.preventDefault()}
                           className="col-span-1 p-4 rounded-xl text-2xl font-bold bg-gray-100 hover:bg-gray-200"
                       >
                           ⌫
@@ -438,14 +490,14 @@ function App() {
                   <div className="p-4 pt-0 flex flex-col gap-2">
                       <button 
                           onClick={handlePayRemaining} 
-                          onMouseDown={(e) => e.preventDefault()} // 2. Prevenir robo de foco (FIX UX)
+                          onMouseDown={(e) => e.preventDefault()}
                           className="w-full bg-yellow-500 text-white font-bold py-3 rounded-xl hover:bg-yellow-600"
                       >
                           PAGAR SALDO ({currencySymbol})
                       </button>
                       <button 
                           onClick={handleConfirm} 
-                          onMouseDown={(e) => e.preventDefault()} // 2. Prevenir robo de foco (FIX UX)
+                          onMouseDown={(e) => e.preventDefault()}
                           className="w-full bg-higea-blue text-white font-bold py-3 rounded-xl hover:bg-blue-700"
                       >
                           CONFIRMAR MONTO
@@ -456,7 +508,61 @@ function App() {
       );
   };
 
+  // Componente Modal de Captura de Cliente (Aparece SÓLO si se usa Crédito)
+  const CustomerModal = () => {
+      const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
+      
+      const handleChange = (e) => {
+          const { name, value } = e.target;
+          setCustomerData(prev => ({ ...prev, [name]: value }));
+      };
 
+      return (
+          <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
+                  <div className="bg-higea-blue p-5 text-white text-center">
+                      <h3 className="text-xl font-bold">Registro de Crédito</h3>
+                      <p className="text-sm mt-1">Total a Financiar: Ref {totalUSD.toFixed(2)}</p>
+                  </div>
+                  
+                  <div className="p-5 space-y-4">
+                      <div className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-200">
+                          <span className="font-bold text-yellow-800 text-sm">Plazo de Pago</span>
+                          <div className="flex gap-2">
+                            <button onClick={() => setDueDays(15)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 15 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>15 Días</button>
+                            <button onClick={() => setDueDays(30)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 30 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>30 Días</button>
+                          </div>
+                      </div>
+
+                      <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleChange} value={customerData.full_name} 
+                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                          <input type="text" name="id_number" placeholder="Cédula/RIF (*)" onChange={handleChange} value={customerData.id_number} 
+                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                          <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
+                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                      </div>
+                      
+                      <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
+                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                          
+                      {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago.</p>}
+                  </div>
+
+                  <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
+                      <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm">Volver</button>
+                      <button onClick={processCreditSale} className="flex-1 py-3 text-white font-bold rounded-xl shadow-lg bg-higea-red hover:bg-red-700">
+                          Confirmar Crédito
+                      </button>
+                  </div>
+              </div>
+          </div>
+      );
+  }
+
+
+  // --- RESTO DE COMPONENTES Y LÓGICA DE UI ---
   const CartItem = ({ item }) => (
     <div onClick={() => removeFromCart(item.id)} className="flex justify-between items-center py-3 px-3 mb-2 rounded-xl bg-white border border-gray-100 shadow-sm active:scale-95 cursor-pointer select-none">
       <div className="flex items-center gap-3">
@@ -486,7 +592,16 @@ function App() {
       <nav className="hidden md:flex w-20 bg-white border-r border-gray-200 flex-col items-center py-6 z-40 shadow-lg">
           <div className="mb-8 h-10 w-10 bg-higea-red rounded-xl flex items-center justify-center text-white font-bold text-xl">H</div>
           <button onClick={() => setView('POS')} className={`p-3 rounded-xl mb-4 transition-all ${view === 'POS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg></button>
-          <button onClick={() => { fetchData(); setView('DASHBOARD'); }} className={`p-3 rounded-xl transition-all ${view === 'DASHBOARD' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" /></svg></button>
+          
+          <button onClick={() => { fetchData(); setView('DASHBOARD'); }} className={`p-3 rounded-xl transition-all relative ${view === 'DASHBOARD' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" /></svg>
+              {/* Notificación de Créditos Vencidos */}
+              {overdueCount > 0 && <span className="absolute top-1 right-1 h-3 w-3 bg-red-500 rounded-full text-[8px] text-white flex items-center justify-center font-bold">{overdueCount}</span>}
+          </button>
+          
+          <button onClick={() => { fetchData(); setView('CREDIT_REPORT'); }} className={`p-3 rounded-xl transition-all ${view === 'CREDIT_REPORT' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+          </button>
       </nav>
 
       {/* CONTENIDO */}
@@ -558,7 +673,7 @@ function App() {
                   </div>
               </aside>
            </div>
-        ) : (
+        ) : view === 'DASHBOARD' ? (
            <div className="p-4 md:p-8 overflow-y-auto h-full">
               <h2 className="text-2xl font-black text-gray-800 mb-6">Panel Gerencial</h2>
               
@@ -590,6 +705,7 @@ function App() {
                                   <th className="px-4 py-3">ID</th>
                                   <th className="px-4 py-3">Fecha</th>
                                   <th className="px-4 py-3">Método</th>
+                                  <th className="px-4 py-3">Status</th> {/* NUEVO */}
                                   <th className="px-4 py-3 text-right">Total Ref</th> 
                                   <th className="px-4 py-3 text-right">Total Bs</th> 
                               </tr>
@@ -599,7 +715,14 @@ function App() {
                                   <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer active:bg-blue-100">
                                       <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
                                       <td className="px-4 py-3">{sale.full_date}</td>
-                                      <td className="px-4 py-3"><span className="px-2 py-1 rounded bg-gray-100 text-[10px]">{sale.payment_method}</span></td> 
+                                      <td className="px-4 py-3"><span className="px-2 py-1 rounded bg-gray-100 text-[10px]">{sale.payment_method.slice(0, 30)}...</span></td> 
+                                      <td className="px-4 py-3">
+                                          <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                                            sale.status === 'PENDIENTE' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
+                                          }`}>
+                                              {sale.status}
+                                          </span>
+                                      </td>
                                       <td className="px-4 py-3 text-right font-bold text-higea-red">Ref {parseFloat(sale.total_usd).toFixed(2)}</td> 
                                       <td className="px-4 py-3 text-right font-bold">Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</td> 
                                   </tr>
@@ -608,6 +731,65 @@ function App() {
                       </table>
                   </div>
               </div>
+           </div>
+        ) : (
+             /* NUEVO PANEL DE REPORTES DE CRÉDITO */
+           <div className="p-4 md:p-8 overflow-y-auto h-full">
+               <h2 className="text-2xl font-black text-gray-800 mb-6">Cuentas por Cobrar (Crédito)</h2>
+               
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
+                        <p className="text-gray-400 text-xs font-bold uppercase">Créditos Pendientes</p>
+                        <p className="text-3xl font-black text-higea-blue mt-1">{pendingCredits.length}</p>
+                    </div>
+                    <div className="bg-white p-5 rounded-3xl shadow-sm border border-red-100 bg-red-50/30">
+                        <p className="text-red-400 text-xs font-bold uppercase">Vencidos (Alerta)</p>
+                        <p className="text-3xl font-black text-red-600 mt-1">{overdueCount}</p>
+                    </div>
+               </div>
+               
+               <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                   <div className="p-5 border-b border-gray-100"><h3 className="font-bold text-gray-800">Listado de Créditos PENDIENTES</h3></div>
+                   <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                            <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
+                                <tr>
+                                    <th className="px-4 py-3">ID</th>
+                                    <th className="px-4 py-3">Cliente (Cédula)</th>
+                                    <th className="px-4 py-3">Vencimiento</th>
+                                    <th className="px-4 py-3 text-right">Monto Ref</th>
+                                    <th className="px-4 py-3">Status</th>
+                                    <th className="px-4 py-3 text-right">Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {pendingCredits.map((credit) => (
+                                    <tr key={credit.id} className={`${credit.is_overdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-blue-50'}`}>
+                                        <td className="px-4 py-3 font-bold text-higea-blue cursor-pointer" onClick={() => showSaleDetail(credit)}>#{credit.id}</td>
+                                        <td className="px-4 py-3">
+                                            <p className="font-bold text-gray-800">{credit.full_name}</p>
+                                            <p className="text-xs text-gray-500">CI: {credit.id_number}</p>
+                                        </td>
+                                        <td className={`px-4 py-3 font-bold ${credit.is_overdue ? 'text-red-600' : 'text-gray-800'}`}>
+                                            {new Date(credit.due_date).toLocaleDateString()}
+                                        </td>
+                                        <td className="px-4 py-3 text-right font-black text-higea-red">Ref {parseFloat(credit.total_usd).toFixed(2)}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold ${credit.is_overdue ? 'bg-red-200 text-red-800' : 'bg-yellow-200 text-yellow-800'}`}>
+                                                {credit.is_overdue ? 'VENCIDO' : credit.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                            <button onClick={() => markAsPaid(credit.id)} className="bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-green-600 active:scale-95 transition-transform">
+                                                Saldar
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                   </div>
+               </div>
            </div>
         )}
       </div>
@@ -628,9 +810,15 @@ function App() {
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
               <span className="text-[10px] font-bold">Reportes</span>
           </button>
+          
+          <button onClick={() => {fetchData(); setView('CREDIT_REPORT');}} className={`flex flex-col items-center ${view === 'CREDIT_REPORT' ? 'text-higea-blue' : 'text-gray-400'}`}>
+             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+              <span className="text-[10px] font-bold">Crédito</span>
+          </button>
       </div>
 
-      {/* --- MODAL DE PAGO UX TÁCTIL --- */}
+
+      {/* MODAL PRINCIPAL DE PAGO (MODIFICADO PARA LLAMAR A CAPTURA DE CLIENTE) */}
       {isPaymentModalOpen && (
           <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl animate-scale-up">
@@ -676,8 +864,12 @@ function App() {
 
                   <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
                       <button onClick={() => setIsPaymentModalOpen(false)} className="flex-1 py-3 text-gray-500 font-bold text-sm">Cancelar</button>
-                      <button onClick={processSale} disabled={isInsufficient} className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all ${isInsufficient ? 'bg-gray-300' : 'bg-higea-blue hover:bg-blue-700'}`}>
-                          Procesar
+                      <button 
+                          onClick={handleCreditProcess} // Llama a la función que decide si es crédito o pago normal
+                          disabled={isInsufficient && (parseFloat(paymentShares['Crédito']) || 0) === 0} 
+                          className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all ${isInsufficient && (parseFloat(paymentShares['Crédito']) || 0) === 0 ? 'bg-gray-300' : 'bg-higea-blue hover:bg-blue-700'}`}
+                      >
+                          { (parseFloat(paymentShares['Crédito']) || 0) > 0 ? 'Continuar Crédito' : 'Procesar Pago' }
                       </button>
                   </div>
               </div>
@@ -685,8 +877,9 @@ function App() {
       )}
 
       {isNumpadOpen && <NumpadModal />}
+      {isCustomerModalOpen && <CustomerModal />} {/* Nuevo modal de cliente */}
 
-      {/* --- MODAL CARRITO MÓVIL --- */}
+      {/* --- MODAL CARRITO MÓVIL (MANTENIDO) --- */}
       {isMobileCartOpen && (
           <div className="fixed inset-0 z-[55] bg-white md:hidden flex flex-col animate-slide-up">
               <div className="p-4 border-b flex justify-between items-center bg-gray-50">
@@ -703,7 +896,7 @@ function App() {
           </div>
       )}
 
-      {/* --- MODAL DETALLE VENTA --- */}
+      {/* --- MODAL DETALLE VENTA (MEJORADO PARA CRÉDITO) --- */}
       {selectedSaleDetail && (
           <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative">
@@ -714,6 +907,25 @@ function App() {
                   </div>
 
                   <div className="max-h-[70vh] overflow-y-auto">
+                      
+                      {/* DETALLES DEL CLIENTE (Si existen) */}
+                      {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.full_name) && (
+                          <div className="p-5 bg-yellow-50 border-b border-yellow-100">
+                               <p className="text-xs font-bold uppercase text-yellow-800 mb-2">Detalles de Crédito</p>
+                               <div className="text-sm space-y-1 text-yellow-900">
+                                    <p><span className="font-bold">Cliente:</span> {selectedSaleDetail.full_name}</p>
+                                    <p><span className="font-bold">Cédula:</span> {selectedSaleDetail.id_number}</p>
+                                    <p><span className="font-bold">Estado:</span> 
+                                       <span className={`ml-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                                         selectedSaleDetail.status === 'PENDIENTE' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
+                                       }`}>
+                                           {selectedSaleDetail.status}
+                                       </span>
+                                    </p>
+                                    {selectedSaleDetail.due_date && <p><span className="font-bold">Vencimiento:</span> {new Date(selectedSaleDetail.due_date).toLocaleDateString()}</p>}
+                               </div>
+                          </div>
+                      )}
                       
                       {/* Resumen de Pago */}
                       <div className="p-5 bg-gray-50 border-b border-gray-100">
