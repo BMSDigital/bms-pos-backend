@@ -509,6 +509,11 @@ function App() {
           setCustomerData(prev => ({ ...prev, [name]: value }));
       };
 
+      const handleBlur = (e) => {
+          // Desenfocar el campo manualmente después de la edición para mejorar la UX táctil
+          e.target.blur();
+      };
+
       return (
           <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
@@ -528,17 +533,21 @@ function App() {
 
                       <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleChange} value={customerData.full_name} 
                           className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                          autoFocus={true} /> {/* <-- FIX: autoFocus */}
+                          autoFocus={true} 
+                          onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
                       
                       <div className="grid grid-cols-2 gap-4">
                           <input type="text" name="id_number" placeholder="Cédula/RIF (*)" onChange={handleChange} value={customerData.id_number} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                              onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
                           <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                              onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
                       </div>
                       
                       <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
-                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                          onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
                           
                       {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago.</p>}
                   </div>

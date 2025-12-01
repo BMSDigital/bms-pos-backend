@@ -304,8 +304,22 @@ app.get('/api/reports/recent-sales', async (req, res) => {
     }
 });
 
-// [Otras rutas de reportes (C, D, E) permanecen inalteradas, se omiten aquí por brevedad]
-// Ya que 'low-stock' se utiliza en el frontend, asumimos que existe y funciona correctamente.
+// C. NUEVO: Alertas de Stock Bajo (Resuelve el 404 del log)
+app.get('/api/reports/low-stock', async (req, res) => {
+    try {
+        // Asumimos un umbral de stock bajo como 10 (puede ajustarse)
+        const result = await pool.query(`
+            SELECT id, name, stock, category
+            FROM products
+            WHERE stock <= 10 AND stock > 0
+            ORDER BY stock ASC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('❌ Error al obtener stock bajo:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // Iniciar Servidor
 app.listen(port, () => {
