@@ -23,10 +23,11 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE TABLE IF NOT EXISTS customers (
     id SERIAL PRIMARY KEY,
     full_name VARCHAR(150) NOT NULL,
-    id_number VARCHAR(20) UNIQUE NOT NULL, -- Cédula (CI)
+    id_number VARCHAR(20) UNIQUE NOT NULL, -- Cédula (CI) / RIF / ID
     phone VARCHAR(20),
     institution VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'ACTIVO' -- NUEVO: ACTIVO / INACTIVO
 );
 
 -- 3. Tabla de Ventas (Historial - MODIFICADA)

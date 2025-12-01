@@ -2,6 +2,45 @@ import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 
+// --- NUEVAS FUNCIONES DE VALIDACIÓN Y FORMATO ---
+
+// 1. Capitalizar la primera letra de cada palabra
+const capitalizeWords = (str) => {
+    if (!str) return '';
+    return str.toLowerCase().split(' ').map(word => 
+        word.charAt(0).toUpperCase() + word.slice(1)
+    ).join(' ');
+};
+
+// 2. Validar y formatear ID (Cédula/RIF)
+const validateIdNumber = (value) => {
+    if (!value) return '';
+    const cleaned = value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+    // Limite de 15 caracteres (ej. V-99999999-99)
+    return cleaned.substring(0, 15); 
+};
+
+// 3. Validar y formatear Teléfono (Internacional)
+const validatePhone = (value) => {
+    if (!value) return '';
+    // Permite +, números, espacios y guiones. Limita a 18 caracteres.
+    const cleaned = value.replace(/[^+\d\s-]/g, '');
+    return cleaned.substring(0, 18);
+};
+
+// UTILITY FUNCTION: Debounce para evitar sobrecargar el backend con búsquedas
+const debounce = (func, delay) => {
+    let timeoutId;
+    return (...args) => {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
+        timeoutId = setTimeout(() => {
+            func.apply(null, args);
+        }, delay);
+    };
+};
+
 // TU URL DE RENDER
 const API_URL = 'https://bms-postventa-api.onrender.com/api';
 
@@ -27,7 +66,7 @@ function App() {
   const [paymentShares, setPaymentShares] = useState({}); 
   const [isNumpadOpen, setIsNumpadOpen] = useState(false);
   const [currentMethod, setCurrentMethod] = useState('');
-  const [currentInputValue, setCurrentInputValue] = useState('');
+  const [currentInputValue, setCurrentInputValue] = '';
   const [paymentReferences, setPaymentReferences] = useState({});
   const [currentReference, setCurrentReference] = useState(''); 
   const [customerData, setCustomerData] = useState({ full_name: '', id_number: '', phone: '', institution: '' });
@@ -42,8 +81,94 @@ function App() {
   // NUEVO: Estado para notificaciones de vencimiento
   const [overdueCount, setOverdueCount] = useState(0); 
 
-  useEffect(() => { fetchData(); }, []);
+  // NUEVOS ESTADOS para búsqueda de cliente
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerSearchResults, setCustomerSearchResults] = useState([]);
+  const [isSearchingCustomer, setIsSearchingCustomer] = useState(false);
 
+  // NUEVOS ESTADOS para el módulo de Clientes
+  const [allCustomers, setAllCustomers] = useState([]);
+  const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
+
+  // 1. Carga inicial de datos al montar el componente
+  useEffect(() => { fetchData(); }, []);
+  
+  // 2. Carga de clientes solo al cambiar a la vista CUSTOMERS
+  useEffect(() => {
+      if (view === 'CUSTOMERS') { // Punto 1: Cambiado a 'CUSTOMERS'
+          loadCustomers();
+      }
+  }, [view]);
+
+  // Función de carga de clientes (usada en el useEffect anterior)
+  const loadCustomers = async () => {
+      try {
+          const res = await axios.get(`${API_URL}/customers`);
+          setAllCustomers(res.data);
+      } catch (error) {
+          console.error("Error loading customers:", error);
+      }
+  };
+
+  // Función para cargar datos de cliente en el formulario de edición (Punto 4)
+  const editCustomer = (customer) => {
+      setCustomerForm({
+          id: customer.id,
+          full_name: customer.full_name,
+          id_number: customer.id_number,
+          phone: customer.phone || '',
+          institution: customer.institution || '',
+          status: customer.status,
+      });
+      // Desplazarse al inicio para ver el formulario
+      window.scrollTo(0, 0); 
+  }
+  
+  // Función para guardar/actualizar el cliente (Punto 4)
+  const saveCustomer = async (e) => {
+      e.preventDefault();
+      
+      if (!customerForm.full_name || !customerForm.id_number) {
+          return Swal.fire('Datos Incompletos', 'Nombre y Número de Identificador son obligatorios.', 'warning');
+      }
+
+      try {
+          Swal.fire({ title: `Guardando Cliente...`, didOpen: () => Swal.showLoading() });
+          await axios.post(`${API_URL}/customers`, customerForm);
+          
+          Swal.fire('¡Éxito!', `Cliente ${customerForm.id ? 'actualizado' : 'registrado'} correctamente.`, 'success');
+          
+          // Resetear formulario y recargar lista
+          setCustomerForm({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
+          loadCustomers();
+      } catch (error) {
+          const message = error.response?.data?.error || error.message;
+          Swal.fire('Error', `Fallo al guardar cliente: ${message}`, 'error');
+      }
+  }
+
+  // Función para manejar los cambios en el formulario de clientes con validación (Punto 1, 2, 3, 4)
+  const handleCustomerFormChange = (e) => {
+      const { name, value } = e.target;
+      let newValue = value;
+
+      if (name === 'full_name') {
+          // 1. Capitalización automática
+          newValue = capitalizeWords(value); 
+      } else if (name === 'id_number') {
+          // 2. Validación de Cédula/RIF (Número de Identificador)
+          newValue = validateIdNumber(value);
+      } else if (name === 'phone') {
+          // 3. Validación de Teléfono
+          newValue = validatePhone(value);
+      } else if (name === 'institution') {
+          // 4. Capitalización automática de Institución
+          newValue = capitalizeWords(value);
+      }
+
+      setCustomerForm(prev => ({ ...prev, [name]: newValue }));
+  };
+  
   const fetchData = async () => {
     try {
       const statusRes = await axios.get(`${API_URL}/status`);
@@ -62,7 +187,6 @@ function App() {
       const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
       setLowStock(stockRes.data);
       
-      // FIX: Eliminada la llave '}' extra que causaba el error 404 en la URL.
       const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`); 
       setPendingCredits(creditsRes.data);
       const overdue = creditsRes.data.filter(c => c.is_overdue).length;
@@ -80,7 +204,7 @@ function App() {
     else setFilteredProducts(products.filter(p => p.category === selectedCategory));
   }, [selectedCategory, products]);
 
-  // --- LÓGICA CARRITO ---
+  // --- LÓGICA CARRITO Y PAGOS (sin cambios relevantes en esta parte) ---
   const addToCart = (product) => {
     const existing = cart.find((item) => item.id === product.id);
     const qty = existing ? existing.quantity : 0;
@@ -136,6 +260,9 @@ function App() {
       setPaymentShares({}); 
       setPaymentReferences({});
       setCurrentReference('');
+      // Restablecer estados de búsqueda al abrir el modal de pago
+      setCustomerSearchResults([]);
+      setCustomerData({ full_name: '', id_number: '', phone: '', institution: '' });
       setIsPaymentModalOpen(true);
   };
   
@@ -212,6 +339,27 @@ function App() {
          setPaymentReferences(prev => ({ ...prev, [method]: 'REF-RAPIDA' }));
       }
   }
+  
+  // NUEVA FUNCIÓN: Buscar cliente en el backend (Mejora 2)
+  const searchCustomers = async (query) => {
+      // Búsqueda solo si hay 3 o más caracteres
+      if (query.length < 3) {
+          setCustomerSearchResults([]);
+          return;
+      }
+      setIsSearchingCustomer(true);
+      try {
+          // Buscamos clientes ACTIVO
+          const res = await axios.get(`${API_URL}/customers/search?query=${query}`);
+          setCustomerSearchResults(res.data);
+      } catch (error) {
+          console.error("Error searching customers:", error);
+          setCustomerSearchResults([]);
+      } finally {
+          setIsSearchingCustomer(false);
+      }
+  };
+
 
   // NUEVA FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO
   const processSale = async (isCreditFlow = false) => {
@@ -220,7 +368,7 @@ function App() {
 
       // 1. Validar datos mínimos del cliente para Crédito (si aplica)
       if (isCreditSale && (!customerData.full_name || !customerData.id_number)) {
-          return Swal.fire('Datos Incompletos', 'Nombre y Cédula son obligatorios para ventas a crédito.', 'warning');
+          return Swal.fire('Datos Incompletos', 'Nombre y Número de Identificador son obligatorios para ventas a crédito.', 'warning');
       }
       
       const paymentDescription = Object.entries(paymentShares)
@@ -361,7 +509,7 @@ function App() {
       } catch (error) { console.error(error); }
   };
   
-  // Componente Reutilizable para la entrada de Pago (UX Táctil)
+  // Componentes de Pago y Numpad (sin cambios relevantes)
   const PaymentInput = ({ name, currency, value }) => {
       const isSelected = currentMethod === name && isNumpadOpen;
       const displayValue = parseFloat(value) > 0 ? value : '0.00';
@@ -390,7 +538,6 @@ function App() {
       );
   };
   
-  // Teclado Numérico Custom para Móviles/Táctil
   const NumpadModal = () => {
       const methodData = paymentMethods.find(m => m.name === currentMethod);
       const currencySymbol = methodData.currency === 'Ref' ? 'Ref' : 'Bs';
@@ -484,7 +631,6 @@ function App() {
                               onChange={(e) => setCurrentReference(e.target.value.toUpperCase())}
                               placeholder="Ej: A1234, 1234567" 
                               className="w-full border-2 border-gray-200 focus:border-higea-blue rounded-xl p-3 text-lg font-bold text-gray-800 transition-colors"
-                              autoFocus
                           />
                       </div>
                   )}
@@ -532,20 +678,54 @@ function App() {
       );
   };
 
-  // Componente Modal de Captura de Cliente (Aparece SÓLO si se usa Crédito)
+  // Componente Modal de Captura de Cliente (Punto 5 - Simplificado)
   const CustomerModal = () => {
       const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
       
-      const handleChange = (e) => {
-          const { name, value } = e.target;
-          setCustomerData(prev => ({ ...prev, [name]: value }));
+      // Implementación de debounce para la búsqueda (Mejora 2)
+      const debouncedSearch = useCallback(
+          debounce((query) => searchCustomers(query), 300),
+          []
+      );
+
+      // Usamos la función de validación/capitalización en el input handler
+      const handleIdChange = (e) => {
+          const value = validateIdNumber(e.target.value); 
+          setCustomerData(prev => ({ ...prev, id_number: value }));
+          debouncedSearch(value); 
+      };
+      
+      const handleNameChange = (e) => {
+          const value = capitalizeWords(e.target.value); 
+          setCustomerData(prev => ({ ...prev, full_name: value }));
+          debouncedSearch(value); 
       };
 
-      // FIX: Añadida función para desenfocar y evitar que el teclado virtual oculte el campo.
-      const handleBlur = (e) => {
-          // Desenfocar el campo manualmente después de la edición
-          e.target.blur();
+      const handleSelectCustomer = (customer) => {
+          // Si el cliente no está activo, el formulario de crédito lo dejará editar para activarlo
+          setCustomerData({
+              full_name: customer.full_name,
+              id_number: customer.id_number,
+              phone: customer.phone || '',
+              institution: customer.institution || '',
+          });
+          setCustomerSearchResults([]); // Cerrar resultados
       };
+
+      const handleChange = (e) => {
+          const { name, value } = e.target;
+          let newValue = value;
+          
+          if (name === 'phone') {
+              newValue = validatePhone(value);
+          } else if (name === 'institution') {
+              newValue = capitalizeWords(value);
+          }
+          
+          setCustomerData(prev => ({ ...prev, [name]: newValue }));
+      };
+      
+      // **Punto 5:** Eliminada la lógica de redirección y dejando el formulario abierto para crear/completar
 
       return (
           <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -564,25 +744,49 @@ function App() {
                           </div>
                       </div>
 
-                      <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleChange} value={customerData.full_name} 
-                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                          autoFocus={true} 
-                          onBlur={handleBlur} /> 
-                      
-                      <div className="grid grid-cols-2 gap-4">
-                          <input type="text" name="id_number" placeholder="Cédula/RIF (*)" onChange={handleChange} value={customerData.id_number} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onBlur={handleBlur} />
-                          <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onBlur={handleBlur} />
+                      {/* Campo de Número de Identificador (Punto 2) */}
+                      <div className="relative">
+                          <input type="text" name="id_number" placeholder="Número de Identificador (*)" onChange={handleIdChange} value={customerData.id_number} 
+                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
+                              autoFocus={true} 
+                              /> 
+                          
+                          {/* RESULTADOS DE BÚSQUEDA (Si hay) */}
+                          {customerSearchResults.length > 0 && (
+                              <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-lg z-10 max-h-40 overflow-y-auto">
+                                  {customerSearchResults.map(customer => (
+                                      <div 
+                                          key={customer.id} 
+                                          onClick={() => handleSelectCustomer(customer)}
+                                          className="p-3 border-b border-gray-100 hover:bg-blue-50 cursor-pointer"
+                                      >
+                                          <p className="font-bold text-gray-800 leading-tight">{customer.full_name}</p>
+                                          <p className="text-xs text-gray-500">ID: {customer.id_number} - {customer.institution}</p>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                           {/* Aviso si no hay resultados ACTIVO */}
+                           {(customerData.id_number.length >= 3 && customerSearchResults.length === 0 && !isSearchingCustomer) && (
+                                <p className="text-xs text-red-500 mt-1">No se encontró cliente ACTIVO. Los datos se usarán para crearlo o actualizarlo.</p>
+                          )}
                       </div>
                       
-                      <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
+                      <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleNameChange} value={customerData.full_name} 
                           className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                          onBlur={handleBlur} />
+                          onFocus={() => setCustomerSearchResults([])} 
+                          /> 
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                          <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
+                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                              onFocus={() => setCustomerSearchResults([])} />
+                          <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
+                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                              onFocus={() => setCustomerSearchResults([])} />
+                      </div>
                           
-                      {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago.</p>}
+                      {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago. Se requiere Nombre e Identificador.</p>}
                   </div>
 
                   <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
@@ -623,7 +827,7 @@ function App() {
   return (
     <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
       
-      {/* SIDEBAR PC */}
+      {/* SIDEBAR PC (Navegación actualizada) */}
       <nav className="hidden md:flex w-20 bg-white border-r border-gray-200 flex-col items-center py-6 z-40 shadow-lg">
           <div className="mb-8 h-10 w-10 bg-higea-red rounded-xl flex items-center justify-center text-white font-bold text-xl">H</div>
           <button onClick={() => setView('POS')} className={`p-3 rounded-xl mb-4 transition-all ${view === 'POS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg></button>
@@ -634,16 +838,23 @@ function App() {
               {overdueCount > 0 && <span className="absolute top-1 right-1 h-3 w-3 bg-red-500 rounded-full text-[8px] text-white flex items-center justify-center font-bold">{overdueCount}</span>}
           </button>
           
-          <button onClick={() => { fetchData(); setView('CREDIT_REPORT'); }} className={`p-3 rounded-xl transition-all ${view === 'CREDIT_REPORT' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+          <button onClick={() => { fetchData(); setView('CREDIT_REPORT'); }} className={`p-3 rounded-xl transition-all mb-4 ${view === 'CREDIT_REPORT' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
           </button>
+          
+          {/* BOTÓN NUEVO MÓDULO (Punto 1) */}
+          <button onClick={() => { setView('CUSTOMERS'); }} className={`p-3 rounded-xl transition-all ${view === 'CUSTOMERS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+          </button>
+          
       </nav>
 
-      {/* CONTENIDO */}
+      {/* CONTENIDO (Estructura de renderizado revisada) */}
       <div className="flex-1 relative overflow-hidden flex flex-col pb-16 md:pb-0">
         
         {view === 'POS' ? (
            <div className="flex h-full flex-col md:flex-row">
+              {/* Contenido POS */}
               <div className="flex-1 flex flex-col h-full relative overflow-hidden">
                   <header className="bg-white/90 backdrop-blur-md border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm z-20">
                      <div className="flex flex-col">
@@ -710,6 +921,7 @@ function App() {
            </div>
         ) : view === 'DASHBOARD' ? (
            <div className="p-4 md:p-8 overflow-y-auto h-full">
+              {/* Contenido DASHBOARD */}
               <h2 className="text-2xl font-black text-gray-800 mb-6">Panel Gerencial</h2>
               
               {/* MODIFICACIÓN UX: Grid de 4 columnas para más información clave */}
@@ -775,9 +987,10 @@ function App() {
                   </div>
               </div>
            </div>
-        ) : (
+        ) : view === 'CREDIT_REPORT' ? (
              /* NUEVO PANEL DE REPORTES DE CRÉDITO */
            <div className="p-4 md:p-8 overflow-y-auto h-full">
+               {/* Contenido CREDIT_REPORT */}
                <h2 className="text-2xl font-black text-gray-800 mb-6">Cuentas por Cobrar (Crédito)</h2>
                
                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -828,9 +1041,136 @@ function App() {
                    </div>
                </div>
            </div>
+        ) : view === 'CUSTOMERS' ? (
+            /* NUEVO MÓDULO DE CLIENTES (CUSTOMERS) - Punto 1 */
+           <div className="p-4 md:p-8 overflow-y-auto h-full">
+                <h2 className="text-2xl font-black text-gray-800 mb-6">Gestión de Clientes</h2>
+
+                {/* Formulario de Registro/Edición */}
+                <div className="bg-white p-5 rounded-3xl shadow-lg border border-gray-100 mb-8 max-w-lg mx-auto">
+                    <h3 className="text-xl font-bold text-higea-blue mb-4">{customerForm.id ? 'Editar Cliente' : 'Nuevo Cliente'}</h3>
+                    <form onSubmit={saveCustomer}>
+                        {/* Campos con las nuevas validaciones */}
+                        <input 
+                            type="text" 
+                            name="full_name" 
+                            placeholder="Nombre Completo (*)" 
+                            value={customerForm.full_name}
+                            onChange={handleCustomerFormChange} 
+                            className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" 
+                            required
+                        />
+                        
+                        <div className="grid grid-cols-2 gap-3 mb-3">
+                            {/* Número de Identificador (Punto 2) */}
+                            <input 
+                                type="text" 
+                                name="id_number" 
+                                placeholder="Número de Identificador (*)" 
+                                value={customerForm.id_number}
+                                onChange={handleCustomerFormChange} 
+                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
+                                required
+                            />
+                            {/* Teléfono (Punto 3) */}
+                            <input 
+                                type="tel" 
+                                name="phone" 
+                                placeholder="Teléfono" 
+                                value={customerForm.phone}
+                                onChange={handleCustomerFormChange} 
+                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                            />
+                        </div>
+                        
+                        <input 
+                            type="text" 
+                            name="institution" 
+                            placeholder="Institución/Referencia" 
+                            value={customerForm.institution}
+                            onChange={handleCustomerFormChange} 
+                            className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" 
+                        />
+
+                        <div className="flex gap-4 items-center">
+                            <label className="text-sm font-bold text-gray-600">Estatus:</label>
+                            <select 
+                                name="status"
+                                value={customerForm.status}
+                                onChange={handleCustomerFormChange}
+                                className="border p-3 rounded-xl flex-1 bg-white"
+                            >
+                                <option value="ACTIVO">ACTIVO (Apto para crédito)</option>
+                                <option value="INACTIVO">INACTIVO (No apto para crédito)</option>
+                            </select>
+                        </div>
+
+                        <button 
+                            type="submit"
+                            className="w-full bg-green-600 text-white font-bold py-3 rounded-xl mt-4 shadow-md hover:bg-green-700"
+                        >
+                            {customerForm.id ? 'Guardar Cambios' : 'Registrar Nuevo Cliente'}
+                        </button>
+
+                        <button 
+                            type="button"
+                            onClick={() => setCustomerForm({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' })}
+                            className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300"
+                        >
+                            Limpiar Formulario
+                        </button>
+                    </form>
+                </div>
+
+                {/* Tabla de Listado de Clientes */}
+                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mt-8">
+                     <div className="p-5 border-b border-gray-100"><h3 className="font-bold text-gray-800">Listado de Clientes ({allCustomers.length})</h3></div>
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                            <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
+                                <tr>
+                                    <th className="px-4 py-3">ID</th>
+                                    <th className="px-4 py-3">Nombre</th>
+                                    <th className="px-4 py-3">Identificador</th>
+                                    <th className="px-4 py-3">Teléfono</th>
+                                    <th className="px-4 py-3">Estatus</th>
+                                    <th className="px-4 py-3 text-right">Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {allCustomers.map((customer) => (
+                                    <tr key={customer.id} className="hover:bg-blue-50">
+                                        <td className="px-4 py-3 font-bold text-higea-blue">#{customer.id}</td>
+                                        <td className="px-4 py-3 text-gray-800">{customer.full_name}</td>
+                                        <td className="px-4 py-3 font-medium">{customer.id_number}</td>
+                                        <td className="px-4 py-3">{customer.phone || 'N/A'}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                                                customer.status === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                                            }`}>
+                                                {customer.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                            <button onClick={() => editCustomer(customer)} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700 active:scale-95 transition-transform">
+                                                Editar
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                     </div>
+                     {allCustomers.length === 0 && <p className="p-4 text-center text-gray-400">No hay clientes registrados.</p>}
+                </div>
+           </div>
+
+        ) : (
+             <div className="h-full p-8 text-center text-red-500">Vista no encontrada.</div>
         )}
       </div>
 
+      {/* Navegación Móvil (Actualizada) */}
       <div className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 flex justify-around py-3 z-50 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
           <button onClick={() => setView('POS')} className={`flex flex-col items-center ${view === 'POS' ? 'text-higea-blue' : 'text-gray-400'}`}>
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
@@ -852,10 +1192,16 @@ function App() {
              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
               <span className="text-[10px] font-bold">Crédito</span>
           </button>
+          
+          {/* BOTÓN NUEVO MÓDULO MÓVIL (Punto 1) */}
+          <button onClick={() => { setView('CUSTOMERS'); }} className={`flex flex-col items-center ${view === 'CUSTOMERS' ? 'text-higea-blue' : 'text-gray-400'}`}>
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+              <span className="text-[10px] font-bold">Clientes</span>
+          </button>
       </div>
 
 
-      {/* MODAL PRINCIPAL DE PAGO (MODIFICADO PARA LLAMAR A CAPTURA DE CLIENTE) */}
+      {/* MODALES */}
       {isPaymentModalOpen && (
           <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl animate-scale-up">
