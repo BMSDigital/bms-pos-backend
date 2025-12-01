@@ -62,8 +62,8 @@ function App() {
       const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
       setLowStock(stockRes.data);
       
-      // NUEVO: Obtener créditos pendientes y contar vencidos
-      const creditsRes = await axios.get(`${API_URL}/reports/credit-pending}`);
+      // FIX: Eliminada la llave '}' extra que causaba el error 404 en la URL.
+      const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`); 
       setPendingCredits(creditsRes.data);
       const overdue = creditsRes.data.filter(c => c.is_overdue).length;
       setOverdueCount(overdue);
@@ -289,20 +289,52 @@ function App() {
 
   // --- Funciones de Reporte de Crédito ---
   const markAsPaid = async (saleId) => {
-      const result = await Swal.fire({
-          title: '¿Marcar como Pagado?',
-          text: "¿Estás seguro de que deseas saldar la cuenta por cobrar?",
-          icon: 'question',
+      // Estado temporal para el método de pago y referencia del saldo
+      let paymentMethod = '';
+      let paymentReference = '';
+
+      const { value: formValues } = await Swal.fire({
+          title: 'Saldar Cuenta',
+          html:
+              '<h4 class="text-lg font-bold text-gray-700 mb-4">Confirmar Método de Pago</h4>' +
+              '<select id="swal-payment-method" class="swal2-input">' +
+              // Métodos de pago disponibles para saldar
+              '<option value="EFECTIVO_USD">Efectivo Ref</option>' +
+              '<option value="ZELLE">Zelle</option>' +
+              '<option value="PAGO_MOVIL">Pago Móvil (Bs)</option>' +
+              '<option value="PUNTO_VENTA">Punto de Venta (Bs)</option>' +
+              '<option value="TRANSFERENCIA">Transferencia (Bs)</option>' +
+              '</select>' +
+              '<input id="swal-payment-ref" class="swal2-input" placeholder="Referencia / Últimos 4 dígitos">',
+          focusConfirm: false,
           showCancelButton: true,
+          confirmButtonText: 'Saldar Cuenta Completo', // FIX: Nombre más profesional
+          cancelButtonText: 'Cancelar',
           confirmButtonColor: '#0056B3',
-          cancelButtonColor: '#E11D2B',
-          confirmButtonText: 'Sí, Saldo Ahora'
+          preConfirm: () => {
+              paymentMethod = document.getElementById('swal-payment-method').value;
+              paymentReference = document.getElementById('swal-payment-ref').value;
+              
+              if (!paymentMethod) {
+                  Swal.showValidationMessage('Debe seleccionar un método de pago.');
+                  return false;
+              }
+              // Validación simple de referencia si el método no es Efectivo
+              if (paymentMethod !== 'EFECTIVO_USD' && !paymentReference.trim()) {
+                  Swal.showValidationMessage('La referencia es obligatoria para este método.');
+                  return false;
+              }
+              return { paymentMethod, paymentReference };
+          }
       });
-      
-      if (result.isConfirmed) {
+
+      if (formValues) {
           try {
-              await axios.post(`${API_URL}/sales/${saleId}/pay-credit`);
-              Swal.fire('¡Saldado!', 'El crédito ha sido marcado como PAGADO.', 'success');
+              const paymentDetails = `${formValues.paymentMethod}${formValues.paymentReference ? ` [Ref: ${formValues.paymentReference}]` : ''}`;
+              
+              await axios.post(`${API_URL}/sales/${saleId}/pay-credit`, { paymentDetails }); // FIX: Envía el detalle
+              
+              Swal.fire('¡Saldado!', 'El crédito ha sido marcado como PAGADO. Método registrado.', 'success');
               fetchData();
           } catch (error) {
               Swal.fire('Error', 'No se pudo saldar el crédito.', 'error');
@@ -509,8 +541,9 @@ function App() {
           setCustomerData(prev => ({ ...prev, [name]: value }));
       };
 
+      // FIX: Añadida función para desenfocar y evitar que el teclado virtual oculte el campo.
       const handleBlur = (e) => {
-          // Desenfocar el campo manualmente después de la edición para mejorar la UX táctil
+          // Desenfocar el campo manualmente después de la edición
           e.target.blur();
       };
 
@@ -534,20 +567,20 @@ function App() {
                       <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleChange} value={customerData.full_name} 
                           className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
                           autoFocus={true} 
-                          onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
+                          onBlur={handleBlur} /> 
                       
                       <div className="grid grid-cols-2 gap-4">
                           <input type="text" name="id_number" placeholder="Cédula/RIF (*)" onChange={handleChange} value={customerData.id_number} 
                               className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
+                              onBlur={handleBlur} />
                           <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
                               className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
+                              onBlur={handleBlur} />
                       </div>
                       
                       <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
                           className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                          onBlur={handleBlur} /> {/* <-- FIX: Añadido onBlur */}
+                          onBlur={handleBlur} />
                           
                       {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago.</p>}
                   </div>
@@ -708,14 +741,8 @@ function App() {
                   <div className="overflow-x-auto">
                       <table className="w-full text-left text-xs md:text-sm text-gray-600">
                           <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                              <tr>
-                                  <th className="px-4 py-3">ID</th>
-                                  <th className="px-4 py-3">Fecha</th>
-                                  <th className="px-4 py-3">Cliente / Método</th> {/* MODIFICADO UX */}
-                                  <th className="px-4 py-3">Status</th> 
-                                  <th className="px-4 py-3 text-right">Total Ref</th> 
-                                  <th className="px-4 py-3 text-right">Total Bs</th> 
-                              </tr>
+                              {/* FIX: Headers en una sola línea para evitar Hydration Error */}
+                              <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente / Método</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Total Ref</th><th className="px-4 py-3 text-right">Total Bs</th></tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                               {recentSales.map((sale) => (
@@ -769,14 +796,8 @@ function App() {
                    <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs md:text-sm text-gray-600">
                             <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                                <tr>
-                                    <th className="px-4 py-3">ID</th>
-                                    <th className="px-4 py-3">Cliente (Cédula)</th>
-                                    <th className="px-4 py-3">Vencimiento</th>
-                                    <th className="px-4 py-3 text-right">Monto Ref</th>
-                                    <th className="px-4 py-3">Status</th>
-                                    <th className="px-4 py-3 text-right">Acción</th>
-                                </tr>
+                                {/* FIX: Headers en una sola línea para evitar Hydration Error */}
+                                <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Cliente (Cédula)</th><th className="px-4 py-3">Vencimiento</th><th className="px-4 py-3 text-right">Monto Ref</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Acción</th></tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {pendingCredits.map((credit) => (

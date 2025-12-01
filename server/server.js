@@ -227,10 +227,12 @@ app.get('/api/reports/credit-pending', async (req, res) => {
 // G. Marcar Crédito como PAGADO
 app.post('/api/sales/:id/pay-credit', async (req, res) => {
     const { id } = req.params;
+    const { paymentDetails } = req.body; // Nuevo detalle de pago
+    
     try {
         const result = await pool.query(
-            "UPDATE sales SET status = 'PAGADO', payment_method = payment_method || ' + [PAGO CRÉDITO SALDADO]' WHERE id = $1 AND status = 'PENDIENTE' RETURNING id",
-            [id]
+            "UPDATE sales SET status = 'PAGADO', payment_method = payment_method || ' + [PAGO SALDADO: ' || $2 || ']' WHERE id = $1 AND status = 'PENDIENTE' RETURNING id",
+            [id, paymentDetails]
         );
 
         if (result.rowCount === 0) {
@@ -307,11 +309,11 @@ app.get('/api/reports/recent-sales', async (req, res) => {
 // C. NUEVO: Alertas de Stock Bajo (Resuelve el 404 del log)
 app.get('/api/reports/low-stock', async (req, res) => {
     try {
-        // Asumimos un umbral de stock bajo como 10 (puede ajustarse)
+        // FIX: Se incluye stock <= 10 (incluyendo 0)
         const result = await pool.query(`
             SELECT id, name, stock, category
             FROM products
-            WHERE stock <= 10 AND stock > 0
+            WHERE stock <= 10
             ORDER BY stock ASC
         `);
         res.json(result.rows);
