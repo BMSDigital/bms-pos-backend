@@ -21,6 +21,7 @@ const pool = new Pool({
 
 // --- LÓGICA DE PRECIOS & SCRAPING BCV ---
 let globalBCVRate = 0; // Aquí guardamos la tasa en memoria
+const FALLBACK_RATE = 40.00; // Tasa de reserva en caso de fallo crítico
 const agent = new https.Agent({ rejectUnauthorized: false });
 
 async function actualizarTasaBCV() {
@@ -41,10 +42,29 @@ async function actualizarTasaBCV() {
             if (!isNaN(cleanRate) && cleanRate > 0) {
                 globalBCVRate = cleanRate;
                 console.log(`✅ Tasa BCV actualizada: ${globalBCVRate} Bs/$`);
+            } else {
+                // FALLBACK 1: Tasa extraída no es válida
+                console.warn('⚠️ Error: Tasa BCV extraída no es un número válido (> 0). Usando última conocida o FALLBACK.');
+                if (globalBCVRate === 0) {
+                    globalBCVRate = FALLBACK_RATE;
+                    console.log(`✅ Usando tasa de FALLBACK: ${globalBCVRate} Bs/$`);
+                }
+            }
+        } else {
+             // FALLBACK 2: Selector falló
+            console.warn('⚠️ Error: No se encontró el elemento de la tasa BCV. Usando última conocida o FALLBACK.');
+             if (globalBCVRate === 0) {
+                globalBCVRate = FALLBACK_RATE;
+                console.log(`✅ Usando tasa de FALLBACK: ${globalBCVRate} Bs/$`);
             }
         }
     } catch (error) {
-        console.error('⚠️ Error obteniendo BCV (Usando última tasa conocida):', error.message);
+         // FALLBACK 3: Fallo de conexión o request
+        console.error('⚠️ Error obteniendo BCV (Usando última tasa conocida o FALLBACK):', error.message);
+        if (globalBCVRate === 0) {
+            globalBCVRate = FALLBACK_RATE;
+            console.log(`✅ Usando tasa de FALLBACK: ${globalBCVRate} Bs/$`);
+        }
     }
 }
 
@@ -191,6 +211,33 @@ app.post('/api/sales', async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     } finally {
         client.release();
+    }
+});
+
+
+// 5. NUEVA RUTA: Buscar Cliente por Cédula/Nombre (Para el Frontend)
+app.get('/api/customers/search', async (req, res) => {
+    const { query } = req.query; 
+    if (!query) {
+        return res.status(400).json({ error: 'El parámetro "query" es requerido.' });
+    }
+    
+    // Normalizamos la consulta para búsqueda flexible (case-insensitive search)
+    const searchQuery = `%${query.toLowerCase()}%`; 
+
+    try {
+        const result = await pool.query(
+            `SELECT id, full_name, id_number, phone, institution 
+             FROM customers 
+             WHERE LOWER(id_number) LIKE $1 OR LOWER(full_name) LIKE $1 
+             ORDER BY full_name ASC 
+             LIMIT 10`,
+            [searchQuery]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error al buscar cliente:', err);
+        res.status(500).json({ error: 'Error al buscar cliente' });
     }
 });
 
