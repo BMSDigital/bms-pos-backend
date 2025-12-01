@@ -78,15 +78,15 @@ setInterval(actualizarTasaBCV, 3600000);
 async function findOrCreateCustomer(client, customerData) {
     const { full_name, id_number, phone, institution } = customerData;
     
-    // 1. Buscar cliente por identificador (Ahora solo busca clientes ACTIVO)
-    let result = await client.query("SELECT id FROM customers WHERE id_number = $1 AND status = 'ACTIVO'", [id_number]);
+    // 1. Buscar cliente por cédula
+    let result = await client.query('SELECT id FROM customers WHERE id_number = $1', [id_number]);
     if (result.rows.length > 0) {
         return result.rows[0].id;
     }
     
-    // 2. Si no existe, crear uno nuevo (Se inserta como ACTIVO por defecto)
-    const insertQuery = 'INSERT INTO customers (full_name, id_number, phone, institution, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id_number) DO UPDATE SET full_name = $1, phone = $3, institution = $4, status = $5 RETURNING id';
-    const insertValues = [full_name, id_number, phone || null, institution || null, 'ACTIVO'];
+    // 2. Si no existe, crear uno nuevo
+    const insertQuery = 'INSERT INTO customers (full_name, id_number, phone, institution) VALUES ($1, $2, $3, $4) RETURNING id';
+    const insertValues = [full_name, id_number, phone || null, institution || null];
     result = await client.query(insertQuery, insertValues);
     return result.rows[0].id;
 }
@@ -168,8 +168,7 @@ app.post('/api/sales', async (req, res) => {
         let dueDate = null;
         
         if (is_credit && customer_data) {
-            // El backend intenta buscar/crear al cliente incluso si la búsqueda inicial falló en el frontend.
-            customerId = await findOrCreateCustomer(client, customer_data); 
+            customerId = await findOrCreateCustomer(client, customer_data);
             saleStatus = 'PENDIENTE';
             
             // Calcular fecha de vencimiento: 15 o 30 días
@@ -216,8 +215,35 @@ app.post('/api/sales', async (req, res) => {
 });
 
 
+// 5. NUEVA RUTA: Buscar Cliente por Cédula/Nombre (Para el Frontend)
+app.get('/api/customers/search', async (req, res) => {
+    const { query } = req.query; 
+    if (!query) {
+        return res.status(400).json({ error: 'El parámetro "query" es requerido.' });
+    }
+    
+    // Normalizamos la consulta para búsqueda flexible (case-insensitive search)
+    const searchQuery = `%${query.toLowerCase()}%`; 
+
+    try {
+        const result = await pool.query(
+            `SELECT id, full_name, id_number, phone, institution 
+             FROM customers 
+             WHERE LOWER(id_number) LIKE $1 OR LOWER(full_name) LIKE $1 
+             ORDER BY full_name ASC 
+             LIMIT 10`,
+            [searchQuery]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error al buscar cliente:', err);
+        res.status(500).json({ error: 'Error al buscar cliente' });
+    }
+});
+
+
 // --- 5. REPORTES Y ESTADÍSTICAS (Actualizados) ---
-// ... (El resto de rutas de reportes y sales/:id se mantienen)
+
 // F. Listado de Cuentas por Cobrar (Créditos Pendientes)
 app.get('/api/reports/credit-pending', async (req, res) => {
     try {
@@ -343,84 +369,6 @@ app.get('/api/reports/low-stock', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-// ====================================================================
-// --- RUTAS: MÓDULO DE CLIENTES (Gestión de Clientes) ---
-// ====================================================================
-
-// A. Listar Clientes
-app.get('/api/customers', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM customers ORDER BY full_name ASC');
-        res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: 'Error al listar clientes' });
-    }
-});
-
-// B. Crear/Actualizar Cliente (Punto 4: Modificación/Edición)
-app.post('/api/customers', async (req, res) => {
-    const { id, full_name, id_number, phone, institution, status } = req.body;
-    
-    // Asumimos que las validaciones complejas de formato se hacen en el frontend
-    if (!full_name || !id_number || !status) {
-        return res.status(400).json({ error: 'Nombre, Identificador y Estatus son obligatorios.' });
-    }
-    
-    try {
-        let result;
-        if (id) {
-            // Actualizar cliente existente
-            const query = 'UPDATE customers SET full_name = $1, id_number = $2, phone = $3, institution = $4, status = $5 WHERE id = $6 RETURNING *';
-            const values = [full_name, id_number, phone, institution, status, id];
-            result = await pool.query(query, values);
-            if (result.rowCount === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
-        } else {
-            // Crear nuevo cliente (usando ON CONFLICT para manejar ID_NUMBER ya existentes)
-            const query = `
-                INSERT INTO customers (full_name, id_number, phone, institution, status) 
-                VALUES ($1, $2, $3, $4, $5) 
-                ON CONFLICT (id_number) DO UPDATE 
-                SET full_name = $1, phone = $3, institution = $4, status = $5
-                RETURNING *`;
-            const values = [full_name, id_number, phone, institution, status];
-            result = await pool.query(query, values);
-        }
-        res.json(result.rows[0]);
-
-    } catch (err) {
-        // Manejo de errores de base de datos
-        res.status(500).json({ error: `Error DB al guardar cliente: ${err.message}` });
-    }
-});
-
-// C. Búsqueda de Cliente (Corregida la variable searchQuery)
-app.get('/api/customers/search', async (req, res) => {
-    const { query } = req.query; 
-    if (!query) {
-        return res.status(400).json({ error: 'El parámetro "query" es requerido.' });
-    }
-    
-    // Corregido: La variable searchQuery debe ser definida aquí
-    const searchQuery = `%${query.toLowerCase()}%`; 
-
-    try {
-        const result = await pool.query(
-            `SELECT id, full_name, id_number, phone, institution 
-             FROM customers 
-             WHERE (LOWER(id_number) LIKE $1 OR LOWER(full_name) LIKE $1)
-             AND status = 'ACTIVO'
-             ORDER BY full_name ASC 
-             LIMIT 10`,
-            [searchQuery]
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Error al buscar cliente:', err);
-        res.status(500).json({ error: 'Error al buscar cliente' });
-    }
-});
-
 
 // Iniciar Servidor
 app.listen(port, () => {
