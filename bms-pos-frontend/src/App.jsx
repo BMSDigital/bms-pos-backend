@@ -63,7 +63,7 @@ function App() {
       setLowStock(stockRes.data);
       
       // NUEVO: Obtener créditos pendientes y contar vencidos
-      const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
+      const creditsRes = await axios.get(`${API_URL}/reports/credit-pending}`);
       setPendingCredits(creditsRes.data);
       const overdue = creditsRes.data.filter(c => c.is_overdue).length;
       setOverdueCount(overdue);
@@ -213,49 +213,16 @@ function App() {
       }
   }
 
-  // NUEVO: Función de validación y apertura de modal de cliente para Crédito
-  const handleCreditProcess = () => {
-      // 1. Verificar si solo se paga con Crédito o Crédito es el saldo pendiente
-      const creditAmount = parseFloat(paymentShares['Crédito']) || 0;
+  // NUEVA FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO
+  const processSale = async (isCreditFlow = false) => {
       
-      // La venta es a crédito si:
-      // a) Solo se pagó con Crédito y el monto es > 0, O
-      // b) Se usó Crédito y la suma total cubre el total
-      const paidCreditOnly = Object.keys(paymentShares).length === 1 && creditAmount > 0;
-      const creditUsed = creditAmount > 0;
+      const isCreditSale = isCreditFlow && (parseFloat(paymentShares['Crédito']) || 0) > 0;
 
-      if (!creditUsed) {
-          // Si Crédito no fue utilizado, procesar como pago normal.
-          processSale(); 
-          return;
-      }
-      
-      // 2. Si se usó crédito, verificar que el saldo esté cubierto (o cubierto por el crédito)
-      // Si el crédito se usó para el pago completo o parcial y el restante se cubre
-      // No necesitamos verificar si hay un monto pendiente si el crédito cubre el resto.
-      
-      if (remainingUSD > 0.05 && !paidCreditOnly) {
-           return Swal.fire('Monto Insuficiente', `Faltan Ref ${remainingUSD.toFixed(2)} por cubrir con otros métodos.`, 'warning');
-      }
-
-      // 3. Abrir modal de captura de cliente
-      setIsCustomerModalOpen(true);
-      setIsPaymentModalOpen(false); 
-  }
-  
-  // NUEVO: Función para procesar la venta a Crédito (después de capturar cliente)
-  const processCreditSale = async () => {
-      // Validar datos mínimos del cliente para Crédito
-      if (!customerData.full_name || !customerData.id_number) {
+      // 1. Validar datos mínimos del cliente para Crédito (si aplica)
+      if (isCreditSale && (!customerData.full_name || !customerData.id_number)) {
           return Swal.fire('Datos Incompletos', 'Nombre y Cédula son obligatorios para ventas a crédito.', 'warning');
       }
       
-      // La venta es a crédito si el monto de Crédito > 0.
-      const isCreditSale = (parseFloat(paymentShares['Crédito']) || 0) > 0;
-      
-      // Si la venta es a crédito, el payment_method solo debe reflejar la porción pagada por otros medios.
-      // Si es 100% crédito, payment_method debe ser 'Crédito (Ref): RefX.XX'.
-
       const paymentDescription = Object.entries(paymentShares)
           .filter(([_, amt]) => parseFloat(amt) > 0)
           .map(([method, amt]) => {
@@ -271,11 +238,11 @@ function App() {
               payment_method: paymentDescription || 'Pago Completo (0 USD)',
               items: cart.map(i => ({ product_id: i.id, quantity: i.quantity, price_usd: i.price_usd })),
               is_credit: isCreditSale, // Bandera para el backend
-              customer_data: customerData, // Datos del cliente
-              due_days: dueDays, // 15 o 30 días
+              customer_data: isCreditSale ? customerData : null, // Datos del cliente solo si es crédito
+              due_days: isCreditSale ? dueDays : null, // 15 o 30 días solo si es crédito
           };
           
-          Swal.fire({ title: 'Procesando Crédito...', didOpen: () => Swal.showLoading() });
+          Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
           await axios.post(`${API_URL}/sales`, saleData);
           
           Swal.fire({ 
@@ -288,10 +255,35 @@ function App() {
           // Resetear estados
           setCart([]);
           setIsCustomerModalOpen(false);
+          setIsPaymentModalOpen(false); // <--- Corrección: Cierra el modal principal de pago
           setCustomerData({ full_name: '', id_number: '', phone: '', institution: '' });
           fetchData(); 
       } catch (error) {
-          Swal.fire('Error', 'Fallo al procesar venta a crédito', 'error');
+          const message = error.response?.data?.message || error.message;
+          Swal.fire('Error', `Fallo al procesar ${isCreditSale ? 'crédito' : 'venta'}`, 'error');
+          console.error(error);
+      }
+  }
+
+
+  // Función de validación y apertura de modal de cliente para Crédito
+  const handleCreditProcess = () => {
+      // 1. Verificar si solo se paga con Crédito o Crédito es el saldo pendiente
+      const creditAmount = parseFloat(paymentShares['Crédito']) || 0;
+      const creditUsed = creditAmount > 0;
+      
+      // Verificación de saldo: Si hay saldo pendiente y no se usó crédito para cubrirlo
+      if (remainingUSD > 0.05 && (!creditUsed || creditAmount < remainingUSD)) {
+          return Swal.fire('Monto Insuficiente', `Faltan Ref ${remainingUSD.toFixed(2)} por cubrir.`, 'warning');
+      }
+
+      if (creditUsed) {
+          // Si se usó crédito, abrir modal de cliente.
+          setIsCustomerModalOpen(true);
+          setIsPaymentModalOpen(false); 
+      } else {
+          // Si es pago completo (no crédito), procesar directamente
+          processSale(false);
       }
   }
 
@@ -535,7 +527,8 @@ function App() {
                       </div>
 
                       <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleChange} value={customerData.full_name} 
-                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                          autoFocus={true} /> {/* <-- FIX: autoFocus */}
                       
                       <div className="grid grid-cols-2 gap-4">
                           <input type="text" name="id_number" placeholder="Cédula/RIF (*)" onChange={handleChange} value={customerData.id_number} 
@@ -552,7 +545,7 @@ function App() {
 
                   <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
                       <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm">Volver</button>
-                      <button onClick={processCreditSale} className="flex-1 py-3 text-white font-bold rounded-xl shadow-lg bg-higea-red hover:bg-red-700">
+                      <button onClick={() => processSale(true)} className="flex-1 py-3 text-white font-bold rounded-xl shadow-lg bg-higea-red hover:bg-red-700">
                           Confirmar Crédito
                       </button>
                   </div>
@@ -677,7 +670,8 @@ function App() {
            <div className="p-4 md:p-8 overflow-y-auto h-full">
               <h2 className="text-2xl font-black text-gray-800 mb-6">Panel Gerencial</h2>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+              {/* MODIFICACIÓN UX: Grid de 4 columnas para más información clave */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                   <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
                       <p className="text-gray-400 text-xs font-bold uppercase">Ventas Hoy (Ref)</p>
                       <p className="text-3xl font-black text-higea-blue mt-1">Ref {parseFloat(stats.total_usd).toFixed(2)}</p>
@@ -686,8 +680,12 @@ function App() {
                       <p className="text-gray-400 text-xs font-bold uppercase">Ventas Hoy (Bs)</p>
                       <p className="text-3xl font-black text-gray-800 mt-1">Bs {parseFloat(stats.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</p>
                   </div>
+                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-orange-100 bg-orange-50/30">
+                      <p className="text-orange-400 text-xs font-bold uppercase">Créditos Pendientes</p>
+                      <p className="text-3xl font-black text-orange-600 mt-1">{pendingCredits.length}</p>
+                  </div>
                   <div className="bg-white p-5 rounded-3xl shadow-sm border border-red-100 bg-red-50/30">
-                      <p className="text-red-400 text-xs font-bold uppercase">Alertas Stock</p>
+                      <p className="text-red-400 text-xs font-bold uppercase">Alertas Stock ({lowStock.length})</p>
                       <div className="mt-2 space-y-1 max-h-20 overflow-y-auto">
                           {lowStock.map((p, i) => (
                               <div key={i} className="flex justify-between text-xs"><span className="truncate w-3/4">{p.name}</span><span className="font-bold text-red-500">{p.stock}</span></div>
@@ -704,8 +702,8 @@ function App() {
                               <tr>
                                   <th className="px-4 py-3">ID</th>
                                   <th className="px-4 py-3">Fecha</th>
-                                  <th className="px-4 py-3">Método</th>
-                                  <th className="px-4 py-3">Status</th> {/* NUEVO */}
+                                  <th className="px-4 py-3">Cliente / Método</th> {/* MODIFICADO UX */}
+                                  <th className="px-4 py-3">Status</th> 
                                   <th className="px-4 py-3 text-right">Total Ref</th> 
                                   <th className="px-4 py-3 text-right">Total Bs</th> 
                               </tr>
@@ -715,7 +713,16 @@ function App() {
                                   <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer active:bg-blue-100">
                                       <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
                                       <td className="px-4 py-3">{sale.full_date}</td>
-                                      <td className="px-4 py-3"><span className="px-2 py-1 rounded bg-gray-100 text-[10px]">{sale.payment_method.slice(0, 30)}...</span></td> 
+                                      <td className="px-4 py-3"> {/* Muestra datos de cliente si es crédito, sino el método */}
+                                          {sale.status === 'PENDIENTE' && sale.full_name ? (
+                                              <div className="flex flex-col">
+                                                  <span className="font-bold text-gray-800 leading-tight">{sale.full_name}</span>
+                                                  <span className="text-xs text-gray-500">CI: {sale.id_number}</span>
+                                              </div>
+                                          ) : (
+                                              <span className="px-2 py-1 rounded bg-gray-100 text-[10px]">{sale.payment_method.slice(0, 30)}...</span>
+                                          )}
+                                      </td>
                                       <td className="px-4 py-3">
                                           <span className={`px-2 py-1 rounded text-[10px] font-bold ${
                                             sale.status === 'PENDIENTE' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'

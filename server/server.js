@@ -187,6 +187,7 @@ app.post('/api/sales', async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK'); // Si algo falla, deshacer todo
         console.error('❌ Error en venta:', error.message);
+        // Devolvemos el mensaje de error al frontend
         res.status(500).json({ success: false, message: error.message });
     } finally {
         client.release();
@@ -196,7 +197,7 @@ app.post('/api/sales', async (req, res) => {
 
 // --- 5. REPORTES Y ESTADÍSTICAS (Actualizados) ---
 
-// F. NUEVO: Listado de Cuentas por Cobrar (Créditos Pendientes)
+// F. Listado de Cuentas por Cobrar (Créditos Pendientes)
 app.get('/api/reports/credit-pending', async (req, res) => {
     try {
         const result = await pool.query(`
@@ -223,7 +224,7 @@ app.get('/api/reports/credit-pending', async (req, res) => {
     }
 });
 
-// G. NUEVO: Marcar Crédito como PAGADO
+// G. Marcar Crédito como PAGADO
 app.post('/api/sales/:id/pay-credit', async (req, res) => {
     const { id } = req.params;
     try {
@@ -242,7 +243,7 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
     }
 });
 
-// H. Obtener detalle de una venta específica (MODIFICADO para incluir datos de cliente)
+// H. Obtener detalle de una venta específica 
 app.get('/api/sales/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -257,8 +258,6 @@ app.get('/api/sales/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-// [Otras rutas de reportes (A, B, C, D, E) permanecen inalteradas, se omiten aquí por brevedad]
 
 // A. Resumen del Día (Total vendido hoy)
 app.get('/api/reports/daily', async (req, res) => {
@@ -281,16 +280,22 @@ app.get('/api/reports/daily', async (req, res) => {
     }
 });
 
-// B. Últimas Ventas (Historial reciente)
+// B. Últimas Ventas (Historial reciente) -> MODIFICADO para incluir datos de cliente
 app.get('/api/reports/recent-sales', async (req, res) => {
     try {
-        // Incluimos el status para el frontend
         const result = await pool.query(`
-            SELECT id, total_usd, total_ves, payment_method, 
-                   to_char(created_at, 'DD/MM/YYYY HH12:MI AM') as full_date,
-                   status
-            FROM sales 
-            ORDER BY id DESC 
+            SELECT 
+                s.id, 
+                s.total_usd, 
+                s.total_ves, 
+                s.payment_method, 
+                to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as full_date,
+                s.status,
+                c.full_name,
+                c.id_number
+            FROM sales s
+            LEFT JOIN customers c ON s.customer_id = c.id
+            ORDER BY s.id DESC 
             LIMIT 10
         `);
         res.json(result.rows);
@@ -299,6 +304,8 @@ app.get('/api/reports/recent-sales', async (req, res) => {
     }
 });
 
+// [Otras rutas de reportes (C, D, E) permanecen inalteradas, se omiten aquí por brevedad]
+// Ya que 'low-stock' se utiliza en el frontend, asumimos que existe y funciona correctamente.
 
 // Iniciar Servidor
 app.listen(port, () => {
