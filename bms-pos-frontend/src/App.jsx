@@ -111,16 +111,17 @@ function App() {
 
   // Función para cargar datos de cliente en el formulario de edición
   const editCustomer = (customer) => {
-      setCustomerForm({
-          id: customer.id,
-          full_name: customer.full_name,
-          id_number: customer.id_number,
-          phone: customer.phone || '',
-          institution: customer.institution || '',
-          status: customer.status,
-      });
-      window.scrollTo(0, 0); 
-  }
+    setCustomerForm({
+        id: customer.id,
+        full_name: customer.full_name,
+        id_number: customer.id_number,
+        phone: customer.phone || '',
+        institution: customer.institution || '',
+        // Agregamos el fallback por si algún cliente antiguo no tiene 'status'
+        status: customer.status || 'ACTIVO', 
+    });
+    window.scrollTo(0, 0); 
+}
   
   // Función para guardar/actualizar el cliente
   const saveCustomer = async (e) => {
@@ -1148,12 +1149,14 @@ function App() {
                                         <td className="px-4 py-3 font-medium">{customer.id_number}</td>
                                         <td className="px-4 py-3">{customer.phone || 'N/A'}</td>
                                         <td className="px-4 py-3">
-                                            <span className={`px-2 py-1 rounded text-[10px] font-bold ${
-                                                customer.status === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
-                                            }`}>
-                                                {customer.status}
-                                            </span>
-                                        </td>
+							<span className={`px-2 py-1 rounded text-[10px] font-bold ${
+								// Usamos el fallback 'ACTIVO' tanto para el color...
+								(customer.status || 'ACTIVO') === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+							}`}>
+							{/* ...como para el texto visible */}
+								{customer.status || 'ACTIVO'} 
+							</span>
+							</td>
                                         <td className="px-4 py-3 text-right">
                                             <button onClick={() => editCustomer(customer)} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700 active:scale-95 transition-transform">
                                                 Editar

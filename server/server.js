@@ -362,10 +362,12 @@ app.get('/api/customers', async (req, res) => {
 app.post('/api/customers', async (req, res) => {
     const { id, full_name, id_number, phone, institution, status } = req.body;
     
-    // Asumimos que las validaciones complejas de formato se hacen en el frontend
     if (!full_name || !id_number || !status) {
         return res.status(400).json({ error: 'Nombre, Identificador y Estatus son obligatorios.' });
     }
+    
+    // FORZAMOS UNA NUEVA CONEXIÓN PARA ELIMINAR EL CACHÉ DE ESQUEMA ANTIGUO
+    const client = await pool.connect(); 
     
     try {
         let result;
@@ -373,7 +375,7 @@ app.post('/api/customers', async (req, res) => {
             // Actualizar cliente existente
             const query = 'UPDATE customers SET full_name = $1, id_number = $2, phone = $3, institution = $4, status = $5 WHERE id = $6 RETURNING *';
             const values = [full_name, id_number, phone, institution, status, id];
-            result = await pool.query(query, values);
+            result = await client.query(query, values); // <-- CAMBIO A client.query
             if (result.rowCount === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
         } else {
             // Crear nuevo cliente (usando ON CONFLICT para manejar ID_NUMBER ya existentes)
@@ -384,13 +386,14 @@ app.post('/api/customers', async (req, res) => {
                 SET full_name = $1, phone = $3, institution = $4, status = $5
                 RETURNING *`;
             const values = [full_name, id_number, phone, institution, status];
-            result = await pool.query(query, values);
+            result = await client.query(query, values); // <-- CAMBIO A client.query
         }
         res.json(result.rows[0]);
 
     } catch (err) {
-        // Manejo de errores de base de datos
         res.status(500).json({ error: `Error DB al guardar cliente: ${err.message}` });
+    } finally {
+        client.release(); // LIBERAR la conexión temporal
     }
 });
 
