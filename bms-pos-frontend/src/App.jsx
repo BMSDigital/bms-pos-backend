@@ -34,7 +34,7 @@ function App() {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null); 
   // NUEVO: Estado para el modal de captura de cliente (Crédito)
-  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false); // INTEGRACIÓN
   
   // --- ESTADOS DE CRÉDITO Y PAGO ---
   const [paymentShares, setPaymentShares] = useState({}); 
@@ -43,19 +43,20 @@ function App() {
   const [currentInputValue, setCurrentInputValue] = useState('');
   const [paymentReferences, setPaymentReferences] = useState({});
   const [currentReference, setCurrentReference] = useState(''); 
-  const [customerData, setCustomerData] = useState({ full_name: '', id_number: '', phone: '', institution: '' });
-  const [dueDays, setDueDays] = useState(15);
+  // ESTADOS DE CRÉDITO
+  const [customerData, setCustomerData] = useState({ full_name: '', id_number: '', phone: '', institution: '' }); // INTEGRACIÓN
+  const [dueDays, setDueDays] = useState(15); // INTEGRACIÓN
   
   // Data Dashboard y Reportes de Crédito
   const [stats, setStats] = useState({ total_usd: 0, total_ves: 0, total_transactions: 0 });
   const [recentSales, setRecentSales] = useState([]);
   // NUEVO: Estado para créditos pendientes
-  const [pendingCredits, setPendingCredits] = useState([]); 
+  const [pendingCredits, setPendingCredits] = useState([]); // INTEGRACIÓN
   const [lowStock, setLowStock] = useState([]);
   // NUEVO: Estado para notificaciones de vencimiento
-  const [overdueCount, setOverdueCount] = useState(0); 
+  const [overdueCount, setOverdueCount] = useState(0); // INTEGRACIÓN
 
-  // NUEVOS ESTADOS para búsqueda de cliente (Mejora 2)
+  // NUEVOS ESTADOS para búsqueda de cliente
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [customerSearchResults, setCustomerSearchResults] = useState([]);
   const [isSearchingCustomer, setIsSearchingCustomer] = useState(false);
@@ -81,7 +82,7 @@ function App() {
       const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
       setLowStock(stockRes.data);
       
-      // FIX: Eliminada la llave '}' extra que causaba el error 404 en la URL.
+      // INTEGRACIÓN DE REPORTES DE CRÉDITO
       const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`); 
       setPendingCredits(creditsRes.data);
       const overdue = creditsRes.data.filter(c => c.is_overdue).length;
@@ -132,12 +133,12 @@ function App() {
   const totalUSD = cart.reduce((sum, item) => sum + (parseFloat(item.price_usd) * item.quantity), 0);
   const totalVES = totalUSD * bcvRate;
   
-  // Lista de métodos de pago con su tipo de moneda
+  // Lista de métodos de pago con su tipo de moneda (Crédito incluido)
   const paymentMethods = [
       { name: 'Efectivo Ref', currency: 'Ref' },
       { name: 'Efectivo Bs', currency: 'Bs' },
       { name: 'Zelle', currency: 'Ref' },
-      { name: 'Crédito', currency: 'Ref' }, // Método clave para gestión de clientes
+      { name: 'Crédito', currency: 'Ref' }, 
       { name: 'Pago Móvil', currency: 'Bs' },
       { name: 'Punto de Venta', currency: 'Bs' },
   ];
@@ -235,9 +236,8 @@ function App() {
       }
   }
   
-  // NUEVA FUNCIÓN: Buscar cliente en el backend (Mejora 2)
+  // FUNCIÓN: Buscar cliente en el backend (INTEGRACIÓN)
   const searchCustomers = async (query) => {
-      // Búsqueda solo si hay 3 o más caracteres
       if (query.length < 3) {
           setCustomerSearchResults([]);
           return;
@@ -255,7 +255,7 @@ function App() {
   };
 
 
-  // NUEVA FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO
+  // FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO (INTEGRACIÓN)
   const processSale = async (isCreditFlow = false) => {
       
       const isCreditSale = isCreditFlow && (parseFloat(paymentShares['Crédito']) || 0) > 0;
@@ -279,9 +279,9 @@ function App() {
           const saleData = {
               payment_method: paymentDescription || 'Pago Completo (0 USD)',
               items: cart.map(i => ({ product_id: i.id, quantity: i.quantity, price_usd: i.price_usd })),
-              is_credit: isCreditSale, // Bandera para el backend
-              customer_data: isCreditSale ? customerData : null, // Datos del cliente solo si es crédito
-              due_days: isCreditSale ? dueDays : null, // 15 o 30 días solo si es crédito
+              is_credit: isCreditSale, 
+              customer_data: isCreditSale ? customerData : null, 
+              due_days: isCreditSale ? dueDays : null, 
           };
           
           Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
@@ -297,7 +297,7 @@ function App() {
           // Resetear estados
           setCart([]);
           setIsCustomerModalOpen(false);
-          setIsPaymentModalOpen(false); // <--- Corrección: Cierra el modal principal de pago
+          setIsPaymentModalOpen(false); 
           setCustomerData({ full_name: '', id_number: '', phone: '', institution: '' });
           fetchData(); 
       } catch (error) {
@@ -308,30 +308,25 @@ function App() {
   }
 
 
-  // Función de validación y apertura de modal de cliente para Crédito
+  // Función de validación y apertura de modal de cliente para Crédito (INTEGRACIÓN)
   const handleCreditProcess = () => {
-      // 1. Verificar si solo se paga con Crédito o Crédito es el saldo pendiente
       const creditAmount = parseFloat(paymentShares['Crédito']) || 0;
       const creditUsed = creditAmount > 0;
       
-      // Verificación de saldo: Si hay saldo pendiente y no se usó crédito para cubrirlo
       if (remainingUSD > 0.05 && (!creditUsed || creditAmount < remainingUSD)) {
           return Swal.fire('Monto Insuficiente', `Faltan Ref ${remainingUSD.toFixed(2)} por cubrir.`, 'warning');
       }
 
       if (creditUsed) {
-          // Si se usó crédito, abrir modal de cliente.
           setIsCustomerModalOpen(true);
           setIsPaymentModalOpen(false); 
       } else {
-          // Si es pago completo (no crédito), procesar directamente
           processSale(false);
       }
   }
 
-  // --- Funciones de Reporte de Crédito ---
+  // --- Funciones de Reporte de Crédito --- (INTEGRACIÓN)
   const markAsPaid = async (saleId) => {
-      // Estado temporal para el método de pago y referencia del saldo
       let paymentMethod = '';
       let paymentReference = '';
 
@@ -340,7 +335,6 @@ function App() {
           html:
               '<h4 class="text-lg font-bold text-gray-700 mb-4">Confirmar Método de Pago</h4>' +
               '<select id="swal-payment-method" class="swal2-input">' +
-              // Métodos de pago disponibles para saldar
               '<option value="EFECTIVO_USD">Efectivo Ref</option>' +
               '<option value="ZELLE">Zelle</option>' +
               '<option value="PAGO_MOVIL">Pago Móvil (Bs)</option>' +
@@ -350,7 +344,7 @@ function App() {
               '<input id="swal-payment-ref" class="swal2-input" placeholder="Referencia / Últimos 4 dígitos">',
           focusConfirm: false,
           showCancelButton: true,
-          confirmButtonText: 'Saldar Cuenta Completo', // FIX: Nombre más profesional
+          confirmButtonText: 'Saldar Cuenta Completo', 
           cancelButtonText: 'Cancelar',
           confirmButtonColor: '#0056B3',
           preConfirm: () => {
@@ -361,7 +355,6 @@ function App() {
                   Swal.showValidationMessage('Debe seleccionar un método de pago.');
                   return false;
               }
-              // Validación simple de referencia si el método no es Efectivo
               if (paymentMethod !== 'EFECTIVO_USD' && !paymentReference.trim()) {
                   Swal.showValidationMessage('La referencia es obligatoria para este método.');
                   return false;
@@ -374,7 +367,7 @@ function App() {
           try {
               const paymentDetails = `${formValues.paymentMethod}${formValues.paymentReference ? ` [Ref: ${formValues.paymentReference}]` : ''}`;
               
-              await axios.post(`${API_URL}/sales/${saleId}/pay-credit`, { paymentDetails }); // FIX: Envía el detalle
+              await axios.post(`${API_URL}/sales/${saleId}/pay-credit`, { paymentDetails }); 
               
               Swal.fire('¡Saldado!', 'El crédito ha sido marcado como PAGADO. Método registrado.', 'success');
               fetchData();
@@ -388,17 +381,16 @@ function App() {
       try {
           const res = await axios.get(`${API_URL}/sales/${sale.id}`);
           
-          // Incluimos todos los datos de la venta para el detalle, incluyendo datos de cliente si existen
           setSelectedSaleDetail({ 
               id: sale.id, 
               items: res.data, 
               payment_method: sale.payment_method, 
               total_usd: sale.total_usd,
               total_ves: sale.total_ves,
-              status: sale.status,
-              full_name: sale.full_name,
-              id_number: sale.id_number,
-              due_date: sale.due_date,
+              status: sale.status, // INTEGRACIÓN
+              full_name: sale.full_name, // INTEGRACIÓN
+              id_number: sale.id_number, // INTEGRACIÓN
+              due_date: sale.due_date, // INTEGRACIÓN
           });
       } catch (error) { console.error(error); }
   };
@@ -526,7 +518,8 @@ function App() {
                               onChange={(e) => setCurrentReference(e.target.value.toUpperCase())}
                               placeholder="Ej: A1234, 1234567" 
                               className="w-full border-2 border-gray-200 focus:border-higea-blue rounded-xl p-3 text-lg font-bold text-gray-800 transition-colors"
-                              // autoFocus // Removido: El modal se enfoca automáticamente
+                              // FIX CRUCIAL DE 01.jsx: Usar autoFocus para posicionar el cursor automáticamente
+                              autoFocus={true} 
                           />
                       </div>
                   )}
@@ -537,7 +530,8 @@ function App() {
                           <button 
                               key={key} 
                               onClick={() => handleNumpadClick(key)} 
-                              onMouseDown={(e) => e.preventDefault()}
+                              // FIX CRUCIAL: onMouseDown para prevenir el robo de foco
+                              onMouseDown={(e) => e.preventDefault()} 
                               className={`p-4 rounded-xl text-2xl font-bold transition-colors ${key === 'C' ? 'bg-red-100 text-red-600' : 'bg-gray-100 hover:bg-gray-200'}`}
                           >
                               {key}
@@ -545,7 +539,8 @@ function App() {
                       ))}
                       <button 
                           onClick={handleNumpadClick.bind(null, 'DEL')} 
-                          onMouseDown={(e) => e.preventDefault()}
+                          // FIX CRUCIAL: onMouseDown para prevenir el robo de foco
+                          onMouseDown={(e) => e.preventDefault()} 
                           className="col-span-1 p-4 rounded-xl text-2xl font-bold bg-gray-100 hover:bg-gray-200"
                       >
                           ⌫
@@ -556,14 +551,16 @@ function App() {
                   <div className="p-4 pt-0 flex flex-col gap-2">
                       <button 
                           onClick={handlePayRemaining} 
-                          onMouseDown={(e) => e.preventDefault()}
+                          // FIX CRUCIAL: onMouseDown para prevenir el robo de foco
+                          onMouseDown={(e) => e.preventDefault()} 
                           className="w-full bg-yellow-500 text-white font-bold py-3 rounded-xl hover:bg-yellow-600"
                       >
                           PAGAR SALDO ({currencySymbol})
                       </button>
                       <button 
                           onClick={handleConfirm} 
-                          onMouseDown={(e) => e.preventDefault()}
+                          // FIX CRUCIAL: onMouseDown para prevenir el robo de foco
+                          onMouseDown={(e) => e.preventDefault()} 
                           className="w-full bg-higea-blue text-white font-bold py-3 rounded-xl hover:bg-blue-700"
                       >
                           CONFIRMAR MONTO
@@ -574,119 +571,172 @@ function App() {
       );
   };
 
-  // Componente Modal de Captura de Cliente (Aparece SÓLO si se usa Crédito)
+  // Componente Modal de Captura de Cliente (INTEGRADO Y CORREGIDO)
   const CustomerModal = () => {
-      const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
-      
-      // Implementación de debounce para la búsqueda (Mejora 2)
-      const debouncedSearch = useCallback(
-          debounce((query) => searchCustomers(query), 300),
-          []
-      );
+    // ... (Estados y Debounce se mantienen igual)
+    const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
+    const isIdNumberValid = customerData.id_number.trim().length > 3;
 
-      const handleIdChange = (e) => {
-          const value = e.target.value.toUpperCase();
-          setCustomerData(prev => ({ ...prev, id_number: value }));
-          // Usa el valor de la cédula para buscar
-          debouncedSearch(value); 
-      };
-      
-      const handleNameChange = (e) => {
-          const value = e.target.value;
-          setCustomerData(prev => ({ ...prev, full_name: value }));
-          // Usa el valor del nombre para buscar
-          debouncedSearch(value); 
-      };
+    // Implementación de debounce para la búsqueda (Se mantiene)
+    const debouncedSearch = useCallback(
+        debounce((query) => searchCustomers(query), 300),
+        []
+    );
 
-      const handleSelectCustomer = (customer) => {
-          // Al seleccionar, llenar el formulario con los datos del cliente
-          setCustomerData({
-              full_name: customer.full_name,
-              id_number: customer.id_number,
-              phone: customer.phone || '',
-              institution: customer.institution || '',
-          });
-          setCustomerSearchResults([]); // Cerrar resultados
-      };
+    const handleIdChange = (e) => {
+        const value = e.target.value.toUpperCase();
+        setCustomerData(prev => ({ 
+            ...prev, 
+            id_number: value,
+            // Limpia otros campos si el ID se modifica, forzando la selección o el registro manual
+            full_name: '',
+            phone: '',
+            institution: '',
+        }));
+        
+        if (value.length > 3) {
+             debouncedSearch(value);
+        } else {
+             setCustomerSearchResults([]);
+        }
+    };
+    
+    const handleNameChange = (e) => {
+        const value = e.target.value;
+        setCustomerData(prev => ({ ...prev, full_name: value }));
+    };
 
-      const handleChange = (e) => {
-          const { name, value } = e.target;
-          // Solo para campos que no son de búsqueda (teléfono, institución)
-          if (name !== 'full_name' && name !== 'id_number') {
-              setCustomerData(prev => ({ ...prev, [name]: value }));
-          }
-      };
-      
-      // Removida la función handleBlur que era un workaround para móviles
+    const handleSelectCustomer = (customer) => {
+        setCustomerData({
+            full_name: customer.full_name,
+            id_number: customer.id_number,
+            phone: customer.phone || '',
+            institution: customer.institution || '',
+        });
+        setCustomerSearchResults([]); 
+        
+        // Enfocar el siguiente campo después de la selección
+        document.getElementById('full_name_input').focus(); 
+    };
 
-      return (
-          <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
-                  <div className="bg-higea-blue p-5 text-white text-center">
-                      <h3 className="text-xl font-bold">Registro de Crédito</h3>
-                      <p className="text-sm mt-1">Total a Financiar: Ref {totalUSD.toFixed(2)}</p>
-                  </div>
-                  
-                  <div className="p-5 space-y-4">
-                      <div className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-200">
-                          <span className="font-bold text-yellow-800 text-sm">Plazo de Pago</span>
-                          <div className="flex gap-2">
-                            <button onClick={() => setDueDays(15)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 15 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>15 Días</button>
-                            <button onClick={() => setDueDays(30)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 30 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>30 Días</button>
-                          </div>
-                      </div>
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setCustomerData(prev => ({ ...prev, [name]: value }));
+    };
+    
+    // Lógica para mostrar un mensaje si no se encontró el cliente
+    const shouldShowNewCustomerMessage = (
+        isIdNumberValid && 
+        customerSearchResults.length === 0 && 
+        !isSearchingCustomer && 
+        customerData.full_name === ''
+    );
+    
+    // Determinar si todos los campos obligatorios están llenos
+    const isFormReadyToSubmit = customerData.full_name && customerData.id_number;
 
-                      {/* CAMPO DE CÉDULA/RIF CON BÚSQUEDA (Mejora 2) */}
-                      <div className="relative">
-                          <input type="text" name="id_number" placeholder="Cédula/RIF (*)" onChange={handleIdChange} value={customerData.id_number} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
-                              autoFocus={true} 
-                              /> 
-                          
-                          {/* RESULTADOS DE BÚSQUEDA (Si hay) */}
-                          {customerSearchResults.length > 0 && (
-                              <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-lg z-10 max-h-40 overflow-y-auto">
-                                  {customerSearchResults.map(customer => (
-                                      <div 
-                                          key={customer.id} 
-                                          onClick={() => handleSelectCustomer(customer)}
-                                          className="p-3 border-b border-gray-100 hover:bg-blue-50 cursor-pointer"
-                                      >
-                                          <p className="font-bold text-gray-800 leading-tight">{customer.full_name}</p>
-                                          <p className="text-xs text-gray-500">CI: {customer.id_number} - {customer.institution}</p>
-                                      </div>
-                                  ))}
-                              </div>
-                          )}
-                      </div>
-                      
-                      <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleNameChange} value={customerData.full_name} 
-                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                          onFocus={() => setCustomerSearchResults([])} // Opcional: Cerrar búsqueda al enfocarse
-                          /> 
-                      
-                      <div className="grid grid-cols-2 gap-4">
-                          <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onFocus={() => setCustomerSearchResults([])} />
-                          <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onFocus={() => setCustomerSearchResults([])} />
-                      </div>
-                          
-                      {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago. Se requiere Nombre y Cédula/RIF.</p>}
-                  </div>
+    return (
+        <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
+                <div className="bg-higea-blue p-5 text-white text-center">
+                    <h3 className="text-xl font-bold">Registro de Crédito</h3>
+                    <p className="text-sm mt-1">Total a Financiar: Ref {totalUSD.toFixed(2)}</p>
+                </div>
+                
+                <div className="p-5 space-y-4">
+                    <div className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-200">
+                        <span className="font-bold text-yellow-800 text-sm">Plazo de Pago</span>
+                        <div className="flex gap-2">
+                          <button onClick={() => setDueDays(15)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 15 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>15 Días</button>
+                          <button onClick={() => setDueDays(30)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 30 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>30 Días</button>
+                        </div>
+                    </div>
 
-                  <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
-                      <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm">Volver</button>
-                      <button onClick={() => processSale(true)} className="flex-1 py-3 text-white font-bold rounded-xl shadow-lg bg-higea-red hover:bg-red-700">
-                          Confirmar Crédito
-                      </button>
-                  </div>
-              </div>
-          </div>
-      );
-  }
+                    {/* CAMPO DE IDENTIFICACIÓN OFICIAL (MEJORA UX INTERNACIONAL) */}
+                    <div className="relative">
+                        <input 
+                            type="text" 
+                            name="id_number" 
+                            // 1. Identificación Universal
+                            placeholder="Cédula/RIF (*)" 
+                            onChange={handleIdChange} 
+                            value={customerData.id_number} 
+                            className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
+                            autoFocus={true} 
+                            style={{ paddingRight: isSearchingCustomer ? '40px' : '15px' }}
+                        /> 
+                        
+                        {isSearchingCustomer && (
+                            <div className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>
+                        )}
+                        
+                        {/* RESULTADOS DE BÚSQUEDA */}
+                        {customerSearchResults.length > 0 && (
+                            <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-lg z-10 max-h-40 overflow-y-auto">
+                                <p className="p-2 text-xs text-gray-400 font-bold border-b">Clientes Encontrados ({customerSearchResults.length})</p>
+                                {customerSearchResults.map(customer => (
+                                    <div 
+                                        key={customer.id_number} 
+                                        onClick={() => handleSelectCustomer(customer)}
+                                        className="p-3 border-b border-gray-100 hover:bg-blue-50 cursor-pointer"
+                                    >
+                                        <p className="font-bold text-gray-800 leading-tight">{customer.full_name}</p>
+                                        <p className="text-xs text-gray-500">ID: {customer.id_number} - {customer.institution || 'Sin Ref.'}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    
+                    {/* MENSAJE EXPLÍCITO DE NUEVO CLIENTE */}
+                    {shouldShowNewCustomerMessage && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-800 font-medium flex items-center gap-2">
+                             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.3 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                             ID no encontrado. Llene el formulario para **registrar un nuevo cliente**.
+                        </div>
+                    )}
+                    
+                    {/* CAMPOS DE REGISTRO (DESHABILITADOS SI NO HAY ID VÁLIDO) */}
+                    <input 
+                        type="text" 
+                        name="full_name" 
+                        id="full_name_input"
+                        placeholder="Nombre Completo (*)" 
+                        onChange={handleNameChange} 
+                        value={customerData.full_name} 
+                        className={`w-full border p-3 rounded-xl focus:border-higea-blue outline-none ${!isIdNumberValid ? 'bg-gray-100' : ''}`} 
+                        disabled={!isIdNumberValid} 
+                        /> 
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                        <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
+                            className={`w-full border p-3 rounded-xl focus:border-higea-blue outline-none ${!isIdNumberValid ? 'bg-gray-100' : ''}`} 
+                            disabled={!isIdNumberValid} 
+                            />
+                        <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
+                            className={`w-full border p-3 rounded-xl focus:border-higea-blue outline-none ${!isIdNumberValid ? 'bg-gray-100' : ''}`} 
+                            disabled={!isIdNumberValid} 
+                            />
+                    </div>
+                        
+                    {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago. Se requiere Nombre e Identificación Oficial.</p>}
+                </div>
+
+                <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
+                    <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm">Volver</button>
+                    <button 
+                        onClick={() => processSale(true)} 
+                        disabled={!isFormReadyToSubmit} 
+                        className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all ${!isFormReadyToSubmit ? 'bg-gray-300' : 'bg-higea-red hover:bg-red-700'}`}
+                    >
+                        Confirmar Crédito
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+  
 
 
   // --- RESTO DE COMPONENTES Y LÓGICA DE UI ---
@@ -905,7 +955,7 @@ function App() {
                                         <td className="px-4 py-3 text-right font-black text-higea-red">Ref {parseFloat(credit.total_usd).toFixed(2)}</td>
                                         <td className="px-4 py-3">
                                             <span className={`px-2 py-1 rounded text-[10px] font-bold ${credit.is_overdue ? 'bg-red-200 text-red-800' : 'bg-yellow-200 text-yellow-800'}`}>
-                                                {credit.is_overdue ? 'VENCIDO' : credit.status}
+                                                {credit.status}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-right">
