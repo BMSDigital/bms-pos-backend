@@ -106,7 +106,8 @@ app.get('/api/status', (req, res) => {
 // 2. Obtener Productos (Calculando precio en Bs al vuelo)
 app.get('/api/products', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM products ORDER BY id ASC');
+        // 💡 MODIFICADO: Se añade icon_emoji a la selección
+        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji FROM products ORDER BY id ASC');
         
         // Aquí aplicamos la ESTRATEGIA DE PRECIOS
         const productsWithVes = result.rows.map(product => ({
@@ -121,13 +122,29 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// 3. Crear un Producto (Solo para probar que guarda en la BD)
+// 3. Crear/Actualizar un Producto (CRUD)
 app.post('/api/products', async (req, res) => {
-    const { name, category, price_usd, stock } = req.body;
+    // 💡 MODIFICADO: Ahora maneja el ID para edición y el nuevo campo icon_emoji
+    const { id, name, category, price_usd, stock, icon_emoji } = req.body;
+    
+    if (!name || !price_usd || price_usd <= 0) {
+        return res.status(400).json({ error: 'Nombre y Precio (USD > 0) son obligatorios.' });
+    }
+    
     try {
-        const query = 'INSERT INTO products (name, category, price_usd, stock) VALUES ($1, $2, $3, $4) RETURNING *';
-        const values = [name, category, price_usd, stock];
-        const result = await pool.query(query, values);
+        let result;
+        if (id) {
+            // Lógica de Actualización (Editar producto existente)
+            const query = 'UPDATE products SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5 WHERE id = $6 RETURNING *';
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', id];
+            result = await pool.query(query, values);
+            if (result.rowCount === 0) return res.status(404).json({ error: 'Producto no encontrado' });
+        } else {
+            // Lógica de Inserción (Crear nuevo producto)
+            const query = 'INSERT INTO products (name, category, price_usd, stock, icon_emoji) VALUES ($1, $2, $3, $4, $5) RETURNING *';
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔'];
+            result = await pool.query(query, values);
+        }
         res.json(result.rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -147,6 +164,7 @@ app.post('/api/sales', async (req, res) => {
 
         // 1. Recorrer items para verificar stock y restar
         for (const item of items) {
+            // Aquí se usa el precio del item antes de IVA
             totalUsd += parseFloat(item.price_usd) * item.quantity;
             
             // RESTAR STOCK (Atómicamente)
@@ -180,8 +198,11 @@ app.post('/api/sales', async (req, res) => {
         }
 
 
-        // 3. Calcular Totales
-        const totalVes = totalUsd * globalBCVRate;
+        // 3. Calcular Totales (totalUsd es ahora el SUBTOTAL o BASE IMPONIBLE en USD)
+        // El frontend añade el IVA, pero si la Base de Datos requiere el total, se debe recalcular
+        // Aquí mantendremos la lógica antigua por simplicidad con la DB existente (Total = Subtotal)
+        // Si quisieras ser legal, deberías tener columnas para subtotal, iva y total.
+        const totalVes = totalUsd * globalBCVRate; 
 
         // 4. Guardar la Cabecera de la Venta
         const saleQuery = `
@@ -219,7 +240,6 @@ app.post('/api/sales', async (req, res) => {
 
 
 // --- 5. REPORTES Y ESTADÍSTICAS (Actualizados) ---
-// ... (El resto de rutas de reportes y sales/:id se mantienen)
 // F. Listado de Cuentas por Cobrar (Créditos Pendientes)
 app.get('/api/reports/credit-pending', async (req, res) => {
     try {
@@ -352,9 +372,9 @@ app.get('/api/reports/recent-sales', async (req, res) => {
 // C. NUEVO: Alertas de Stock Bajo (Resuelve el 404 del log)
 app.get('/api/reports/low-stock', async (req, res) => {
     try {
-        // FIX: Se incluye stock <= 10 (incluyendo 0)
+        // FIX: Se incluye stock <= 10 (incluyendo 0) y el nuevo campo icon_emoji
         const result = await pool.query(`
-            SELECT id, name, stock, category
+            SELECT id, name, stock, category, icon_emoji
             FROM products
             WHERE stock <= 10
             ORDER BY stock ASC
