@@ -43,9 +43,12 @@ const debounce = (func, delay) => {
     };
 };
 
-// 💡 MEJORA UX/ARQUITECTURA: Uso de variables de entorno de Vite
+// 💡 MEJORA ARQUITECTURA: Uso de variables de entorno de Vite
 // Necesitas un archivo .env en la raíz del frontend con VITE_API_URL
 const API_URL = import.meta.env.VITE_API_URL || 'https://bms-postventa-api.onrender.com/api';
+
+// 🇻🇪 REQUISITO LEGAL: Tasa de IVA estándar en Venezuela
+const IVA_RATE = 0.16; 
 
 function App() {
   // --- ESTADOS PRINCIPALES ---
@@ -69,7 +72,6 @@ function App() {
   const [paymentShares, setPaymentShares] = useState({}); 
   const [isNumpadOpen, setIsNumpadOpen] = useState(false);
   const [currentMethod, setCurrentMethod] = useState('');
-  // 🐞 CORRECCIÓN CRÍTICA: Inicialización correcta del estado
   const [currentInputValue, setCurrentInputValue] = useState(''); 
   const [paymentReferences, setPaymentReferences] = useState({});
   const [currentReference, setCurrentReference] = useState(''); 
@@ -89,7 +91,13 @@ function App() {
 
   // ESTADOS para el módulo de Clientes
   const [allCustomers, setAllCustomers] = useState([]);
+  const [filteredCustomers, setFilteredCustomers] = useState([]); // 💡 NUEVO: Estado para filtrar la lista
+  const [customerSearchQuery, setCustomerSearchQuery] = useState(''); // 💡 NUEVO: Estado para el input de búsqueda
   const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
+
+  // ESTADOS para el módulo de Productos (Esqueleto CRUD)
+  const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0 });
+
 
   // 1. Carga inicial de datos al montar el componente
   useEffect(() => { fetchData(); }, []);
@@ -100,6 +108,22 @@ function App() {
           loadCustomers();
       }
   }, [view]);
+
+  // 💡 NUEVO: Lógica de filtro para la tabla de clientes
+  useEffect(() => {
+      if (customerSearchQuery) {
+          const lowerQuery = customerSearchQuery.toLowerCase();
+          const results = allCustomers.filter(c => 
+              c.full_name.toLowerCase().includes(lowerQuery) || 
+              c.id_number.toLowerCase().includes(lowerQuery) ||
+              c.phone?.includes(lowerQuery)
+          );
+          setFilteredCustomers(results);
+      } else {
+          setFilteredCustomers(allCustomers);
+      }
+  }, [customerSearchQuery, allCustomers]);
+
 
   // Función de carga de clientes (usada en el useEffect anterior)
   const loadCustomers = async () => {
@@ -119,7 +143,6 @@ function App() {
         id_number: customer.id_number,
         phone: customer.phone || '',
         institution: customer.institution || '',
-        // Agregamos el fallback por si algún cliente antiguo no tiene 'status'
         status: customer.status || 'ACTIVO', 
     });
     window.scrollTo(0, 0); 
@@ -238,9 +261,11 @@ function App() {
     });
   };
 
-  // --- CÁLCULOS PRINCIPALES ---
-  const totalUSD = cart.reduce((sum, item) => sum + (parseFloat(item.price_usd) * item.quantity), 0);
-  const totalVES = totalUSD * bcvRate;
+  // --- CÁLCULOS PRINCIPALES (CON IVA) ---
+  const subtotalUSD = cart.reduce((sum, item) => sum + (parseFloat(item.price_usd) * item.quantity), 0);
+  const ivaUSD = subtotalUSD > 0 ? subtotalUSD * IVA_RATE : 0;
+  const finalTotalUSD = subtotalUSD + ivaUSD;
+  const totalVES = finalTotalUSD * bcvRate;
   
   // Lista de métodos de pago con su tipo de moneda
   const paymentMethods = [
@@ -282,7 +307,8 @@ function App() {
               paidUSD += (amount / bcvRate);
           }
       });
-      const remainingUSD = totalUSD - paidUSD;
+      // 💡 REQUISITO LEGAL: Usamos el TOTAL FINAL (incluido IVA)
+      const remainingUSD = finalTotalUSD - paidUSD; 
       return { paidUSD, remainingUSD };
   };
 
@@ -305,7 +331,7 @@ function App() {
           }
       });
 
-      let remainingToCoverUSD = totalUSD - paidByOthersUSD;
+      let remainingToCoverUSD = finalTotalUSD - paidByOthersUSD;
       if (remainingToCoverUSD < 0) remainingToCoverUSD = 0;
 
       const methodData = paymentMethods.find(m => m.name === targetMethod);
@@ -386,6 +412,7 @@ function App() {
       try {
           const saleData = {
               payment_method: paymentDescription || 'Pago Completo (0 USD)',
+              // 💡 REQUISITO LEGAL: Usamos el precio original de los ítems (base imponible)
               items: cart.map(i => ({ product_id: i.id, quantity: i.quantity, price_usd: i.price_usd })),
               is_credit: isCreditSale, 
               customer_data: isCreditSale ? customerData : null, 
@@ -393,12 +420,13 @@ function App() {
           };
           
           Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
+          // Nota: El backend calculará el total en USD/VES basándose en los items. Si quieres guardar el IVA/Subtotal separado, necesitarías añadir estas columnas en la tabla 'sales'.
           await axios.post(`${API_URL}/sales`, saleData);
           
           Swal.fire({ 
               icon: 'success', 
               title: isCreditSale ? '¡Crédito Registrado!' : '¡Venta Registrada!', 
-              html: `Inventario actualizado. Total: Ref ${totalUSD.toFixed(2)}`, 
+              html: `Inventario actualizado. Total Final: Ref ${finalTotalUSD.toFixed(2)}`, 
               confirmButtonColor: '#0056B3' 
           });
 
@@ -429,12 +457,13 @@ function App() {
       // 💡 MEJORA UX: Confirmación de Vuelto
       if (isOverpaid) {
           const changeUSD = Math.abs(remainingUSD).toFixed(2);
+          // 💡 UX: Mostrar el vuelto en Bolívares con más precisión.
           const changeVES = Math.abs(remainingVES).toLocaleString('es-VE', { maximumFractionDigits: 2 });
           
           const result = await Swal.fire({
               icon: 'question',
               title: '¡Vuelto/Cambio!',
-              html: `<p>El monto pagado excede el total. Entregar de vuelto:</p><p class="text-3xl font-bold text-green-600 mt-2">Ref ${changeUSD}</p><p class="text-sm font-medium text-gray-700">(Bs ${changeVES})</p>`,
+              html: `<p>El monto pagado excede el total. Entregar de vuelto:</p><p class="text-3xl font-black text-green-600 mt-2">Ref ${changeUSD}</p><p class="text-lg font-bold text-gray-700">(Bs ${changeVES})</p>`,
               showCancelButton: true,
               confirmButtonText: 'Confirmar Venta y Entregar Vuelto',
               cancelButtonText: 'Revisar Pago',
@@ -764,7 +793,7 @@ function App() {
               <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
                   <div className="bg-higea-blue p-5 text-white text-center">
                       <h3 className="text-xl font-bold">Registro de Crédito</h3>
-                      <p className="text-sm mt-1">Total a Financiar: Ref {totalUSD.toFixed(2)}</p>
+                      <p className="text-sm mt-1">Total a Financiar: Ref {finalTotalUSD.toFixed(2)}</p>
                   </div>
                   
                   <div className="p-5 space-y-4">
@@ -841,6 +870,52 @@ function App() {
       );
   }
 
+  // 💡 NUEVO ESQUELETO DE MÓDULO DE PRODUCTOS (UX)
+  const ProductManagementView = () => (
+      <div className="p-4 md:p-8 overflow-y-auto h-full">
+        <h2 className="text-2xl font-black text-gray-800 mb-6">Gestión de Productos e Inventario</h2>
+
+        <div className="bg-white p-5 rounded-3xl shadow-lg border border-gray-100 mb-8 max-w-xl mx-auto">
+            <h3 className="text-xl font-bold text-higea-blue mb-4">Módulo en Desarrollo (Sugerencia de UX)</h3>
+            <p className='text-gray-600 mb-4'>Aquí se podría añadir la gestión completa de productos sin tocar la DB manualmente. Esto incluye:</p>
+            <ul className='list-disc list-inside text-left text-sm text-gray-600'>
+                <li>Formulario de **Creación/Edición** de productos.</li>
+                <li>Gestión de `price_usd`, `stock` y `category`.</li>
+                <li>**Búsqueda** y **Paginación** en la tabla de productos.</li>
+                <li>**Alertas de Stock** con un click.</li>
+            </ul>
+        </div>
+        
+        {/* Aquí iría la lista actual de productos (similar a la vista POS, pero con un botón de edición) */}
+         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+             <div className="p-5 border-b border-gray-100"><h3 className="font-bold text-gray-800">Inventario Actual ({products.length})</h3></div>
+             {/* Contenido de la tabla o cuadrícula de productos para gestión */}
+              <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                      <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
+                          <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3 text-right">Precio Ref</th><th className="px-4 py-3 text-right">Stock</th><th className="px-4 py-3 text-right">Acción</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                           {products.slice(0, 10).map(p => (
+                            <tr key={p.id}>
+                                <td className="px-4 py-3 font-bold text-higea-blue">#{p.id}</td>
+                                <td className="px-4 py-3 text-gray-800">{p.name}</td>
+                                <td className="px-4 py-3">{p.category}</td>
+                                <td className="px-4 py-3 text-right">Ref {parseFloat(p.price_usd).toFixed(2)}</td>
+                                <td className={`px-4 py-3 text-right font-bold ${p.stock <= 5 ? 'text-red-500' : 'text-gray-800'}`}>{p.stock}</td>
+                                <td className="px-4 py-3 text-right">
+                                    {/* Botón de edición que abriría el formulario */}
+                                    <button onClick={() => setProductForm(p)} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700">Editar</button>
+                                </td>
+                            </tr>
+                           ))}
+                      </tbody>
+                  </table>
+              </div>
+         </div>
+      </div>
+  );
+
 
   // --- RESTO DE COMPONENTES Y LÓGICA DE UI ---
   const CartItem = ({ item }) => (
@@ -858,7 +933,7 @@ function App() {
       </div>
       <div className="text-right">
         {/* Ref */}
-        <div className="font-bold text-gray-800 text-sm">Ref {(item.price_usd * item.quantity).toFixed(2)}</div>
+        <div className="font-bold text-gray-800 text-sm">Ref {(parseFloat(item.price_usd) * item.quantity).toFixed(2)}</div>
       </div>
     </div>
   );
@@ -888,6 +963,11 @@ function App() {
           {/* BOTÓN NUEVO MÓDULO (Punto 1) */}
           <button onClick={() => { setView('CUSTOMERS'); }} className={`p-3 rounded-xl transition-all ${view === 'CUSTOMERS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+          </button>
+
+          {/* 💡 NUEVO BOTÓN: Gestión de Productos */}
+          <button onClick={() => { setView('PRODUCTS'); }} className={`p-3 rounded-xl transition-all ${view === 'PRODUCTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           </button>
           
       </nav>
@@ -958,12 +1038,25 @@ function App() {
                   <div className="flex-1 overflow-y-auto px-5 py-4 space-y-1">
                       {cart.length === 0 ? <p className="text-center text-gray-400 mt-10 text-sm">Carrito Vacío</p> : cart.map(item => <CartItem key={item.id} item={item} />)}
                   </div>
+
+                  {/* 💡 MEJORA UX: Desglose de IVA en carrito */}
+                  {cart.length > 0 && (
+                      <div className='px-5 pt-3 border-t border-gray-100'>
+                         <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Subtotal (Base Imponible)</span><span className='font-bold'>Ref {subtotalUSD.toFixed(2)}</span></div>
+                         <div className="flex justify-between text-sm text-gray-500 mb-2"><span className='font-medium'>IVA ({IVA_RATE * 100}%)</span><span className='font-bold text-higea-red'>Ref {ivaUSD.toFixed(2)}</span></div>
+                      </div>
+                  )}
+
                   <div className="p-5 bg-white border-t border-gray-100">
                       <div className="flex justify-between mb-4 items-end">
-                          <span className="text-sm text-gray-500">Total a Pagar</span>
+                          <span className="text-sm text-gray-500">Total Final a Pagar</span>
                           <span className="text-2xl font-black text-higea-blue">Bs {totalVES.toLocaleString('es-VE', { maximumFractionDigits: 0 })}</span>
                       </div>
-                      <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white font-bold py-3 rounded-xl shadow-lg hover:bg-red-700">COBRAR</button>
+                      <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white font-bold py-3 rounded-xl shadow-lg hover:bg-red-700">COBRAR (Ref {finalTotalUSD.toFixed(2)})</button>
+                      {/* 💡 MEJORA UX: Botón de Cancelar Venta */}
+                      {cart.length > 0 && (
+                          <button onClick={() => setCart([])} className="w-full mt-2 bg-gray-200 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-300">CANCELAR VENTA</button>
+                      )}
                   </div>
               </aside>
            </div>
@@ -1170,7 +1263,17 @@ function App() {
 
                 {/* Tabla de Listado de Clientes */}
                 <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mt-8">
-                     <div className="p-5 border-b border-gray-100"><h3 className="font-bold text-gray-800">Listado de Clientes ({allCustomers.length})</h3></div>
+                    <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+                        <h3 className="font-bold text-gray-800">Listado de Clientes ({allCustomers.length})</h3>
+                        {/* 💡 MEJORA UX: Búsqueda en listado */}
+                         <input 
+                            type="text" 
+                            placeholder="Buscar por Nombre, ID o Teléfono..." 
+                            value={customerSearchQuery}
+                            onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                            className="border p-2 rounded-lg text-sm w-1/2 focus:border-higea-blue outline-none" 
+                        />
+                    </div>
                      <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs md:text-sm text-gray-600">
                             <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
@@ -1184,7 +1287,7 @@ function App() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {allCustomers.map((customer) => (
+                                {filteredCustomers.map((customer) => (
                                     <tr key={customer.id} className="hover:bg-blue-50">
                                         <td className="px-4 py-3 font-bold text-higea-blue">#{customer.id}</td>
                                         <td className="px-4 py-3 text-gray-800">{customer.full_name}</td>
@@ -1209,10 +1312,12 @@ function App() {
                             </tbody>
                         </table>
                      </div>
-                     {allCustomers.length === 0 && <p className="p-4 text-center text-gray-400">No hay clientes registrados.</p>}
+                     {filteredCustomers.length === 0 && <p className="p-4 text-center text-gray-400">No se encontraron clientes con esos criterios de búsqueda.</p>}
                 </div>
            </div>
 
+        ) : view === 'PRODUCTS' ? (
+             <ProductManagementView />
         ) : (
              <div className="h-full p-8 text-center text-red-500">Vista no encontrada.</div>
         )}
@@ -1254,18 +1359,24 @@ function App() {
           <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl animate-scale-up">
                   <div className="bg-gray-50 p-5 border-b border-gray-100 text-center">
-                      <h3 className="text-sm font-bold text-gray-400 uppercase">Total a Pagar</h3>
-                      <p className="text-3xl font-black text-gray-800">Ref {totalUSD.toFixed(2)}</p>
+                      <h3 className="text-sm font-bold text-gray-400 uppercase">Total Final a Pagar ({IVA_RATE * 100}% IVA Incluido)</h3>
+                      <p className="text-3xl font-black text-gray-800">Ref {finalTotalUSD.toFixed(2)}</p>
                       <p className="text-sm text-higea-blue font-bold">Bs {totalVES.toLocaleString('es-VE', {maximumFractionDigits:2})}</p>
                       
                       {/* ACCIÓN RÁPIDA DE PAGO EXACTO */}
                       {!isNumpadOpen && remainingUSD > 0.05 && (
                           <div className="mt-4">
                               <button onClick={() => handleExactPayment(paymentMethods[0].name)} className="bg-higea-red text-white text-xs font-bold px-3 py-1.5 rounded-full hover:bg-red-700 transition-colors">
-                                  Pagar Ref {totalUSD.toFixed(2)} con {paymentMethods[0].name}
+                                  Pagar Ref {finalTotalUSD.toFixed(2)} con {paymentMethods[0].name}
                               </button>
                           </div>
                       )}
+                      
+                      {/* 💡 REQUISITO LEGAL/UX: Desglose de IVA en modal de pago */}
+                      <div className='mt-4 p-2 border border-gray-200 rounded-xl text-xs'>
+                          <div className="flex justify-between text-gray-500"><span className='font-medium'>Subtotal (Base Imponible)</span><span className='font-bold'>Ref {subtotalUSD.toFixed(2)}</span></div>
+                          <div className="flex justify-between text-higea-red"><span className='font-medium'>Monto IVA ({IVA_RATE * 100}%)</span><span className='font-bold'>Ref {ivaUSD.toFixed(2)}</span></div>
+                      </div>
                   </div>
                   
                   <div className="p-5 space-y-3 max-h-[50vh] overflow-y-auto">
@@ -1321,8 +1432,10 @@ function App() {
                   {cart.map(item => <CartItem key={item.id} item={item} />)}
               </div>
               <div className="p-4 border-t">
+                  <div className="flex justify-between mb-2"><span className="font-medium text-gray-500">Subtotal (Base Imponible)</span><span className="font-bold text-gray-800">Ref {subtotalUSD.toFixed(2)}</span></div>
+                  <div className="flex justify-between mb-4"><span className="font-medium text-gray-500">IVA ({IVA_RATE * 100}%)</span><span className="font-bold text-higea-red">Ref {ivaUSD.toFixed(2)}</span></div>
                   <div className="flex justify-between mb-4"><span className="font-bold text-gray-500">Total Bs</span><span className="font-black text-2xl text-higea-blue">{totalVES.toLocaleString('es-VE', {maximumFractionDigits:0})}</span></div>
-                  <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white py-4 rounded-xl font-bold shadow-lg">COBRAR</button>
+                  <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white py-4 rounded-xl font-bold shadow-lg">COBRAR (Ref {finalTotalUSD.toFixed(2)})</button>
               </div>
           </div>
       )}
@@ -1335,6 +1448,8 @@ function App() {
                   
                   <div className="p-5 border-b">
                      <h3 className="font-bold text-lg text-gray-800">Detalle de Venta #{selectedSaleDetail.id}</h3>
+                     {/* 🇻🇪 REQUISITO LEGAL: Aviso de no-factura fiscal */}
+                     <p className='text-xs text-red-500 font-bold mt-1'>TICKET PRO-FORMA (NO VÁLIDO PARA CRÉDITO FISCAL)</p>
                   </div>
 
                   <div className="max-h-[70vh] overflow-y-auto">
@@ -1345,7 +1460,7 @@ function App() {
                                <p className="text-xs font-bold uppercase text-yellow-800 mb-2">Detalles de Crédito</p>
                                <div className="text-sm space-y-1 text-yellow-900">
                                     <p><span className="font-bold">Cliente:</span> {selectedSaleDetail.full_name}</p>
-                                    <p><span className="font-bold">Cédula:</span> {selectedSaleDetail.id_number}</p>
+                                    <p><span className="font-bold">Cédula/RIF:</span> {selectedSaleDetail.id_number}</p>
                                     <p><span className="font-bold">Estado:</span> 
                                        <span className={`ml-1 px-2 py-0.5 rounded text-[10px] font-bold ${
                                          selectedSaleDetail.status === 'PENDIENTE' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
@@ -1358,23 +1473,9 @@ function App() {
                           </div>
                       )}
                       
-                      {/* Resumen de Pago */}
-                      <div className="p-5 bg-gray-50 border-b border-gray-100">
-                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Método de Pago</p>
-                          <p className="text-sm font-medium text-gray-700 break-words">{selectedSaleDetail.payment_method}</p>
-                          
-                          <div className="flex justify-between mt-3 pt-3 border-t border-gray-200">
-                            <span className="font-bold text-gray-500">Total Venta:</span>
-                            <div>
-                                <span className="font-black text-lg text-higea-red block text-right">Ref {parseFloat(selectedSaleDetail.total_usd).toFixed(2)}</span>
-                                <span className="font-medium text-sm text-gray-700 block text-right">Bs {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
-                            </div>
-                          </div>
-                      </div>
-
                       {/* Lista de Productos (Incluyendo precio en Bolívares) */}
-                      <div className="p-5 space-y-3">
-                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos (Tasa de Venta: Bs {selectedSaleDetail.bcv_rate_snapshot.toFixed(2)})</p>
+                      <div className="p-5 space-y-3 border-b border-gray-100">
+                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos</p>
                           {selectedSaleDetail.items.map((item, idx) => {
                                 const itemTotalUsd = parseFloat(item.price_at_moment_usd) * item.quantity;
                                 const itemTotalVes = itemTotalUsd * selectedSaleDetail.bcv_rate_snapshot;
@@ -1393,6 +1494,26 @@ function App() {
                                     </div>
                                 );
                           })}
+                      </div>
+
+                      {/* Resumen de Pago (Incluye desglose IVA) */}
+                      <div className="p-5 bg-gray-50">
+                          <div className="text-sm space-y-1 mb-3">
+                              {/* 🇻🇪 REQUISITO LEGAL: Desglose de Base Imponible / IVA */}
+                              <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Imponible (Subtotal)</span><span className='font-bold'>Ref {(selectedSaleDetail.total_usd / (1 + IVA_RATE)).toFixed(2)}</span></div>
+                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA ({IVA_RATE * 100}%)</span><span className='font-bold'>Ref {(selectedSaleDetail.total_usd - (selectedSaleDetail.total_usd / (1 + IVA_RATE))).toFixed(2)}</span></div>
+                          </div>
+                          
+                          <div className="flex justify-between pt-3 border-t border-gray-200">
+                            <span className="font-bold text-gray-500">TOTAL FINAL VENTA:</span>
+                            <div>
+                                <span className="font-black text-lg text-higea-red block text-right">Ref {parseFloat(selectedSaleDetail.total_usd).toFixed(2)}</span>
+                                <span className="font-medium text-sm text-gray-700 block text-right">Bs {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
+                            </div>
+                          </div>
+                          <p className="text-xs font-bold uppercase text-gray-400 mt-4 mb-2">Método de Pago:</p>
+                          <p className="text-sm font-medium text-gray-700 break-words">{selectedSaleDetail.payment_method}</p>
+                           <p className="text-xs text-gray-400 mt-2">Tasa BCV del momento: Bs {selectedSaleDetail.bcv_rate_snapshot.toFixed(2)}</p>
                       </div>
                   </div>
               </div>
