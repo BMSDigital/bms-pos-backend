@@ -43,8 +43,9 @@ const debounce = (func, delay) => {
     };
 };
 
-// TU URL DE RENDER
-const API_URL = 'https://bms-postventa-api.onrender.com/api';
+// 💡 MEJORA UX/ARQUITECTURA: Uso de variables de entorno de Vite
+// Necesitas un archivo .env en la raíz del frontend con VITE_API_URL
+const API_URL = import.meta.env.VITE_API_URL || 'https://bms-postventa-api.onrender.com/api';
 
 function App() {
   // --- ESTADOS PRINCIPALES ---
@@ -54,6 +55,7 @@ function App() {
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [bcvRate, setBcvRate] = useState(0);
+  const [fallbackRate, setFallbackRate] = useState(0); // 💡 NUEVO: Tasa de Fallback para el warning
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState([]);
   
@@ -141,8 +143,15 @@ function App() {
           setCustomerForm({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
           loadCustomers();
       } catch (error) {
+          // 💡 MEJORA: Manejo de errores 409 (Conflicto de ID) del backend
           const message = error.response?.data?.error || error.message;
-          Swal.fire('Error', `Fallo al guardar cliente: ${message}`, 'error');
+          const status = error.response?.status;
+          
+          if (status === 409) {
+             Swal.fire('Error de Duplicado', message, 'error');
+          } else {
+             Swal.fire('Error', `Fallo al guardar cliente: ${message}`, 'error');
+          }
       }
   }
 
@@ -168,6 +177,7 @@ function App() {
     try {
       const statusRes = await axios.get(`${API_URL}/status`);
       setBcvRate(statusRes.data.bcv_rate);
+      setFallbackRate(statusRes.data.fallback_rate); // 💡 NUEVO: Guardar la tasa de fallback
 
       const prodRes = await axios.get(`${API_URL}/products`);
       const allProducts = prodRes.data.sort((a, b) => a.id - b.id);
@@ -407,12 +417,34 @@ function App() {
 
 
   // Función de validación y apertura de modal de cliente para Crédito
-  const handleCreditProcess = () => {
+  const handleCreditProcess = async () => {
       const creditAmount = parseFloat(paymentShares['Crédito']) || 0;
       const creditUsed = creditAmount > 0;
-      
+      const isOverpaid = remainingUSD < -0.05; // Más de 5 centavos de cambio
+
       if (remainingUSD > 0.05 && (!creditUsed || creditAmount < remainingUSD)) {
           return Swal.fire('Monto Insuficiente', `Faltan Ref ${remainingUSD.toFixed(2)} por cubrir.`, 'warning');
+      }
+      
+      // 💡 MEJORA UX: Confirmación de Vuelto
+      if (isOverpaid) {
+          const changeUSD = Math.abs(remainingUSD).toFixed(2);
+          const changeVES = Math.abs(remainingVES).toLocaleString('es-VE', { maximumFractionDigits: 2 });
+          
+          const result = await Swal.fire({
+              icon: 'question',
+              title: '¡Vuelto/Cambio!',
+              html: `<p>El monto pagado excede el total. Entregar de vuelto:</p><p class="text-3xl font-bold text-green-600 mt-2">Ref ${changeUSD}</p><p class="text-sm font-medium text-gray-700">(Bs ${changeVES})</p>`,
+              showCancelButton: true,
+              confirmButtonText: 'Confirmar Venta y Entregar Vuelto',
+              cancelButtonText: 'Revisar Pago',
+              confirmButtonColor: '#10B981', // green
+              cancelButtonColor: '#6B7280',
+          });
+          
+          if (!result.isConfirmed) {
+              return; // Detener el proceso si el usuario quiere revisar
+          }
       }
 
       if (creditUsed) {
@@ -477,11 +509,12 @@ function App() {
 
   const showSaleDetail = async (sale) => {
       try {
+          // 💡 MEJORA: La ruta ahora devuelve saleInfo y los items
           const res = await axios.get(`${API_URL}/sales/${sale.id}`);
           
           setSelectedSaleDetail({ 
               id: sale.id, 
-              items: res.data, 
+              items: res.data.items, 
               payment_method: sale.payment_method, 
               total_usd: sale.total_usd,
               total_ves: sale.total_ves,
@@ -489,6 +522,8 @@ function App() {
               full_name: sale.full_name,
               id_number: sale.id_number,
               due_date: sale.due_date,
+              // 💡 NUEVO: Traemos la tasa para calcular los precios unitarios en Bs
+              bcv_rate_snapshot: parseFloat(res.data.bcv_rate_snapshot), 
           });
       } catch (error) { console.error(error); }
   };
@@ -830,6 +865,8 @@ function App() {
 
   if (loading) return <div className="h-screen flex items-center justify-center bg-gray-50"><div className="w-10 h-10 border-4 border-higea-blue border-t-transparent rounded-full animate-spin"></div></div>;
 
+  const isFallbackActive = bcvRate === fallbackRate; // 💡 NUEVO: Verificación de Fallback
+  
   return (
     <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
       
@@ -868,8 +905,13 @@ function App() {
                         <h1 className="text-xl font-black text-higea-red leading-none">HIGEA</h1>
                      </div>
                      <div className="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        {isFallbackActive ? ( // 💡 MEJORA: Warning si usa tasa de fallback
+                           <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.398 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                        ) : (
+                           <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        )}
                         <span className="text-sm font-bold text-gray-800">{bcvRate.toFixed(2)} Bs</span>
+                        {isFallbackActive && <span className="text-xs text-orange-500 font-medium">(FALLBACK)</span>}
                      </div>
                   </header>
 
@@ -1330,21 +1372,27 @@ function App() {
                           </div>
                       </div>
 
-                      {/* Lista de Productos */}
+                      {/* Lista de Productos (Incluyendo precio en Bolívares) */}
                       <div className="p-5 space-y-3">
-                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos</p>
-                          {selectedSaleDetail.items.map((item, idx) => (
-                              <div key={idx} className="flex justify-between pb-2 border-b border-gray-100 last:border-b-0">
-                                  <div>
-                                      <p className="font-bold text-sm text-gray-700">{item.name}</p>
-                                      <p className="text-xs text-gray-400">Ref {item.price_at_moment_usd} c/u</p>
-                                  </div>
-                                  <div className="text-right">
-                                      <span className="bg-blue-50 text-higea-blue text-xs font-bold px-2 py-1 rounded">x{item.quantity}</span>
-                                      <p className="font-bold text-gray-800 mt-1">Ref {(item.price_at_moment_usd * item.quantity).toFixed(2)}</p>
-                                  </div>
-                              </div>
-                          ))}
+                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos (Tasa de Venta: Bs {selectedSaleDetail.bcv_rate_snapshot.toFixed(2)})</p>
+                          {selectedSaleDetail.items.map((item, idx) => {
+                                const itemTotalUsd = parseFloat(item.price_at_moment_usd) * item.quantity;
+                                const itemTotalVes = itemTotalUsd * selectedSaleDetail.bcv_rate_snapshot;
+                                return (
+                                    <div key={idx} className="flex justify-between pb-2 border-b border-gray-100 last:border-b-0">
+                                        <div>
+                                            <p className="font-bold text-sm text-gray-700">{item.name}</p>
+                                            <p className="text-xs text-gray-400">Ref {item.price_at_moment_usd} c/u</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="bg-blue-50 text-higea-blue text-xs font-bold px-2 py-1 rounded">x{item.quantity}</span>
+                                            <p className="font-bold text-gray-800 mt-1">Ref {itemTotalUsd.toFixed(2)}</p>
+                                            {/* 💡 MEJORA: Precio en Bolívares */}
+                                            <p className="text-xs text-gray-500">Bs {itemTotalVes.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
+                                        </div>
+                                    </div>
+                                );
+                          })}
                       </div>
                   </div>
               </div>

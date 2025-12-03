@@ -94,9 +94,11 @@ async function findOrCreateCustomer(client, customerData) {
 
 // 1. Estado del Sistema y Tasa
 app.get('/api/status', (req, res) => {
+    // 💡 Incluimos la tasa de FALLBACK aquí para que el frontend pueda compararla.
     res.json({
         status: 'online',
         bcv_rate: globalBCVRate,
+        fallback_rate: FALLBACK_RATE, // NUEVO: Exportamos la tasa de fallback
         server_time: new Date()
     });
 });
@@ -266,18 +268,38 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
     }
 });
 
-// H. Obtener detalle de una venta específica 
+// H. Obtener detalle de una venta específica (MEJORADO para incluir bcv_rate_snapshot)
 app.get('/api/sales/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await pool.query(`
+        
+        // 1. Obtener la información de la venta (incluyendo la tasa)
+        const saleInfoResult = await pool.query(`
+            SELECT total_usd, total_ves, bcv_rate_snapshot
+            FROM sales
+            WHERE id = $1
+        `, [id]);
+
+        if (saleInfoResult.rows.length === 0) {
+             return res.status(404).json({ error: 'Venta no encontrada.' });
+        }
+        const saleInfo = saleInfoResult.rows[0];
+
+        // 2. Obtener los ítems de la venta
+        const itemsResult = await pool.query(`
             SELECT p.name, si.quantity, si.price_at_moment_usd
             FROM sale_items si
             JOIN products p ON si.product_id = p.id
             WHERE si.sale_id = $1
         `, [id]);
-        res.json(result.rows);
+
+        // 3. Combinar y enviar
+        res.json({
+            ...saleInfo,
+            items: itemsResult.rows
+        });
     } catch (err) {
+        console.error('Error al obtener detalle de venta:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -366,7 +388,6 @@ app.post('/api/customers', async (req, res) => {
         return res.status(400).json({ error: 'Nombre, Identificador y Estatus son obligatorios.' });
     }
     
-    // FORZAMOS UNA NUEVA CONEXIÓN PARA ELIMINAR EL CACHÉ DE ESQUEMA ANTIGUO
     const client = await pool.connect(); 
     
     try {
@@ -375,7 +396,7 @@ app.post('/api/customers', async (req, res) => {
             // Actualizar cliente existente
             const query = 'UPDATE customers SET full_name = $1, id_number = $2, phone = $3, institution = $4, status = $5 WHERE id = $6 RETURNING *';
             const values = [full_name, id_number, phone, institution, status, id];
-            result = await client.query(query, values); // <-- CAMBIO A client.query
+            result = await client.query(query, values);
             if (result.rowCount === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
         } else {
             // Crear nuevo cliente (usando ON CONFLICT para manejar ID_NUMBER ya existentes)
@@ -386,12 +407,17 @@ app.post('/api/customers', async (req, res) => {
                 SET full_name = $1, phone = $3, institution = $4, status = $5
                 RETURNING *`;
             const values = [full_name, id_number, phone, institution, status];
-            result = await client.query(query, values); // <-- CAMBIO A client.query
+            result = await client.query(query, values); 
         }
         res.json(result.rows[0]);
 
     } catch (err) {
-        res.status(500).json({ error: `Error DB al guardar cliente: ${err.message}` });
+        // Estandarización de error para UNIQUE Constraint (Duplicado)
+        if (err.code === '23505') { 
+            res.status(409).json({ error: `El Identificador ${id_number} ya está registrado.` });
+        } else {
+             res.status(500).json({ error: `Error DB al guardar cliente: ${err.message}` });
+        }
     } finally {
         client.release(); // LIBERAR la conexión temporal
     }
