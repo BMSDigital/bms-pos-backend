@@ -96,7 +96,7 @@ function App() {
   const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
 
   // ESTADOS para el módulo de Productos (Esqueleto CRUD)
-  // MODIFICADO: Añadir is_taxable
+  // MODIFICADO: Añadir is_taxable por defecto (Gravado)
   const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' });
 
 
@@ -1132,7 +1132,7 @@ function App() {
                       {filteredProducts.map((prod) => (
                         <div key={prod.id} onClick={() => addToCart(prod)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm active:scale-95 transition-transform">
                           <div className="flex justify-between items-start mb-2">
-                              <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{prod.icon_emoji}</div> {/* FIX: Usar icon_emoji */}
+                              <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{prod.icon_emoji}</div>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${prod.stock < 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'}`}>{prod.stock}</span>
                           </div>
                           <h3 className="font-bold text-gray-800 text-sm leading-tight line-clamp-2 h-10">{prod.name}</h3>

@@ -22,6 +22,7 @@ const pool = new Pool({
 // --- LÓGICA DE PRECIOS & SCRAPING BCV ---
 let globalBCVRate = 0; // Aquí guardamos la tasa en memoria
 const FALLBACK_RATE = 40.00; // Tasa de reserva en caso de fallo crítico
+const IVA_RATE = 0.16; // Tasa de IVA estándar para cálculo en backend
 const agent = new https.Agent({ rejectUnauthorized: false });
 
 async function actualizarTasaBCV() {
@@ -106,8 +107,8 @@ app.get('/api/status', (req, res) => {
 // 2. Obtener Productos (Calculando precio en Bs al vuelo)
 app.get('/api/products', async (req, res) => {
     try {
-        // 💡 MODIFICADO: Se añade icon_emoji a la selección
-        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji FROM products ORDER BY id ASC');
+        // MODIFICADO: Se añade icon_emoji y AHORA is_taxable (Estado fiscal)
+        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable FROM products ORDER BY id ASC');
         
         // Aquí aplicamos la ESTRATEGIA DE PRECIOS
         const productsWithVes = result.rows.map(product => ({
@@ -124,8 +125,8 @@ app.get('/api/products', async (req, res) => {
 
 // 3. Crear/Actualizar un Producto (CRUD)
 app.post('/api/products', async (req, res) => {
-    // 💡 MODIFICADO: Ahora maneja el ID para edición y el nuevo campo icon_emoji
-    const { id, name, category, price_usd, stock, icon_emoji } = req.body;
+    // MODIFICADO: Incluir is_taxable
+    const { id, name, category, price_usd, stock, icon_emoji, is_taxable } = req.body;
     
     if (!name || !price_usd || price_usd <= 0) {
         return res.status(400).json({ error: 'Nombre y Precio (USD > 0) son obligatorios.' });
@@ -133,16 +134,21 @@ app.post('/api/products', async (req, res) => {
     
     try {
         let result;
+        // Convertir is_taxable a booleano para la DB (viene como booleano o string 'true'/'false')
+        const isTaxableValue = typeof is_taxable === 'boolean' ? is_taxable : (is_taxable === 'true');
+
         if (id) {
             // Lógica de Actualización (Editar producto existente)
-            const query = 'UPDATE products SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5 WHERE id = $6 RETURNING *';
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', id];
+            // MODIFICADO: Agregada columna is_taxable
+            const query = 'UPDATE products SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, is_taxable = $6 WHERE id = $7 RETURNING *';
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, id];
             result = await pool.query(query, values);
             if (result.rowCount === 0) return res.status(404).json({ error: 'Producto no encontrado' });
         } else {
             // Lógica de Inserción (Crear nuevo producto)
-            const query = 'INSERT INTO products (name, category, price_usd, stock, icon_emoji) VALUES ($1, $2, $3, $4, $5) RETURNING *';
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔'];
+            // MODIFICADO: Agregada columna is_taxable
+            const query = 'INSERT INTO products (name, category, price_usd, stock, icon_emoji, is_taxable) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *';
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue];
             result = await pool.query(query, values);
         }
         res.json(result.rows[0]);
@@ -151,8 +157,9 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// 4. PROCESAR VENTA (MODIFICADA para Crédito)
+// 4. PROCESAR VENTA (MODIFICADA para Base Imponible/Exento y Crédito)
 app.post('/api/sales', async (req, res) => {
+    // MODIFICADO: Los items ahora deben incluir is_taxable
     const { items, payment_method, customer_data, is_credit, due_days } = req.body; 
     
     const client = await pool.connect();
@@ -160,13 +167,13 @@ app.post('/api/sales', async (req, res) => {
     try {
         await client.query('BEGIN'); // Iniciar transacción segura
 
-        let totalUsd = 0;
+        let subtotalTaxableUsd = 0; // Base Imponible
+        let subtotalExemptUsd = 0;  // Exento
 
-        // 1. Recorrer items para verificar stock y restar
+        // 1. Recorrer items para verificar stock y calcular subtotales fiscales
         for (const item of items) {
-            // Aquí se usa el precio del item antes de IVA
-            totalUsd += parseFloat(item.price_usd) * item.quantity;
-            
+            const itemTotalBase = parseFloat(item.price_usd) * item.quantity;
+
             // RESTAR STOCK (Atómicamente)
             const updateResult = await client.query(
                 `UPDATE products 
@@ -180,36 +187,52 @@ app.post('/api/sales', async (req, res) => {
                 // Si no actualizó nada, es porque no había stock
                 throw new Error(`Stock insuficiente para el producto ID ${item.product_id}`);
             }
+            
+            // Lógica para separar gravado y exento
+            if (item.is_taxable) {
+                subtotalTaxableUsd += itemTotalBase;
+            } else {
+                subtotalExemptUsd += itemTotalBase;
+            }
         }
+        
+        // 2. Cálculo de IVA y Total Final (con IVA)
+        const ivaUsd = subtotalTaxableUsd * IVA_RATE;
+        const finalTotalUsd = subtotalTaxableUsd + subtotalExemptUsd + ivaUsd;
+        const totalVes = finalTotalUsd * globalBCVRate; 
 
-        // 2. Manejo de Crédito y Cliente
+        // 3. Manejo de Crédito y Cliente
         let saleStatus = 'PAGADO';
         let customerId = null;
         let dueDate = null;
         
         if (is_credit && customer_data) {
-            // El backend intenta buscar/crear al cliente incluso si la búsqueda inicial falló en el frontend.
             customerId = await findOrCreateCustomer(client, customer_data); 
             saleStatus = 'PENDIENTE';
-            
-            // Calcular fecha de vencimiento: 15 o 30 días
             const days = due_days === 30 ? 30 : 15;
             dueDate = `CURRENT_TIMESTAMP + INTERVAL '${days} days'`;
         }
 
-
-        // 3. Calcular Totales (totalUsd es ahora el SUBTOTAL o BASE IMPONIBLE en USD)
-        // El frontend añade el IVA, pero si la Base de Datos requiere el total, se debe recalcular
-        // Aquí mantendremos la lógica antigua por simplicidad con la DB existente (Total = Subtotal)
-        // Si quisieras ser legal, deberías tener columnas para subtotal, iva y total.
-        const totalVes = totalUsd * globalBCVRate; 
-
-        // 4. Guardar la Cabecera de la Venta
+        // 4. Guardar la Cabecera de la Venta (con desglose fiscal)
         const saleQuery = `
-            INSERT INTO sales (total_usd, total_ves, bcv_rate_snapshot, payment_method, status, customer_id, due_date) 
-            VALUES ($1, $2, $3, $4, $5, $6, ${dueDate || 'NULL'}) RETURNING id
+            INSERT INTO sales (
+                total_usd, total_ves, bcv_rate_snapshot, payment_method, status, customer_id, due_date,
+                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, ${dueDate || 'NULL'}, $7, $8, $9, $10) RETURNING id
         `;
-        const saleValues = [totalUsd, totalVes, globalBCVRate, payment_method, saleStatus, customerId];
+        const saleValues = [
+            finalTotalUsd.toFixed(2), 
+            totalVes.toFixed(2), 
+            globalBCVRate, 
+            payment_method, 
+            saleStatus, 
+            customerId,
+            subtotalTaxableUsd.toFixed(2),
+            subtotalExemptUsd.toFixed(2),
+            IVA_RATE,
+            ivaUsd.toFixed(2)
+        ];
         
         const saleResult = await client.query(saleQuery, saleValues);
         const saleId = saleResult.rows[0].id;
@@ -226,7 +249,10 @@ app.post('/api/sales', async (req, res) => {
         await client.query('COMMIT'); // ¡Confirmar cambios!
         
         console.log(`✅ Venta registrada ID: ${saleId} (Status: ${saleStatus})`);
-        res.json({ success: true, saleId, status: saleStatus });
+        res.json({ success: true, saleId, status: saleStatus,
+            // Datos para el mensaje de éxito del frontend
+            finalTotalUsd: finalTotalUsd.toFixed(2)
+        });
 
     } catch (error) {
         await client.query('ROLLBACK'); // Si algo falla, deshacer todo
@@ -240,6 +266,7 @@ app.post('/api/sales', async (req, res) => {
 
 
 // --- 5. REPORTES Y ESTADÍSTICAS (Actualizados) ---
+
 // F. Listado de Cuentas por Cobrar (Créditos Pendientes)
 app.get('/api/reports/credit-pending', async (req, res) => {
     try {
@@ -288,14 +315,16 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
     }
 });
 
-// H. Obtener detalle de una venta específica (MEJORADO para incluir bcv_rate_snapshot)
+// H. Obtener detalle de una venta específica (MEJORADO para incluir desglose fiscal)
 app.get('/api/sales/:id', async (req, res) => {
     try {
         const { id } = req.params;
         
-        // 1. Obtener la información de la venta (incluyendo la tasa)
+        // 1. Obtener la información de la venta (incluyendo la tasa y el desglose fiscal)
         const saleInfoResult = await pool.query(`
-            SELECT total_usd, total_ves, bcv_rate_snapshot
+            SELECT 
+                total_usd, total_ves, bcv_rate_snapshot, 
+                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd
             FROM sales
             WHERE id = $1
         `, [id]);
@@ -372,9 +401,9 @@ app.get('/api/reports/recent-sales', async (req, res) => {
 // C. NUEVO: Alertas de Stock Bajo (Resuelve el 404 del log)
 app.get('/api/reports/low-stock', async (req, res) => {
     try {
-        // FIX: Se incluye stock <= 10 (incluyendo 0) y el nuevo campo icon_emoji
+        // MODIFICADO: Incluye is_taxable
         const result = await pool.query(`
-            SELECT id, name, stock, category, icon_emoji
+            SELECT id, name, stock, category, icon_emoji, is_taxable
             FROM products
             WHERE stock <= 10
             ORDER BY stock ASC
