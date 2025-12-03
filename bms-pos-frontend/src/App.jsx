@@ -96,7 +96,8 @@ function App() {
   const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
 
   // ESTADOS para el módulo de Productos (Esqueleto CRUD)
-  const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0 });
+  // MODIFICADO: Añadir is_taxable
+  const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' });
 
 
   // 1. Carga inicial de datos al montar el componente
@@ -196,6 +197,47 @@ function App() {
       setCustomerForm(prev => ({ ...prev, [name]: newValue }));
   };
   
+  // --- NUEVA LÓGICA: Lógica de Edición/Creación de Productos con Campo Fiscal ---
+  const handleProductFormChange = (e) => {
+      const { name, value } = e.target;
+      setProductForm(prev => ({
+          ...prev,
+          // CRUCIAL: Convertir el valor de `is_taxable` a booleano
+          [name]: (name === 'is_taxable') ? (value === 'true') : value
+      }));
+  };
+  
+  const saveProduct = async (e) => {
+      e.preventDefault();
+      
+      if (!productForm.name || !productForm.price_usd || parseFloat(productForm.price_usd) <= 0) {
+          return Swal.fire('Datos Incompletos', 'Nombre y Precio (USD > 0) son obligatorios.', 'warning');
+      }
+
+      try {
+          Swal.fire({ title: `Guardando Producto...`, didOpen: () => Swal.showLoading() });
+          
+          const productToSend = {
+              ...productForm,
+              // Convertir valores numéricos y booleanos al formato correcto
+              price_usd: parseFloat(productForm.price_usd),
+              stock: parseInt(productForm.stock),
+              is_taxable: productForm.is_taxable // Ya es un booleano por handleProductFormChange
+          };
+          
+          await axios.post(`${API_URL}/products`, productToSend);
+          
+          Swal.fire('¡Éxito!', `Producto ${productForm.id ? 'actualizado' : 'registrado'} correctamente.`, 'success');
+          
+          setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' });
+          fetchData(); 
+      } catch (error) {
+          const message = error.response?.data?.error || error.message;
+          Swal.fire('Error', `Fallo al guardar producto: ${message}`, 'error');
+      }
+  }
+
+
   const fetchData = async () => {
     try {
       const statusRes = await axios.get(`${API_URL}/status`);
@@ -203,7 +245,11 @@ function App() {
       setFallbackRate(statusRes.data.fallback_rate); // 💡 NUEVO: Guardar la tasa de fallback
 
       const prodRes = await axios.get(`${API_URL}/products`);
-      const allProducts = prodRes.data.sort((a, b) => a.id - b.id);
+      const allProducts = prodRes.data
+        // NUEVO: Asegurar que 'is_taxable' se maneje como booleano al cargar.
+        .map(p => ({ ...p, is_taxable: p.is_taxable === true || p.is_taxable === 't' || p.is_taxable === 1 || p.is_taxable === '1' }))
+        .sort((a, b) => a.id - b.id);
+        
       setProducts(allProducts);
       setFilteredProducts(allProducts);
       setCategories(['Todos', ...new Set(allProducts.map(p => p.category))]);
@@ -248,8 +294,10 @@ function App() {
         return;
     }
     setCart(prev => {
+      // MODIFICADO: Asegurar que la información fiscal (is_taxable) se guarda en el carrito
       if (existing) return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i);
-      return [...prev, { ...product, quantity: 1 }];
+      // Se incluye is_taxable en el item del carrito
+      return [...prev, { ...product, quantity: 1, is_taxable: product.is_taxable }]; 
     });
   };
 
@@ -260,12 +308,36 @@ function App() {
         return prev.filter(i => i.id !== id);
     });
   };
+  
+  // --- CÁLCULOS PRINCIPALES (CON DESGLOSE FISCAL) ---
+  const calculateTotals = () => {
+    let subtotalTaxableUSD = 0; // Base Imponible (Gravado)
+    let subtotalExemptUSD = 0;  // Subtotal Exento
 
-  // --- CÁLCULOS PRINCIPALES (CON IVA) ---
-  const subtotalUSD = cart.reduce((sum, item) => sum + (parseFloat(item.price_usd) * item.quantity), 0);
-  const ivaUSD = subtotalUSD > 0 ? subtotalUSD * IVA_RATE : 0;
-  const finalTotalUSD = subtotalUSD + ivaUSD;
-  const totalVES = finalTotalUSD * bcvRate;
+    cart.forEach(item => {
+        const itemTotalBase = parseFloat(item.price_usd) * item.quantity;
+        if (item.is_taxable) {
+            subtotalTaxableUSD += itemTotalBase;
+        } else {
+            subtotalExemptUSD += itemTotalBase;
+        }
+    });
+
+    const ivaUSD = subtotalTaxableUSD * IVA_RATE;
+    const finalTotalUSD = subtotalTaxableUSD + subtotalExemptUSD + ivaUSD;
+    const totalVES = finalTotalUSD * bcvRate;
+    
+    return {
+        subtotalTaxableUSD, // Base Imponible
+        subtotalExemptUSD,  // Exento
+        ivaUSD,
+        finalTotalUSD,
+        totalVES
+    };
+  };
+
+  // Desestructuramos los nuevos totales
+  const { subtotalTaxableUSD, subtotalExemptUSD, ivaUSD, finalTotalUSD, totalVES } = calculateTotals();
   
   // Lista de métodos de pago con su tipo de moneda
   const paymentMethods = [
@@ -412,21 +484,27 @@ function App() {
       try {
           const saleData = {
               payment_method: paymentDescription || 'Pago Completo (0 USD)',
-              // 💡 REQUISITO LEGAL: Usamos el precio original de los ítems (base imponible)
-              items: cart.map(i => ({ product_id: i.id, quantity: i.quantity, price_usd: i.price_usd })),
+              // MODIFICADO: Incluir si el item es gravado o exento en el envío al backend
+              items: cart.map(i => ({ 
+                  product_id: i.id, 
+                  quantity: i.quantity, 
+                  price_usd: i.price_usd,
+                  is_taxable: i.is_taxable // <-- CRUCIAL: Enviar el estatus fiscal
+              })),
               is_credit: isCreditSale, 
               customer_data: isCreditSale ? customerData : null, 
               due_days: isCreditSale ? dueDays : null, 
           };
           
           Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
-          // Nota: El backend calculará el total en USD/VES basándose en los items. Si quieres guardar el IVA/Subtotal separado, necesitarías añadir estas columnas en la tabla 'sales'.
-          await axios.post(`${API_URL}/sales`, saleData);
           
+          const res = await axios.post(`${API_URL}/sales`, saleData);
+          const { finalTotalUsd } = res.data; // Usamos el total final calculado por el backend (con IVA)
+
           Swal.fire({ 
               icon: 'success', 
               title: isCreditSale ? '¡Crédito Registrado!' : '¡Venta Registrada!', 
-              html: `Inventario actualizado. Total Final: Ref ${finalTotalUSD.toFixed(2)}`, 
+              html: `Inventario actualizado. Total Final: Ref ${finalTotalUsd}`, 
               confirmButtonColor: '#0056B3' 
           });
 
@@ -545,14 +623,20 @@ function App() {
               id: sale.id, 
               items: res.data.items, 
               payment_method: sale.payment_method, 
-              total_usd: sale.total_usd,
-              total_ves: sale.total_ves,
+              // Usamos los campos específicos del desglose que ahora devuelve el backend
+              total_usd: parseFloat(res.data.total_usd),
+              total_ves: parseFloat(res.data.total_ves),
               status: sale.status,
               full_name: sale.full_name,
               id_number: sale.id_number,
               due_date: sale.due_date,
-              // 💡 NUEVO: Traemos la tasa para calcular los precios unitarios en Bs
               bcv_rate_snapshot: parseFloat(res.data.bcv_rate_snapshot), 
+              taxBreakdown: {
+                 subtotalTaxableUSD: parseFloat(res.data.subtotal_taxable_usd),
+                 subtotalExemptUSD: parseFloat(res.data.subtotal_exempt_usd),
+                 ivaUSD: parseFloat(res.data.iva_usd),
+                 ivaRate: parseFloat(res.data.iva_rate),
+              }
           });
       } catch (error) { console.error(error); }
   };
@@ -875,15 +959,41 @@ function App() {
       <div className="p-4 md:p-8 overflow-y-auto h-full">
         <h2 className="text-2xl font-black text-gray-800 mb-6">Gestión de Productos e Inventario</h2>
 
+        {/* Formulario de Creación/Edición con campo is_taxable */}
         <div className="bg-white p-5 rounded-3xl shadow-lg border border-gray-100 mb-8 max-w-xl mx-auto">
-            <h3 className="text-xl font-bold text-higea-blue mb-4">Módulo en Desarrollo (Sugerencia de UX)</h3>
-            <p className='text-gray-600 mb-4'>Aquí se podría añadir la gestión completa de productos sin tocar la DB manualmente. Esto incluye:</p>
-            <ul className='list-disc list-inside text-left text-sm text-gray-600'>
-                <li>Formulario de **Creación/Edición** de productos.</li>
-                <li>Gestión de `price_usd`, `stock` y `category`.</li>
-                <li>**Búsqueda** y **Paginación** en la tabla de productos.</li>
-                <li>**Alertas de Stock** con un click.</li>
-            </ul>
+            <h3 className="text-xl font-bold text-higea-blue mb-4">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
+            <form onSubmit={saveProduct}>
+                <input type="text" name="name" placeholder="Nombre del Producto (*)" value={productForm.name} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" required />
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                    <input type="text" name="category" placeholder="Categoría" value={productForm.category} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                    <input type="number" name="price_usd" placeholder="Precio USD (*)" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" required />
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                    <input type="number" name="stock" placeholder="Stock Inicial/Actual" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" required />
+                    <input type="text" name="icon_emoji" placeholder="Icono Emoji (🍔)" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" maxLength="1" />
+                </div>
+                
+                {/* 🇻🇪 REQUISITO FISCAL: Control del IVA */}
+                <div className="flex gap-4 items-center bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
+                    <label className="text-sm font-bold text-gray-600 flex-shrink-0">Estatus Fiscal (IVA 16%):</label>
+                    <select 
+                        name="is_taxable"
+                        // CRUCIAL: Convertir a string para el selector HTML
+                        value={productForm.is_taxable.toString()} 
+                        onChange={handleProductFormChange}
+                        className="border p-3 rounded-xl flex-1 bg-white font-bold text-sm"
+                    >
+                        <option value="true">GRAVADO (Sujeto a IVA)</option>
+                        <option value="false">EXENTO (No lleva IVA)</option>
+                    </select>
+                </div>
+                {/* FIN REQUISITO FISCAL */}
+                
+                <button type="submit" className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-700">
+                    {productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}
+                </button>
+                <button type="button" onClick={() => setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' })} className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300">Limpiar Formulario</button>
+            </form>
         </div>
         
         {/* Aquí iría la lista actual de productos (similar a la vista POS, pero con un botón de edición) */}
@@ -893,19 +1003,31 @@ function App() {
               <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs md:text-sm text-gray-600">
                       <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                          <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3 text-right">Precio Ref</th><th className="px-4 py-3 text-right">Stock</th><th className="px-4 py-3 text-right">Acción</th></tr>
+                          <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Status Fiscal</th><th className="px-4 py-3 text-right">Precio Ref</th><th className="px-4 py-3 text-right">Stock</th><th className="px-4 py-3 text-right">Acción</th></tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                           {products.slice(0, 10).map(p => (
+                           {products.map(p => (
                             <tr key={p.id}>
                                 <td className="px-4 py-3 font-bold text-higea-blue">#{p.id}</td>
                                 <td className="px-4 py-3 text-gray-800">{p.name}</td>
                                 <td className="px-4 py-3">{p.category}</td>
+                                <td className="px-4 py-3">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_taxable ? 'bg-blue-100 text-higea-blue' : 'bg-green-100 text-green-600'}`}>
+                                       {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
+                                    </span>
+                                </td>
                                 <td className="px-4 py-3 text-right">Ref {parseFloat(p.price_usd).toFixed(2)}</td>
                                 <td className={`px-4 py-3 text-right font-bold ${p.stock <= 5 ? 'text-red-500' : 'text-gray-800'}`}>{p.stock}</td>
                                 <td className="px-4 py-3 text-right">
-                                    {/* Botón de edición que abriría el formulario */}
-                                    <button onClick={() => setProductForm(p)} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700">Editar</button>
+                                    <button onClick={() => setProductForm({
+                                        id: p.id, 
+                                        name: p.name, 
+                                        category: p.category, 
+                                        price_usd: parseFloat(p.price_usd), 
+                                        stock: p.stock, 
+                                        icon_emoji: p.icon_emoji, 
+                                        is_taxable: p.is_taxable
+                                    })} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700">Editar</button>
                                 </td>
                             </tr>
                            ))}
@@ -929,6 +1051,10 @@ function App() {
            <p className="font-bold text-gray-700 text-sm leading-tight">{item.name}</p>
            {/* Ref */}
            <p className="text-[10px] text-gray-400 font-medium">Ref {item.price_usd} c/u</p>
+           {/* NUEVO: Indicador Fiscal en el carrito */}
+           <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${item.is_taxable ? 'bg-blue-100 text-higea-blue' : 'bg-green-100 text-green-600'}`}>
+              {item.is_taxable ? 'GRAVADO' : 'EXENTO'}
+           </span>
         </div>
       </div>
       <div className="text-right">
@@ -1006,7 +1132,7 @@ function App() {
                       {filteredProducts.map((prod) => (
                         <div key={prod.id} onClick={() => addToCart(prod)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm active:scale-95 transition-transform">
                           <div className="flex justify-between items-start mb-2">
-                              <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{prod.category === 'Bebidas' ? '🥤' : '🍔'}</div>
+                              <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{prod.icon_emoji}</div> {/* FIX: Usar icon_emoji */}
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${prod.stock < 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'}`}>{prod.stock}</span>
                           </div>
                           <h3 className="font-bold text-gray-800 text-sm leading-tight line-clamp-2 h-10">{prod.name}</h3>
@@ -1039,11 +1165,14 @@ function App() {
                       {cart.length === 0 ? <p className="text-center text-gray-400 mt-10 text-sm">Carrito Vacío</p> : cart.map(item => <CartItem key={item.id} item={item} />)}
                   </div>
 
-                  {/* 💡 MEJORA UX: Desglose de IVA en carrito */}
+                  {/* 💡 MEJORA UX: Desglose Fiscal en carrito */}
                   {cart.length > 0 && (
                       <div className='px-5 pt-3 border-t border-gray-100'>
-                         <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Subtotal (Base Imponible)</span><span className='font-bold'>Ref {subtotalUSD.toFixed(2)}</span></div>
-                         <div className="flex justify-between text-sm text-gray-500 mb-2"><span className='font-medium'>IVA ({IVA_RATE * 100}%)</span><span className='font-bold text-higea-red'>Ref {ivaUSD.toFixed(2)}</span></div>
+                         {subtotalExemptUSD > 0 && (
+                            <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Subtotal Exento</span><span className='font-bold'>Ref {subtotalExemptUSD.toFixed(2)}</span></div>
+                         )}
+                         <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {subtotalTaxableUSD.toFixed(2)}</span></div>
+                         <div className="flex justify-between text-sm text-higea-red mb-2"><span className='font-medium'>IVA ({IVA_RATE * 100}%)</span><span className='font-bold'>Ref {ivaUSD.toFixed(2)}</span></div>
                       </div>
                   )}
 
@@ -1372,9 +1501,12 @@ function App() {
                           </div>
                       )}
                       
-                      {/* 💡 REQUISITO LEGAL/UX: Desglose de IVA en modal de pago */}
+                      {/* 💡 REQUISITO LEGAL/UX: Desglose Fiscal en modal de pago */}
                       <div className='mt-4 p-2 border border-gray-200 rounded-xl text-xs'>
-                          <div className="flex justify-between text-gray-500"><span className='font-medium'>Subtotal (Base Imponible)</span><span className='font-bold'>Ref {subtotalUSD.toFixed(2)}</span></div>
+                          {subtotalExemptUSD > 0 && (
+                            <div className="flex justify-between text-gray-500"><span className='font-medium'>Subtotal Exento</span><span className='font-bold'>Ref {subtotalExemptUSD.toFixed(2)}</span></div>
+                          )}
+                          <div className="flex justify-between text-gray-500"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {subtotalTaxableUSD.toFixed(2)}</span></div>
                           <div className="flex justify-between text-higea-red"><span className='font-medium'>Monto IVA ({IVA_RATE * 100}%)</span><span className='font-bold'>Ref {ivaUSD.toFixed(2)}</span></div>
                       </div>
                   </div>
@@ -1432,7 +1564,11 @@ function App() {
                   {cart.map(item => <CartItem key={item.id} item={item} />)}
               </div>
               <div className="p-4 border-t">
-                  <div className="flex justify-between mb-2"><span className="font-medium text-gray-500">Subtotal (Base Imponible)</span><span className="font-bold text-gray-800">Ref {subtotalUSD.toFixed(2)}</span></div>
+                  {/* 💡 MEJORA UX: Desglose Fiscal en carrito móvil */}
+                  {subtotalExemptUSD > 0 && (
+                    <div className="flex justify-between mb-2"><span className="font-medium text-gray-500">Subtotal Exento</span><span className="font-bold text-gray-800">Ref {subtotalExemptUSD.toFixed(2)}</span></div>
+                  )}
+                  <div className="flex justify-between mb-2"><span className="font-medium text-gray-500">Base Imponible</span><span className="font-bold text-gray-800">Ref {subtotalTaxableUSD.toFixed(2)}</span></div>
                   <div className="flex justify-between mb-4"><span className="font-medium text-gray-500">IVA ({IVA_RATE * 100}%)</span><span className="font-bold text-higea-red">Ref {ivaUSD.toFixed(2)}</span></div>
                   <div className="flex justify-between mb-4"><span className="font-bold text-gray-500">Total Bs</span><span className="font-black text-2xl text-higea-blue">{totalVES.toLocaleString('es-VE', {maximumFractionDigits:0})}</span></div>
                   <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white py-4 rounded-xl font-bold shadow-lg">COBRAR (Ref {finalTotalUSD.toFixed(2)})</button>
@@ -1440,7 +1576,7 @@ function App() {
           </div>
       )}
 
-      {/* --- MODAL DETALLE VENTA (MEJORADO PARA CRÉDITO) --- */}
+      {/* --- MODAL DETALLE VENTA (MEJORADO PARA CRÉDITO Y FISCAL) --- */}
       {selectedSaleDetail && (
           <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative">
@@ -1479,6 +1615,7 @@ function App() {
                           {selectedSaleDetail.items.map((item, idx) => {
                                 const itemTotalUsd = parseFloat(item.price_at_moment_usd) * item.quantity;
                                 const itemTotalVes = itemTotalUsd * selectedSaleDetail.bcv_rate_snapshot;
+                                
                                 return (
                                     <div key={idx} className="flex justify-between pb-2 border-b border-gray-100 last:border-b-0">
                                         <div>
@@ -1496,19 +1633,22 @@ function App() {
                           })}
                       </div>
 
-                      {/* Resumen de Pago (Incluye desglose IVA) */}
+                      {/* Resumen de Pago (Incluye desglose FISCAL) */}
                       <div className="p-5 bg-gray-50">
                           <div className="text-sm space-y-1 mb-3">
-                              {/* 🇻🇪 REQUISITO LEGAL: Desglose de Base Imponible / IVA */}
-                              <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Imponible (Subtotal)</span><span className='font-bold'>Ref {(selectedSaleDetail.total_usd / (1 + IVA_RATE)).toFixed(2)}</span></div>
-                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA ({IVA_RATE * 100}%)</span><span className='font-bold'>Ref {(selectedSaleDetail.total_usd - (selectedSaleDetail.total_usd / (1 + IVA_RATE))).toFixed(2)}</span></div>
+                              {/* 🇻🇪 REQUISITO LEGAL: Desglose de Base Exenta / Base Imponible / IVA */}
+                              {selectedSaleDetail.taxBreakdown.subtotalExemptUSD > 0 && (
+                                <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Exenta</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalExemptUSD.toFixed(2)}</span></div>
+                              )}
+                              <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalTaxableUSD.toFixed(2)}</span></div>
+                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA ({selectedSaleDetail.taxBreakdown.ivaRate * 100}%)</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</span></div>
                           </div>
                           
                           <div className="flex justify-between pt-3 border-t border-gray-200">
                             <span className="font-bold text-gray-500">TOTAL FINAL VENTA:</span>
                             <div>
-                                <span className="font-black text-lg text-higea-red block text-right">Ref {parseFloat(selectedSaleDetail.total_usd).toFixed(2)}</span>
-                                <span className="font-medium text-sm text-gray-700 block text-right">Bs {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
+                                <span className="font-black text-lg text-higea-red block text-right">Ref {selectedSaleDetail.total_usd.toFixed(2)}</span>
+                                <span className="font-medium text-sm text-gray-700 block text-right">Bs {selectedSaleDetail.total_ves.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
                             </div>
                           </div>
                           <p className="text-xs font-bold uppercase text-gray-400 mt-4 mb-2">Método de Pago:</p>
