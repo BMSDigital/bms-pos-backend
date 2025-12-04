@@ -123,6 +123,12 @@ function App() {
   const [filteredInventory, setFilteredInventory] = useState([]);
   // ------------------------------------------
 
+  // 💡 NUEVOS ESTADOS para búsqueda en POS y Paginación (Punto 1)
+  const [posSearchQuery, setPosSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const productsPerPage = 12; // Límite por página (puedes ajustarlo)
+  // ------------------------------------------
+
   // 1. Carga inicial de datos al montar el componente
   useEffect(() => { fetchData(); }, []);
   
@@ -162,6 +168,28 @@ function App() {
           setFilteredInventory(products);
       }
   }, [productSearchQuery, products]);
+
+  // 💡 MODIFICADO: Lógica de filtro para productos (Ahora incluye categoría, búsqueda en POS y resetea la página)
+  useEffect(() => {
+    let results = products;
+    
+    // 1. Filtrar por Categoría
+    if (selectedCategory !== 'Todos') {
+        results = results.filter(p => p.category === selectedCategory);
+    }
+
+    // 2. Filtrar por Búsqueda en POS (Nuevo)
+    if (posSearchQuery) {
+        const lowerQuery = posSearchQuery.toLowerCase();
+        results = results.filter(p => 
+            p.name.toLowerCase().includes(lowerQuery) || 
+            p.category.toLowerCase().includes(lowerQuery)
+        );
+    }
+    
+    setFilteredProducts(results);
+    setCurrentPage(1); // Resetear página a 1 al cambiar filtro/búsqueda
+  }, [selectedCategory, products, posSearchQuery]);
 
 
   // Función de carga de clientes (usada en el useEffect anterior)
@@ -316,11 +344,6 @@ function App() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (selectedCategory === 'Todos') setFilteredProducts(products);
-    else setFilteredProducts(products.filter(p => p.category === selectedCategory));
-  }, [selectedCategory, products]);
 
   // --- LÓGICA CARRITO ---
   const addToCart = (product) => {
@@ -1088,6 +1111,8 @@ function App() {
                     placeholder="Buscar por Nombre, Categoría o ID..." 
                     value={productSearchQuery}
                     onChange={(e) => setProductSearchQuery(e.target.value)}
+                    // 💡 FIX del Cursor: Añadir un key estático para mantener el foco.
+                    key="inventory-search-input"
                     className="border p-2 rounded-lg text-sm w-1/2 focus:border-higea-blue outline-none" 
                 />
             </div>
@@ -1163,7 +1188,7 @@ function App() {
             <div className="absolute -top-2 -right-2 bg-higea-red text-white text-[10px] font-bold h-5 w-5 flex items-center justify-center rounded-full border border-white">{item.quantity}</div>
         </div>
         <div>
-           <p className="font-bold text-gray-700 text-sm leading-tight">{item.name}</p>
+           <p className="font-bold text-gray-700 text-sm leading-tight line-clamp-1">{item.name}</p>
            {/* Ref */}
            <p className="text-[10px] text-gray-400 font-medium">Ref {item.price_usd} c/u</p>
            {/* NUEVO: Indicador Fiscal en el carrito */}
@@ -1183,6 +1208,19 @@ function App() {
 
   const isFallbackActive = bcvRate === fallbackRate; // 💡 NUEVO: Verificación de Fallback
   
+  // 💡 LÓGICA DE PAGINACIÓN DE PRODUCTOS
+  const indexOfLastProduct = currentPage * productsPerPage;
+  const indexOfFirstProduct = indexOfLastProduct - productsPerPage;
+  const currentProducts = filteredProducts.slice(indexOfFirstProduct, indexOfLastProduct);
+  const totalPages = Math.ceil(filteredProducts.length / productsPerPage);
+  
+  const paginate = (pageNumber) => {
+      if (pageNumber > 0 && pageNumber <= totalPages) {
+          setCurrentPage(pageNumber);
+      }
+  };
+
+
   return (
     <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
       
@@ -1236,15 +1274,30 @@ function App() {
                      </div>
                   </header>
 
+                  {/* NUEVA SECCIÓN: Búsqueda de alta visibilidad (UX mejorada) */}
+                  <div className="px-4 py-3 bg-[#F8FAFC] border-b border-gray-100">
+                      <input 
+                          key="pos-search-input-fix" // FIX: Stable key to maintain focus
+                          type="text" 
+                          placeholder="🔍 Buscar artículo por nombre o categoría..." 
+                          value={posSearchQuery}
+                          onChange={(e) => setPosSearchQuery(e.target.value)}
+                          className="border-2 p-3 rounded-xl text-sm w-full focus:border-higea-blue outline-none shadow-inner" 
+                          autoFocus={true} // UX: Focus automático
+                      />
+                  </div>
+
+                  {/* Filtros de Categoría (Ahora ocupan su propia fila) */}
                   <div className="px-4 py-3 overflow-x-auto no-scrollbar flex items-center gap-2 bg-[#F8FAFC]">
                       {categories.map(cat => (
                           <button key={cat} onClick={() => setSelectedCategory(cat)} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold border transition-all ${selectedCategory === cat ? 'bg-higea-blue text-white border-higea-blue' : 'bg-white text-gray-500 border-gray-200'}`}>{cat}</button>
                       ))}
                   </div>
 
+                  {/* 💡 MODIFICADO: Usar currentProducts para aplicar paginación */}
                   <div className="flex-1 overflow-y-auto px-4 pb-20 md:pb-6 custom-scrollbar">
                     <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-                      {filteredProducts.map((prod) => (
+                      {currentProducts.map((prod) => (
                         <div key={prod.id} onClick={() => addToCart(prod)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm active:scale-95 transition-transform">
                           <div className="flex justify-between items-start mb-2">
                               <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{prod.icon_emoji}</div>
@@ -1259,7 +1312,24 @@ function App() {
                         </div>
                       ))}
                     </div>
+                    {/* Mostrar mensaje si no hay productos */}
+                    {currentProducts.length === 0 && (
+                        <p className="text-center text-gray-400 mt-10 text-sm">No se encontraron productos en esta categoría o búsqueda.</p>
+                    )}
                   </div>
+                  
+                  {/* 💡 CONTROLES DE PAGINACIÓN (Nuevo) */}
+                  {totalPages > 1 && (
+                      <div className="p-4 border-t border-gray-200 flex justify-center items-center gap-4 bg-white sticky bottom-0">
+                          <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors">
+                              Anterior
+                          </button>
+                          <span className="text-sm font-bold text-gray-700">Página {currentPage} de {totalPages}</span>
+                          <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors">
+                              Siguiente
+                          </button>
+                      </div>
+                  )}
               </div>
 
               <aside className="w-[350px] bg-white border-l border-gray-200 hidden md:flex flex-col shadow-xl z-20">
