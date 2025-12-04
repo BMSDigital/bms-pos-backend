@@ -50,6 +50,26 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://bms-postventa-api.onren
 // 🇻🇪 REQUISITO LEGAL: Tasa de IVA estándar en Venezuela
 const IVA_RATE = 0.16; 
 
+// --- LISTA EXTENSA DE EMOJIS SOLICITADA POR EL USUARIO (Más de 100) ---
+const EMOJI_OPTIONS = [
+    // Comida Rápida / Platos
+    '🍔', '🍟', '🍕', '🌭', '🌮', '🌯', '🥙', '🧆', '🥪', '🫔', '🍝', '🍜', '🍲', '🥣', '🥗', '🥘', '🍣', '🍤', '🍙', '🍚', '🍛', '🦪', '🍢', '🍡', '🥟', '🥠', '🥡', '🍜', 
+    // Carnes / Aves / Proteínas
+    '🥩', '🥓', '🍗', '🍖', '🥚', '🍳', '🐟', '🦞', '🦀', '🦐', '🦑', 
+    // Víveres / Productos
+    '🍎', '🍏', '🍊', '🍋', '🍅', '🍆', '🥑', '🥦', '🥬', '🥒', '🌶️', '🫑', '🧅', '🧄', '🍠', '🍄', '🥜', '🌰', '🌽', '🥕', '🥔', '🥐', '🍞', '🥖', '🥨', '🥯', '🧇', '🧀', '🧈', '🥛', '🍼', '🍯', 
+    // Dulces / Postres
+    '🍰', '🎂', '🧁', '🥧', '🍫', '🍬', '🍭', '🍮', '🍩', '🍪', '🍦', '🍧', '🍨', '🍬', '🍫', '🍿', '🧇', 
+    // Frutas
+    '🍉', '🍇', '🍓', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍌', '🍐', 
+    // Bebidas
+    '🥤', '🧋', '🫖', '☕️', '🍵', '🍾', '🍷', '🍸', '🍹', '🍺', '🍻', '🥛', '🧃', 
+    // Informática / Electrónica
+    '💻', '🖥️', '⌨️', '🖱️', '🖨️', '📱', '🔋', '🔌', '💡', '💾', '💿', '⏱️', '⌚', '🎙️', '🎧', 
+    // General / Misceláneos
+    '🏷️', '🎁', '🛍️', '💸', '📦', '🛠️', '🧹', '🧺', '🛒', '🔑', '🔗', '📍'
+];
+
 function App() {
   // --- ESTADOS PRINCIPALES ---
   const [view, setView] = useState('POS');
@@ -93,12 +113,15 @@ function App() {
   const [allCustomers, setAllCustomers] = useState([]);
   const [filteredCustomers, setFilteredCustomers] = useState([]); // 💡 NUEVO: Estado para filtrar la lista
   const [customerSearchQuery, setCustomerSearchQuery] = useState(''); // 💡 NUEVO: Estado para el input de búsqueda
-  const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
 
   // ESTADOS para el módulo de Productos (Esqueleto CRUD)
-  // MODIFICADO: Añadir is_taxable por defecto (Gravado)
-  const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' });
+  const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
+  const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' });
 
+  // NUEVOS ESTADOS para búsqueda de inventario
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [filteredInventory, setFilteredInventory] = useState([]);
+  // ------------------------------------------
 
   // 1. Carga inicial de datos al montar el componente
   useEffect(() => { fetchData(); }, []);
@@ -124,6 +147,21 @@ function App() {
           setFilteredCustomers(allCustomers);
       }
   }, [customerSearchQuery, allCustomers]);
+  
+  // 💡 NUEVO: Lógica de filtro para la tabla de inventario
+  useEffect(() => {
+      if (productSearchQuery) {
+          const lowerQuery = productSearchQuery.toLowerCase();
+          const results = products.filter(p => 
+              p.name.toLowerCase().includes(lowerQuery) || 
+              p.category.toLowerCase().includes(lowerQuery) ||
+              p.id.toString().includes(lowerQuery)
+          );
+          setFilteredInventory(results);
+      } else {
+          setFilteredInventory(products);
+      }
+  }, [productSearchQuery, products]);
 
 
   // Función de carga de clientes (usada en el useEffect anterior)
@@ -207,6 +245,11 @@ function App() {
       }));
   };
   
+  // Función para selección rápida de emoji
+  const handleEmojiSelect = (emoji) => {
+      setProductForm(prev => ({ ...prev, icon_emoji: emoji }));
+  };
+
   const saveProduct = async (e) => {
       e.preventDefault();
       
@@ -229,7 +272,7 @@ function App() {
           
           Swal.fire('¡Éxito!', `Producto ${productForm.id ? 'actualizado' : 'registrado'} correctamente.`, 'success');
           
-          setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' });
+          setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' });
           fetchData(); 
       } catch (error) {
           const message = error.response?.data?.error || error.message;
@@ -252,6 +295,7 @@ function App() {
         
       setProducts(allProducts);
       setFilteredProducts(allProducts);
+      setFilteredInventory(allProducts); // Inicializar la lista de inventario filtrado
       setCategories(['Todos', ...new Set(allProducts.map(p => p.category))]);
 
       const statsRes = await axios.get(`${API_URL}/reports/daily`);
@@ -593,7 +637,7 @@ function App() {
                   return false;
               }
               if (paymentMethod !== 'EFECTIVO_USD' && !paymentReference.trim()) {
-                  Swal.showValidationMessage('La referencia es obligatoria para este método.');
+                  Swal.showValidationMessage('La referencia es obligatoria para este pago.');
                   return false;
               }
               return { paymentMethod, paymentReference };
@@ -955,7 +999,10 @@ function App() {
   }
 
   // 💡 NUEVO ESQUELETO DE MÓDULO DE PRODUCTOS (UX)
-  const ProductManagementView = () => (
+  const ProductManagementView = () => {
+    // La lista de emojis es EMOJI_OPTIONS
+
+    return (
       <div className="p-4 md:p-8 overflow-y-auto h-full">
         <h2 className="text-2xl font-black text-gray-800 mb-6">Gestión de Productos e Inventario</h2>
 
@@ -970,8 +1017,43 @@ function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                     <input type="number" name="stock" placeholder="Stock Inicial/Actual" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" required />
-                    <input type="text" name="icon_emoji" placeholder="Icono Emoji (🍔)" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" maxLength="1" />
+                    
+                    {/* Input de texto para entrada libre y Emojis seleccionados */}
+                    <input 
+                        type="text" 
+                        name="icon_emoji" 
+                        placeholder="Icono Emoji (🍔)" 
+                        value={productForm.icon_emoji} 
+                        onChange={handleProductFormChange} 
+                        className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none text-xl text-center font-bold" 
+                        maxLength="1" // Limita a un solo carácter/emoji
+                        required
+                    />
                 </div>
+                
+                {/* NUEVA SECCIÓN: Selector rápido de Emojis (Más compacto, 6 columnas) */}
+                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
+                    <label className="text-sm font-bold text-gray-600 flex-shrink-0 block mb-2">Selección Rápida de Emoji:</label>
+                    
+                    {/* Contenedor para 6 columnas en móvil/tablet y scroll vertical más compacto (max-h-28 ~ 112px) */}
+                    <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-1 max-h-28 overflow-y-scroll p-1 border border-dashed border-gray-300 rounded-lg"> 
+                        
+                        {EMOJI_OPTIONS.map((emoji, index) => (
+                            <button
+                                type="button"
+                                key={index}
+                                onClick={() => handleEmojiSelect(emoji)}
+                                // p-1.5 y text-base para que sigan siendo legibles, pero compactos
+                                className={`text-base p-1.5 rounded-lg transition-all border w-full text-center flex items-center justify-center ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white border-higea-blue' : 'bg-white hover:bg-gray-200 border-gray-200'}`}
+                                title={emoji}
+                            >
+                                {emoji}
+                            </button>
+                        ))}
+                    </div>
+                    <p className='text-xs text-gray-500 mt-2 text-center'>Selecciona un icono de la lista o escríbelo directamente en el campo de arriba.</p>
+                </div>
+                {/* FIN MODIFICACIÓN */}
                 
                 {/* 🇻🇪 REQUISITO FISCAL: Control del IVA */}
                 <div className="flex gap-4 items-center bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
@@ -992,51 +1074,84 @@ function App() {
                 <button type="submit" className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-700">
                     {productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}
                 </button>
-                <button type="button" onClick={() => setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' })} className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300">Limpiar Formulario</button>
+                <button type="button" onClick={() => setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' })} className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300">Limpiar Formulario</button>
             </form>
         </div>
         
-        {/* Aquí iría la lista actual de productos (similar a la vista POS, pero con un botón de edición) */}
+        {/* TABLA DE INVENTARIO ACTUAL (MODIFICADA CON BÚSQUEDA Y CLIC DE EDICIÓN) */}
          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-             <div className="p-5 border-b border-gray-100"><h3 className="font-bold text-gray-800">Inventario Actual ({products.length})</h3></div>
-             {/* Contenido de la tabla o cuadrícula de productos para gestión */}
-              <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs md:text-sm text-gray-600">
-                      <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                          <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Status Fiscal</th><th className="px-4 py-3 text-right">Precio Ref</th><th className="px-4 py-3 text-right">Stock</th><th className="px-4 py-3 text-right">Acción</th></tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                           {products.map(p => (
-                            <tr key={p.id}>
-                                <td className="px-4 py-3 font-bold text-higea-blue">#{p.id}</td>
-                                <td className="px-4 py-3 text-gray-800">{p.name}</td>
-                                <td className="px-4 py-3">{p.category}</td>
-                                <td className="px-4 py-3">
-                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_taxable ? 'bg-blue-100 text-higea-blue' : 'bg-green-100 text-green-600'}`}>
-                                       {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 text-right">Ref {parseFloat(p.price_usd).toFixed(2)}</td>
-                                <td className={`px-4 py-3 text-right font-bold ${p.stock <= 5 ? 'text-red-500' : 'text-gray-800'}`}>{p.stock}</td>
-                                <td className="px-4 py-3 text-right">
-                                    <button onClick={() => setProductForm({
-                                        id: p.id, 
-                                        name: p.name, 
-                                        category: p.category, 
-                                        price_usd: parseFloat(p.price_usd), 
-                                        stock: p.stock, 
-                                        icon_emoji: p.icon_emoji, 
-                                        is_taxable: p.is_taxable
-                                    })} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700">Editar</button>
-                                </td>
-                            </tr>
-                           ))}
-                      </tbody>
-                  </table>
-              </div>
-         </div>
+             <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+                 <h3 className="font-bold text-gray-800">Inventario Actual ({products.length})</h3>
+                 {/* Input de Búsqueda de Artículos */}
+                 <input 
+                    type="text" 
+                    placeholder="Buscar por Nombre, Categoría o ID..." 
+                    value={productSearchQuery}
+                    onChange={(e) => setProductSearchQuery(e.target.value)}
+                    className="border p-2 rounded-lg text-sm w-1/2 focus:border-higea-blue outline-none" 
+                />
+            </div>
+             <div className="overflow-x-auto">
+                 <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                     <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
+                         <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Status Fiscal</th><th className="px-4 py-3 text-right">Precio Ref</th><th className="px-4 py-3 text-right">Stock</th><th className="px-4 py-3 text-right">Acción</th></tr>
+                     </thead>
+                     <tbody className="divide-y divide-gray-100">
+                          {filteredInventory.map(p => (
+                           <tr 
+                               key={p.id}
+                               // 💡 EDICIÓN RÁPIDA: Clic en la fila carga el formulario
+                               onClick={() => {
+                                setProductForm({
+                                    id: p.id, 
+                                    name: p.name, 
+                                    category: p.category, 
+                                    price_usd: parseFloat(p.price_usd), 
+                                    stock: p.stock, 
+                                    icon_emoji: p.icon_emoji, 
+                                    is_taxable: p.is_taxable
+                                });
+                                window.scrollTo(0, 0); // Desplazar hacia arriba para ver el formulario
+                               }}
+                               className="hover:bg-blue-50 cursor-pointer"
+                           >
+                               <td className="px-4 py-3 font-bold text-higea-blue">#{p.id}</td>
+                               <td className="px-4 py-3 text-gray-800">{p.name}</td>
+                               <td className="px-4 py-3">{p.category}</td>
+                               <td className="px-4 py-3">
+                                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_taxable ? 'bg-blue-100 text-higea-blue' : 'bg-green-100 text-green-600'}`}>
+                                      {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
+                                   </span>
+                               </td>
+                               <td className="px-4 py-3 text-right">Ref {parseFloat(p.price_usd).toFixed(2)}</td>
+                               <td className={`px-4 py-3 text-right font-bold ${p.stock <= 5 ? 'text-red-500' : 'text-gray-800'}`}>{p.stock}</td>
+                               <td className="px-4 py-3 text-right">
+                                   <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation(); // Evitar que el clic de la fila se dispare
+                                        setProductForm({
+                                            id: p.id, 
+                                            name: p.name, 
+                                            category: p.category, 
+                                            price_usd: parseFloat(p.price_usd), 
+                                            stock: p.stock, 
+                                            icon_emoji: p.icon_emoji, 
+                                            is_taxable: p.is_taxable
+                                        });
+                                        window.scrollTo(0, 0);
+                                       }} 
+                                       className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700">Editar</button>
+                               </td>
+                           </tr>
+                          ))}
+                     </tbody>
+                 </table>
+             </div>
+             {filteredInventory.length === 0 && <p className="p-4 text-center text-gray-400">No se encontraron artículos con esos criterios de búsqueda.</p>}
+        </div>
       </div>
-  );
+    );
+  };
 
 
   // --- RESTO DE COMPONENTES Y LÓGICA DE UI ---
