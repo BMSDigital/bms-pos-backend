@@ -16,10 +16,41 @@ const capitalizeWords = (str) => {
 // 2. Validar y formatear ID (Cédula/RIF)
 const validateIdNumber = (value) => {
     if (!value) return '';
-    // Permite V, E, J, G y números y guiones
-    const cleaned = value.toUpperCase().replace(/[^VEJGT\d-]/g, '');
-    // Limite de 15 caracteres (ej. V-99999999-99)
-    return cleaned.substring(0, 15); 
+    const upperValue = value.toUpperCase();
+    
+    // 1. Limpiar: Solo permitir V, E, J, G, T, dígitos y guion
+    const cleaned = upperValue.replace(/[^VEJGT\d-]/g, '');
+    if (!cleaned) return '';
+    
+    let formatted = '';
+    
+    // 2. Aplicar restricción de Carácter Inicial (V, E, J, G, T)
+    if ('VEJGT'.includes(cleaned[0])) {
+        formatted += cleaned[0];
+    } else {
+        // Si comienza con un caracter inválido, lo ignora.
+        return '';
+    }
+    
+    // 3. Forzar el guion después de la letra inicial si hay más caracteres
+    const numberPart = cleaned.substring(1).replace(/-/g, ''); // Eliminar guiones duplicados en la parte numérica
+    
+    if (cleaned.length > 1) {
+        // Reconstruir forzando el guion: L-NNNNNNNN
+        formatted += '-' + numberPart;
+    } else {
+        formatted = cleaned;
+    }
+    
+    // 4. Asegurar que la parte numérica solo sean dígitos
+    if (formatted.includes('-')) {
+        const parts = formatted.split('-');
+        // Reemplazar cualquier cosa que no sea un dígito después del guion
+        formatted = parts[0] + '-' + parts[1].replace(/[^\d]/g, ''); 
+    }
+
+    // 5. Aplicar límite de longitud final
+    return formatted.substring(0, 15); 
 };
 
 // 3. Validar y formatear Teléfono (Internacional)
@@ -113,7 +144,8 @@ function App() {
   const [allCustomers, setAllCustomers] = useState([]);
   const [filteredCustomers, setFilteredCustomers] = useState([]); // 💡 NUEVO: Estado para filtrar la lista
   const [customerSearchQuery, setCustomerSearchQuery] = useState(''); // 💡 NUEVO: Estado para el input de búsqueda
-
+  const [customerCurrentPage, setCustomerCurrentPage] = useState(1); // <-- PAGINACIÓN CLIENTES
+  
   // ESTADOS para el módulo de Productos (Esqueleto CRUD)
   const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
   const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' });
@@ -121,6 +153,7 @@ function App() {
   // NUEVOS ESTADOS para búsqueda de inventario
   const [productSearchQuery, setProductSearchQuery] = useState('');
   const [filteredInventory, setFilteredInventory] = useState([]);
+  const [inventoryCurrentPage, setInventoryCurrentPage] = useState(1); // <-- PAGINACIÓN INVENTARIO
   // ------------------------------------------
 
   // 💡 NUEVOS ESTADOS para búsqueda en POS y Paginación (Punto 1)
@@ -139,7 +172,7 @@ function App() {
       }
   }, [view]);
 
-  // 💡 NUEVO: Lógica de filtro para la tabla de clientes
+  // 💡 Lógica de filtro para la tabla de clientes (AÑADIDO RESET DE PÁGINA)
   useEffect(() => {
       if (customerSearchQuery) {
           const lowerQuery = customerSearchQuery.toLowerCase();
@@ -152,9 +185,10 @@ function App() {
       } else {
           setFilteredCustomers(allCustomers);
       }
+      setCustomerCurrentPage(1); // <-- RESET DE PÁGINA
   }, [customerSearchQuery, allCustomers]);
   
-  // 💡 NUEVO: Lógica de filtro para la tabla de inventario
+  // 💡 Lógica de filtro para la tabla de inventario (AÑADIDO RESET DE PÁGINA)
   useEffect(() => {
       if (productSearchQuery) {
           const lowerQuery = productSearchQuery.toLowerCase();
@@ -167,6 +201,7 @@ function App() {
       } else {
           setFilteredInventory(products);
       }
+      setInventoryCurrentPage(1); // <-- RESET DE PÁGINA
   }, [productSearchQuery, products]);
 
   // 💡 MODIFICADO: Lógica de filtro para productos (Ahora incluye categoría, búsqueda en POS y resetea la página)
@@ -212,6 +247,7 @@ function App() {
         institution: customer.institution || '',
         status: customer.status || 'ACTIVO', 
     });
+    // Desplazarse hacia arriba para que el usuario vea el formulario
     window.scrollTo(0, 0); 
 }
   
@@ -263,13 +299,26 @@ function App() {
       setCustomerForm(prev => ({ ...prev, [name]: newValue }));
   };
   
-  // --- NUEVA LÓGICA: Lógica de Edición/Creación de Productos con Campo Fiscal ---
+  // --- NUEVA LÓGICA: Lógica de Edición/Creación de Productos con Campo Fiscal y Validación de Texto ---
   const handleProductFormChange = (e) => {
       const { name, value } = e.target;
+      let newValue = value;
+
+      // 🎯 LÓGICA DE VALIDACIÓN Y FORMATO: Nombre y Categoría solo letras + Capitalización
+      if (name === 'name' || name === 'category') {
+        // 1. Limpiar: Permitir solo letras, espacios y caracteres acentuados comunes.
+        const cleaned = value.replace(/[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g, ''); 
+        
+        // 2. Formatear (Capitalizar por palabra)
+        newValue = cleaned.toLowerCase().split(' ').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1)
+        ).join(' ');
+      }
+      
       setProductForm(prev => ({
           ...prev,
-          // CRUCIAL: Convertir el valor de `is_taxable` a booleano
-          [name]: (name === 'is_taxable') ? (value === 'true') : value
+          // CRUCIAL: Convertir el valor de `is_taxable` a booleano, o usar newValue si es otro campo
+          [name]: (name === 'is_taxable') ? (value === 'true') : newValue
       }));
   };
   
@@ -958,7 +1007,8 @@ function App() {
 
                       {/* Campo de Número de Identificador (Clave para Búsqueda) */}
                       <div className="relative">
-                          <input type="text" name="id_number" placeholder="Número de Identificador (*)" onChange={handleIdChange} value={customerData.id_number} 
+                          {/* CAMBIO DE ETIQUETA/PLACEHOLDER */}
+                          <input type="text" name="id_number" placeholder="Cédula/Rif (*)" onChange={handleIdChange} value={customerData.id_number} 
                               className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
                               autoFocus={true} 
                               style={{ paddingRight: isSearchingCustomer ? '40px' : '15px' }}
@@ -1021,164 +1071,6 @@ function App() {
       );
   }
 
-  // 💡 NUEVO ESQUELETO DE MÓDULO DE PRODUCTOS (UX)
-  const ProductManagementView = () => {
-    // La lista de emojis es EMOJI_OPTIONS
-
-    return (
-      <div className="p-4 md:p-8 overflow-y-auto h-full">
-        <h2 className="text-2xl font-black text-gray-800 mb-6">Gestión de Productos e Inventario</h2>
-
-        {/* Formulario de Creación/Edición con campo is_taxable */}
-        <div className="bg-white p-5 rounded-3xl shadow-lg border border-gray-100 mb-8 max-w-xl mx-auto">
-            <h3 className="text-xl font-bold text-higea-blue mb-4">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
-            <form onSubmit={saveProduct}>
-                <input type="text" name="name" placeholder="Nombre del Producto (*)" value={productForm.name} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" required />
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                    <input type="text" name="category" placeholder="Categoría" value={productForm.category} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
-                    <input type="number" name="price_usd" placeholder="Precio USD (*)" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" required />
-                </div>
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                    <input type="number" name="stock" placeholder="Stock Inicial/Actual" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" required />
-                    
-                    {/* Input de texto para entrada libre y Emojis seleccionados */}
-                    <input 
-                        type="text" 
-                        name="icon_emoji" 
-                        placeholder="Icono Emoji (🍔)" 
-                        value={productForm.icon_emoji} 
-                        onChange={handleProductFormChange} 
-                        className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none text-xl text-center font-bold" 
-                        maxLength="1" // Limita a un solo carácter/emoji
-                        required
-                    />
-                </div>
-                
-                {/* NUEVA SECCIÓN: Selector rápido de Emojis (Más compacto, 6 columnas) */}
-                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
-                    <label className="text-sm font-bold text-gray-600 flex-shrink-0 block mb-2">Selección Rápida de Emoji:</label>
-                    
-                    {/* Contenedor para 6 columnas en móvil/tablet y scroll vertical más compacto (max-h-28 ~ 112px) */}
-                    <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-1 max-h-28 overflow-y-scroll p-1 border border-dashed border-gray-300 rounded-lg"> 
-                        
-                        {EMOJI_OPTIONS.map((emoji, index) => (
-                            <button
-                                type="button"
-                                key={index}
-                                onClick={() => handleEmojiSelect(emoji)}
-                                // p-1.5 y text-base para que sigan siendo legibles, pero compactos
-                                className={`text-base p-1.5 rounded-lg transition-all border w-full text-center flex items-center justify-center ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white border-higea-blue' : 'bg-white hover:bg-gray-200 border-gray-200'}`}
-                                title={emoji}
-                            >
-                                {emoji}
-                            </button>
-                        ))}
-                    </div>
-                    <p className='text-xs text-gray-500 mt-2 text-center'>Selecciona un icono de la lista o escríbelo directamente en el campo de arriba.</p>
-                </div>
-                {/* FIN MODIFICACIÓN */}
-                
-                {/* 🇻🇪 REQUISITO FISCAL: Control del IVA */}
-                <div className="flex gap-4 items-center bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
-                    <label className="text-sm font-bold text-gray-600 flex-shrink-0">Estatus Fiscal (IVA 16%):</label>
-                    <select 
-                        name="is_taxable"
-                        // CRUCIAL: Convertir a string para el selector HTML
-                        value={productForm.is_taxable.toString()} 
-                        onChange={handleProductFormChange}
-                        className="border p-3 rounded-xl flex-1 bg-white font-bold text-sm"
-                    >
-                        <option value="true">GRAVADO (Sujeto a IVA)</option>
-                        <option value="false">EXENTO (No lleva IVA)</option>
-                    </select>
-                </div>
-                {/* FIN REQUISITO FISCAL */}
-                
-                <button type="submit" className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-700">
-                    {productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}
-                </button>
-                <button type="button" onClick={() => setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' })} className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300">Limpiar Formulario</button>
-            </form>
-        </div>
-        
-        {/* TABLA DE INVENTARIO ACTUAL (MODIFICADA CON BÚSQUEDA Y CLIC DE EDICIÓN) */}
-         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-             <div className="p-5 border-b border-gray-100 flex justify-between items-center">
-                 <h3 className="font-bold text-gray-800">Inventario Actual ({products.length})</h3>
-                 {/* Input de Búsqueda de Artículos */}
-                 <input 
-                    type="text" 
-                    placeholder="Buscar por Nombre, Categoría o ID..." 
-                    value={productSearchQuery}
-                    onChange={(e) => setProductSearchQuery(e.target.value)}
-                    // 💡 FIX del Cursor: Añadir un key estático para mantener el foco.
-                    key="inventory-search-input"
-                    className="border p-2 rounded-lg text-sm w-1/2 focus:border-higea-blue outline-none" 
-                />
-            </div>
-             <div className="overflow-x-auto">
-                 <table className="w-full text-left text-xs md:text-sm text-gray-600">
-                     <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                         <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Status Fiscal</th><th className="px-4 py-3 text-right">Precio Ref</th><th className="px-4 py-3 text-right">Stock</th><th className="px-4 py-3 text-right">Acción</th></tr>
-                     </thead>
-                     <tbody className="divide-y divide-gray-100">
-                          {filteredInventory.map(p => (
-                           <tr 
-                               key={p.id}
-                               // 💡 EDICIÓN RÁPIDA: Clic en la fila carga el formulario
-                               onClick={() => {
-                                setProductForm({
-                                    id: p.id, 
-                                    name: p.name, 
-                                    category: p.category, 
-                                    price_usd: parseFloat(p.price_usd), 
-                                    stock: p.stock, 
-                                    icon_emoji: p.icon_emoji, 
-                                    is_taxable: p.is_taxable
-                                });
-                                window.scrollTo(0, 0); // Desplazar hacia arriba para ver el formulario
-                               }}
-                               className="hover:bg-blue-50 cursor-pointer"
-                           >
-                               <td className="px-4 py-3 font-bold text-higea-blue">#{p.id}</td>
-                               <td className="px-4 py-3 text-gray-800">{p.name}</td>
-                               <td className="px-4 py-3">{p.category}</td>
-                               <td className="px-4 py-3">
-                                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_taxable ? 'bg-blue-100 text-higea-blue' : 'bg-green-100 text-green-600'}`}>
-                                      {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
-                                   </span>
-                               </td>
-                               <td className="px-4 py-3 text-right">Ref {parseFloat(p.price_usd).toFixed(2)}</td>
-                               <td className={`px-4 py-3 text-right font-bold ${p.stock <= 5 ? 'text-red-500' : 'text-gray-800'}`}>{p.stock}</td>
-                               <td className="px-4 py-3 text-right">
-                                   <button 
-                                      onClick={(e) => {
-                                        e.stopPropagation(); // Evitar que el clic de la fila se dispare
-                                        setProductForm({
-                                            id: p.id, 
-                                            name: p.name, 
-                                            category: p.category, 
-                                            price_usd: parseFloat(p.price_usd), 
-                                            stock: p.stock, 
-                                            icon_emoji: p.icon_emoji, 
-                                            is_taxable: p.is_taxable
-                                        });
-                                        window.scrollTo(0, 0);
-                                       }} 
-                                       className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700">Editar</button>
-                               </td>
-                           </tr>
-                          ))}
-                     </tbody>
-                 </table>
-             </div>
-             {filteredInventory.length === 0 && <p className="p-4 text-center text-gray-400">No se encontraron artículos con esos criterios de búsqueda.</p>}
-        </div>
-      </div>
-    );
-  };
-
-
   // --- RESTO DE COMPONENTES Y LÓGICA DE UI ---
   const CartItem = ({ item }) => (
     <div onClick={() => removeFromCart(item.id)} className="flex justify-between items-center py-3 px-3 mb-2 rounded-xl bg-white border border-gray-100 shadow-sm active:scale-95 cursor-pointer select-none">
@@ -1208,7 +1100,7 @@ function App() {
 
   const isFallbackActive = bcvRate === fallbackRate; // 💡 NUEVO: Verificación de Fallback
   
-  // 💡 LÓGICA DE PAGINACIÓN DE PRODUCTOS
+  // 💡 LÓGICA DE PAGINACIÓN DE PRODUCTOS (POS View)
   const indexOfLastProduct = currentPage * productsPerPage;
   const indexOfFirstProduct = indexOfLastProduct - productsPerPage;
   const currentProducts = filteredProducts.slice(indexOfFirstProduct, indexOfLastProduct);
@@ -1495,143 +1387,367 @@ function App() {
                </div>
            </div>
         ) : view === 'CUSTOMERS' ? (
-            /* NUEVO MÓDULO DE CLIENTES (CUSTOMERS) - Punto 1 */
+            /* MÓDULO DE CLIENTES (CUSTOMERS) - APLICACIÓN DE PAGINACIÓN Y EDICIÓN RÁPIDA */
            <div className="p-4 md:p-8 overflow-y-auto h-full">
                 <h2 className="text-2xl font-black text-gray-800 mb-6">Gestión de Clientes</h2>
 
-                {/* Formulario de Registro/Edición */}
-                <div className="bg-white p-5 rounded-3xl shadow-lg border border-gray-100 mb-8 max-w-lg mx-auto">
-                    <h3 className="text-xl font-bold text-higea-blue mb-4">{customerForm.id ? 'Editar Cliente' : 'Nuevo Cliente'}</h3>
-                    <form onSubmit={saveCustomer}>
-                        {/* Campos con las nuevas validaciones */}
-                        <input 
-                            type="text" 
-                            name="full_name" 
-                            placeholder="Nombre Completo (*)" 
-                            value={customerForm.full_name}
-                            onChange={handleCustomerFormChange} 
-                            className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" 
-                            required
-                        />
-                        
-                        <div className="grid grid-cols-2 gap-3 mb-3">
-                            {/* Número de Identificador (Punto 2) */}
-                            <input 
-                                type="text" 
-                                name="id_number" 
-                                placeholder="Número de Identificador (*)" 
-                                value={customerForm.id_number}
-                                onChange={handleCustomerFormChange} 
-                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
-                                required
-                            />
-                            {/* Teléfono (Punto 3) */}
-                            <input 
-                                type="tel" 
-                                name="phone" 
-                                placeholder="Teléfono" 
-                                value={customerForm.phone}
-                                onChange={handleCustomerFormChange} 
-                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                            />
-                        </div>
-                        
-                        <input 
-                            type="text" 
-                            name="institution" 
-                            placeholder="Institución/Referencia" 
-                            value={customerForm.institution}
-                            onChange={handleCustomerFormChange} 
-                            className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" 
-                        />
+                {/* Cálculos de Paginación para Clientes */}
+                {(() => {
+                    const customersPerPage = 10;
+                    const indexOfLastCustomer = customerCurrentPage * customersPerPage;
+                    const indexOfFirstCustomer = indexOfLastCustomer - customersPerPage;
+                    const currentCustomers = filteredCustomers.slice(indexOfFirstCustomer, indexOfLastCustomer);
+                    const customerTotalPages = Math.ceil(filteredCustomers.length / customersPerPage);
 
-                        <div className="flex gap-4 items-center">
-                            <label className="text-sm font-bold text-gray-600">Estatus:</label>
-                            <select 
-                                name="status"
-                                value={customerForm.status}
-                                onChange={handleCustomerFormChange}
-                                className="border p-3 rounded-xl flex-1 bg-white"
-                            >
-                                <option value="ACTIVO">ACTIVO (Apto para crédito)</option>
-                                <option value="INACTIVO">INACTIVO (No apto para crédito)</option>
-                            </select>
-                        </div>
+                    return (
+                        <>
+                            {/* Formulario de Registro/Edición */}
+                            <div className="bg-white p-5 rounded-3xl shadow-lg border border-gray-100 mb-8 max-w-lg mx-auto">
+                                <h3 className="text-xl font-bold text-higea-blue mb-4">{customerForm.id ? 'Editar Cliente' : 'Nuevo Cliente'}</h3>
+                                <form onSubmit={saveCustomer}>
+                                    {/* Campos con las nuevas validaciones */}
+                                    <input 
+                                        type="text" 
+                                        name="full_name" 
+                                        placeholder="Nombre Completo (*)" 
+                                        value={customerForm.full_name}
+                                        onChange={handleCustomerFormChange} 
+                                        className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" 
+                                        required
+                                    />
+                                    
+                                    <div className="grid grid-cols-2 gap-3 mb-3">
+                                        {/* Número de Identificador (Punto 2) */}
+                                        <input 
+                                            type="text" 
+                                            name="id_number" 
+                                            placeholder="Número de Identificador (*)" 
+                                            value={customerForm.id_number}
+                                            onChange={handleCustomerFormChange} 
+                                            className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
+                                            required
+                                        />
+                                        {/* Teléfono (Punto 3) */}
+                                        <input 
+                                            type="tel" 
+                                            name="phone" 
+                                            placeholder="Teléfono" 
+                                            value={customerForm.phone}
+                                            onChange={handleCustomerFormChange} 
+                                            className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
+                                        />
+                                    </div>
+                                    
+                                    <input 
+                                        type="text" 
+                                        name="institution" 
+                                        placeholder="Institución/Referencia" 
+                                        value={customerForm.institution}
+                                        onChange={handleCustomerFormChange} 
+                                        className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" 
+                                    />
 
-                        <button 
-                            type="submit"
-                            className="w-full bg-green-600 text-white font-bold py-3 rounded-xl mt-4 shadow-md hover:bg-green-700"
-                        >
-                            {customerForm.id ? 'Guardar Cambios' : 'Registrar Nuevo Cliente'}
-                        </button>
+                                    <div className="flex gap-4 items-center">
+                                        <label className="text-sm font-bold text-gray-600">Estatus:</label>
+                                        <select 
+                                            name="status"
+                                            value={customerForm.status}
+                                            onChange={handleCustomerFormChange}
+                                            className="border p-3 rounded-xl flex-1 bg-white"
+                                        >
+                                            <option value="ACTIVO">ACTIVO (Apto para crédito)</option>
+                                            <option value="INACTIVO">INACTIVO (No apto para crédito)</option>
+                                        </select>
+                                    </div>
 
-                        <button 
-                            type="button"
-                            onClick={() => setCustomerForm({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' })}
-                            className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300"
-                        >
-                            Limpiar Formulario
-                        </button>
-                    </form>
-                </div>
+                                    <button 
+                                        type="submit"
+                                        className="w-full bg-green-600 text-white font-bold py-3 rounded-xl mt-4 shadow-md hover:bg-green-700"
+                                    >
+                                        {customerForm.id ? 'Guardar Cambios' : 'Registrar Nuevo Cliente'}
+                                    </button>
 
-                {/* Tabla de Listado de Clientes */}
-                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mt-8">
-                    <div className="p-5 border-b border-gray-100 flex justify-between items-center">
-                        <h3 className="font-bold text-gray-800">Listado de Clientes ({allCustomers.length})</h3>
-                        {/* 💡 MEJORA UX: Búsqueda en listado */}
-                         <input 
-                            type="text" 
-                            placeholder="Buscar por Nombre, ID o Teléfono..." 
-                            value={customerSearchQuery}
-                            onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                            className="border p-2 rounded-lg text-sm w-1/2 focus:border-higea-blue outline-none" 
-                        />
-                    </div>
-                     <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs md:text-sm text-gray-600">
-                            <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                                <tr>
-                                    <th className="px-4 py-3">ID</th>
-                                    <th className="px-4 py-3">Nombre</th>
-                                    <th className="px-4 py-3">Identificador</th>
-                                    <th className="px-4 py-3">Teléfono</th>
-                                    <th className="px-4 py-3">Estatus</th>
-                                    <th className="px-4 py-3 text-right">Acción</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {filteredCustomers.map((customer) => (
-                                    <tr key={customer.id} className="hover:bg-blue-50">
-                                        <td className="px-4 py-3 font-bold text-higea-blue">#{customer.id}</td>
-                                        <td className="px-4 py-3 text-gray-800">{customer.full_name}</td>
-                                        <td className="px-4 py-3 font-medium">{customer.id_number}</td>
-                                        <td className="px-4 py-3">{customer.phone || 'N/A'}</td>
-                                        <td className="px-4 py-3">
-							<span className={`px-2 py-1 rounded text-[10px] font-bold ${
-								// Usamos el fallback 'ACTIVO' tanto para el color...
-								(customer.status || 'ACTIVO') === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
-							}`}>
-							{/* ...como para el texto visible */}
-								{customer.status || 'ACTIVO'} 
-							</span>
-							</td>
-                                        <td className="px-4 py-3 text-right">
-                                            <button onClick={() => editCustomer(customer)} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700 active:scale-95 transition-transform">
-                                                Editar
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                     </div>
-                     {filteredCustomers.length === 0 && <p className="p-4 text-center text-gray-400">No se encontraron clientes con esos criterios de búsqueda.</p>}
-                </div>
+                                    <button 
+                                        type="button"
+                                        onClick={() => setCustomerForm({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' })}
+                                        className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300"
+                                    >
+                                        Limpiar Formulario
+                                    </button>
+                                </form>
+                            </div>
+
+                            {/* Tabla de Listado de Clientes */}
+                            <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mt-8">
+                                <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+                                    <h3 className="font-bold text-gray-800">Listado de Clientes ({filteredCustomers.length})</h3>
+                                    {/* 💡 MEJORA UX: Búsqueda en listado */}
+                                     <input 
+                                        type="text" 
+                                        placeholder="Buscar por Nombre, ID o Teléfono..." 
+                                        value={customerSearchQuery}
+                                        onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                                        className="border p-2 rounded-lg text-sm w-1/2 focus:border-higea-blue outline-none" 
+                                    />
+                                </div>
+                                 <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                                        <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
+                                            <tr>
+                                                <th className="px-4 py-3">ID</th>
+                                                <th className="px-4 py-3">Nombre</th>
+                                                <th className="px-4 py-3">Identificador</th>
+                                                <th className="px-4 py-3">Teléfono</th>
+                                                <th className="px-4 py-3">Estatus</th>
+                                                <th className="px-4 py-3 text-right">Acción</th> {/* Se mantiene la columna por consistencia con Product */}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {/* Usamos currentCustomers para la paginación */}
+                                            {currentCustomers.map((customer) => (
+                                                <tr 
+                                                    key={customer.id} 
+                                                    onClick={() => editCustomer(customer)} // <-- EDICIÓN RÁPIDA (Click en la fila)
+                                                    className="hover:bg-blue-50 cursor-pointer"
+                                                >
+                                                    <td className="px-4 py-3 font-bold text-higea-blue">#{customer.id}</td>
+                                                    <td className="px-4 py-3 text-gray-800">{customer.full_name}</td>
+                                                    <td className="px-4 py-3 font-medium">{customer.id_number}</td>
+                                                    <td className="px-4 py-3">{customer.phone || 'N/A'}</td>
+                                                    <td className="px-4 py-3">
+                                                        <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                                                            (customer.status || 'ACTIVO') === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                                                        }`}>
+                                                            {customer.status || 'ACTIVO'} 
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        <button onClick={(e) => { e.stopPropagation(); editCustomer(customer); }} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700 active:scale-95 transition-transform">
+                                                            Editar
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                 </div>
+                                 {filteredCustomers.length === 0 && <p className="p-4 text-center text-gray-400">No se encontraron clientes con esos criterios de búsqueda.</p>}
+                                 
+                                 {/* Controles de Paginación de Clientes */}
+                                 {customerTotalPages > 1 && (
+                                    <div className="p-4 border-t border-gray-200 flex justify-center items-center gap-4 bg-white">
+                                        <button 
+                                            onClick={() => setCustomerCurrentPage(prev => Math.max(1, prev - 1))}
+                                            disabled={customerCurrentPage === 1} 
+                                            className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                                        >
+                                            Anterior
+                                        </button>
+                                        <span className="text-sm font-bold text-gray-700">Página {customerCurrentPage} de {customerTotalPages}</span>
+                                        <button 
+                                            onClick={() => setCustomerCurrentPage(prev => Math.min(customerTotalPages, prev + 1))}
+                                            disabled={customerCurrentPage === customerTotalPages} 
+                                            className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                                        >
+                                            Siguiente
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    );
+                })()}
            </div>
 
         ) : view === 'PRODUCTS' ? (
-             <ProductManagementView />
+            /* RENDERIZADO DIRECTO DEL CONTENIDO DE LA VISTA DE PRODUCTOS - APLICACIÓN DE PAGINACIÓN */
+            <div className="p-4 md:p-8 overflow-y-auto h-full">
+                <h2 className="text-2xl font-black text-gray-800 mb-6">Gestión de Productos e Inventario</h2>
+                
+                {/* Cálculos de Paginación para Inventario */}
+                {(() => {
+                    const inventoryPerPage = 10;
+                    const indexOfLastInventory = inventoryCurrentPage * inventoryPerPage;
+                    const indexOfFirstInventory = indexOfLastInventory - inventoryPerPage;
+                    // Usamos la porción de la lista filtrada que corresponde a la página actual
+                    const currentInventory = filteredInventory.slice(indexOfFirstInventory, indexOfLastInventory);
+                    const inventoryTotalPages = Math.ceil(filteredInventory.length / inventoryPerPage);
+                    
+                    return (
+                        <>
+                            {/* Formulario de Creación/Edición con campo is_taxable */}
+                            <div className="bg-white p-5 rounded-3xl shadow-lg border border-gray-100 mb-8 max-w-xl mx-auto">
+                                <h3 className="text-xl font-bold text-higea-blue mb-4">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
+                                <form onSubmit={saveProduct}>
+                                    {/* El campo name usa la nueva validación/formato */}
+                                    <input type="text" name="name" placeholder="Nombre del Producto (*)" value={productForm.name} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl mb-3 focus:border-higea-blue outline-none" required />
+                                    <div className="grid grid-cols-2 gap-3 mb-3">
+                                        {/* El campo category usa la nueva validación/formato */}
+                                        <input type="text" name="category" placeholder="Categoría" value={productForm.category} onChange={handleProductFormChange} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                                        <input type="number" name="price_usd" placeholder="Precio USD (*)" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" required />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3 mb-4">
+                                        <input type="number" name="stock" placeholder="Stock Inicial/Actual" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" required />
+                                        
+                                        {/* Input de texto para entrada libre y Emojis seleccionados */}
+                                        <input 
+                                            type="text" 
+                                            name="icon_emoji" 
+                                            placeholder="Icono Emoji (🍔)" 
+                                            value={productForm.icon_emoji} 
+                                            onChange={handleProductFormChange} 
+                                            className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none text-xl text-center font-bold" 
+                                            maxLength="1" // Limita a un solo carácter/emoji
+                                            required
+                                        />
+                                    </div>
+                                    
+                                    {/* NUEVA SECCIÓN: Selector rápido de Emojis (Más compacto, 6 columnas) */}
+                                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
+                                        <label className="text-sm font-bold text-gray-600 flex-shrink-0 block mb-2">Selección Rápida de Emoji:</label>
+                                        
+                                        {/* Contenedor para 6 columnas en móvil/tablet y scroll vertical más compacto (max-h-28 ~ 112px) */}
+                                        <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-1 max-h-28 overflow-y-scroll p-1 border border-dashed border-gray-300 rounded-lg"> 
+                                            
+                                            {EMOJI_OPTIONS.map((emoji, index) => (
+                                                <button
+                                                    type="button"
+                                                    key={index}
+                                                    onClick={() => handleEmojiSelect(emoji)}
+                                                    // p-1.5 y text-base para que sigan siendo legibles, pero compactos
+                                                    className={`text-base p-1.5 rounded-lg transition-all border w-full text-center flex items-center justify-center ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white border-higea-blue' : 'bg-white hover:bg-gray-200 border-gray-200'}`}
+                                                    title={emoji}
+                                                >
+                                                    {emoji}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <p className='text-xs text-gray-500 mt-2 text-center'>Selecciona un icono de la lista o escríbelo directamente en el campo de arriba.</p>
+                                    </div>
+                                    {/* FIN MODIFICACIÓN */}
+                                    
+                                    {/* 🇻🇪 REQUISITO FISCAL: Control del IVA */}
+                                    <div className="flex gap-4 items-center bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
+                                        <label className="text-sm font-bold text-gray-600 flex-shrink-0">Estatus Fiscal (IVA 16%):</label>
+                                        <select 
+                                            name="is_taxable"
+                                            // CRUCIAL: Convertir a string para el selector HTML
+                                            value={productForm.is_taxable.toString()} 
+                                            onChange={handleProductFormChange}
+                                            className="border p-3 rounded-xl flex-1 bg-white font-bold text-sm"
+                                        >
+                                            <option value="true">GRAVADO (Sujeto a IVA)</option>
+                                            <option value="false">EXENTO (No lleva IVA)</option>
+                                        </select>
+                                    </div>
+                                    {/* FIN REQUISITO FISCAL */}
+                                    
+                                    <button type="submit" className="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-md hover:bg-green-700">
+                                        {productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}
+                                    </button>
+                                    <button type="button" onClick={() => setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' })} className="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl mt-2 hover:bg-gray-300">Limpiar Formulario</button>
+                                </form>
+                            </div>
+                            
+                            {/* TABLA DE INVENTARIO ACTUAL (MODIFICADA CON BÚSQUEDA Y CLIC DE EDICIÓN) */}
+                             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                                 <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+                                     <h3 className="font-bold text-gray-800">Inventario Actual ({filteredInventory.length})</h3>
+                                     {/* Input de Búsqueda de Artículos */}
+                                     <input 
+                                        type="text" 
+                                        placeholder="Buscar por Nombre, Categoría o ID..." 
+                                        value={productSearchQuery}
+                                        onChange={(e) => setProductSearchQuery(e.target.value)}
+                                        // FIX: Mantiene el foco
+                                        key="inventory-search-input"
+                                        className="border p-2 rounded-lg text-sm w-1/2 focus:border-higea-blue outline-none" 
+                                    />
+                                </div>
+                                 <div className="overflow-x-auto">
+                                     <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                                         <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
+                                             <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Status Fiscal</th><th className="px-4 py-3 text-right">Precio Ref</th><th className="px-4 py-3 text-right">Stock</th><th className="px-4 py-3 text-right">Acción</th></tr>
+                                         </thead>
+                                         <tbody className="divide-y divide-gray-100">
+                                              {/* Usamos currentInventory para la paginación */}
+                                              {currentInventory.map(p => (
+                                               <tr 
+                                                   key={p.id}
+                                                   // 💡 EDICIÓN RÁPIDA: Clic en la fila carga el formulario
+                                                   onClick={() => {
+                                                    setProductForm({
+                                                        id: p.id, 
+                                                        name: p.name, 
+                                                        category: p.category, 
+                                                        price_usd: parseFloat(p.price_usd), 
+                                                        stock: p.stock, 
+                                                        icon_emoji: p.icon_emoji, 
+                                                        is_taxable: p.is_taxable
+                                                    });
+                                                    window.scrollTo(0, 0); // Desplazar hacia arriba para ver el formulario
+                                                   }}
+                                                   className="hover:bg-blue-50 cursor-pointer"
+                                               >
+                                                   <td className="px-4 py-3 font-bold text-higea-blue">#{p.id}</td>
+                                                   <td className="px-4 py-3 text-gray-800">{p.name}</td>
+                                                   <td className="px-4 py-3">{p.category}</td>
+                                                   <td className="px-4 py-3">
+                                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.is_taxable ? 'bg-blue-100 text-higea-blue' : 'bg-green-100 text-green-600'}`}>
+                                                          {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
+                                                       </span>
+                                                   </td>
+                                                   <td className="px-4 py-3 text-right">Ref {parseFloat(p.price_usd).toFixed(2)}</td>
+                                                   <td className={`px-4 py-3 text-right font-bold ${p.stock <= 5 ? 'text-red-500' : 'text-gray-800'}`}>{p.stock}</td>
+                                                   <td className="px-4 py-3 text-right">
+                                                       <button 
+                                                          onClick={(e) => {
+                                                            e.stopPropagation(); // Evitar que el clic de la fila se dispare
+                                                            setProductForm({
+                                                                id: p.id, 
+                                                                name: p.name, 
+                                                                category: p.category, 
+                                                                price_usd: parseFloat(p.price_usd), 
+                                                                stock: p.stock, 
+                                                                icon_emoji: p.icon_emoji, 
+                                                                is_taxable: p.is_taxable
+                                                            });
+                                                            window.scrollTo(0, 0);
+                                                           }} 
+                                                           className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700">Editar</button>
+                                                   </td>
+                                               </tr>
+                                              ))}
+                                         </tbody>
+                                     </table>
+                                 </div>
+                                 {filteredInventory.length === 0 && <p className="p-4 text-center text-gray-400">No se encontraron artículos con esos criterios de búsqueda.</p>}
+                                 
+                                 {/* Controles de Paginación de Inventario */}
+                                 {inventoryTotalPages > 1 && (
+                                    <div className="p-4 border-t border-gray-200 flex justify-center items-center gap-4 bg-white">
+                                        <button 
+                                            onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))}
+                                            disabled={inventoryCurrentPage === 1} 
+                                            className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                                        >
+                                            Anterior
+                                        </button>
+                                        <span className="text-sm font-bold text-gray-700">Página {inventoryCurrentPage} de {inventoryTotalPages}</span>
+                                        <button 
+                                            onClick={() => setInventoryCurrentPage(prev => Math.min(inventoryTotalPages, prev + 1))}
+                                            disabled={inventoryCurrentPage === inventoryTotalPages} 
+                                            className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                                        >
+                                            Siguiente
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    );
+                })()}
+            </div>
         ) : (
              <div className="h-full p-8 text-center text-red-500">Vista no encontrada.</div>
         )}
