@@ -133,6 +133,12 @@ function App() {
   const [stats, setStats] = useState({ total_usd: 0, total_ves: 0, total_transactions: 0 });
   const [recentSales, setRecentSales] = useState([]);
   const [pendingCredits, setPendingCredits] = useState([]); 
+  
+  // Estados para Créditos Agrupados
+  const [groupedCredits, setGroupedCredits] = useState([]);
+  const [selectedCreditCustomer, setSelectedCreditCustomer] = useState(null); // Para ver detalle del cliente
+  const [customerCreditsDetails, setCustomerCreditsDetails] = useState([]); // Lista de facturas del cliente
+  
   const [lowStock, setLowStock] = useState([]);
   const [overdueCount, setOverdueCount] = useState(0); 
 
@@ -161,6 +167,8 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const productsPerPage = 12; // Límite por página (puedes ajustarlo)
   // ------------------------------------------
+  
+  
 
   // 1. Carga inicial de datos al montar el componente
   useEffect(() => { fetchData(); }, []);
@@ -382,8 +390,9 @@ function App() {
       const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
       setLowStock(stockRes.data);
       
-      const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`); 
-      setPendingCredits(creditsRes.data);
+      // Carga reporte agrupado (Nuevo)
+      const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
+      setGroupedCredits(groupedRes.data);
       const overdue = creditsRes.data.filter(c => c.is_overdue).length;
       setOverdueCount(overdue);
       
@@ -677,6 +686,77 @@ function App() {
           processSale(false);
       }
   }
+  
+  // --- NUEVAS FUNCIONES PARA CRÉDITO AGRUPADO ---
+  const openCustomerCredits = async (customer) => {
+      try {
+          Swal.fire({title: 'Cargando...', didOpen: () => Swal.showLoading()});
+          const res = await axios.get(`${API_URL}/credits/customer/${customer.customer_id}`);
+          setCustomerCreditsDetails(res.data);
+          setSelectedCreditCustomer(customer);
+          Swal.close();
+      } catch (error) {
+          Swal.fire('Error', 'No se pudieron cargar los detalles', 'error');
+      }
+  };
+
+  const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
+      const remaining = totalDebt - currentPaid;
+      
+      const { value: formValues } = await Swal.fire({
+          title: `Abonar a Factura #${saleId}`,
+          html: `
+              <div class="text-left mb-4">
+                  <p class="text-sm text-gray-500">Deuda Total: <b>Ref ${totalDebt.toFixed(2)}</b></p>
+                  <p class="text-sm text-gray-500">Abonado: <b>Ref ${currentPaid.toFixed(2)}</b></p>
+                  <p class="text-lg text-higea-red font-bold">Restante: Ref ${remaining.toFixed(2)}</p>
+              </div>
+              <label class="block text-left text-xs font-bold text-gray-600">Monto a Abonar (Ref)</label>
+              <input id="swal-amount" type="number" step="0.01" class="swal2-input" value="${remaining.toFixed(2)}" placeholder="Monto en USD">
+              
+              <label class="block text-left text-xs font-bold text-gray-600 mt-2">Método de Pago</label>
+              <select id="swal-method" class="swal2-input">
+                  <option value="EFECTIVO_USD">Efectivo Ref</option>
+                  <option value="ZELLE">Zelle</option>
+                  <option value="PAGO_MOVIL">Pago Móvil (Bs)</option>
+                  <option value="PUNTO_VENTA">Punto de Venta (Bs)</option>
+              </select>
+              <input id="swal-ref" class="swal2-input" placeholder="Referencia (Opcional)">
+          `,
+          showCancelButton: true,
+          confirmButtonText: 'Procesar Pago',
+          confirmButtonColor: '#0056B3',
+          preConfirm: () => {
+              const amount = document.getElementById('swal-amount').value;
+              const method = document.getElementById('swal-method').value;
+              const ref = document.getElementById('swal-ref').value;
+              
+              if (!amount || parseFloat(amount) <= 0) return Swal.showValidationMessage('Ingrese un monto válido');
+              if (parseFloat(amount) > remaining + 0.05) return Swal.showValidationMessage('El monto excede la deuda');
+              return { amount, method, ref };
+          }
+      });
+
+      if (formValues) {
+          try {
+              Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading() });
+              const paymentDetails = `${formValues.method}${formValues.ref ? ` [Ref: ${formValues.ref}]` : ''}`;
+              
+              await axios.post(`${API_URL}/sales/${saleId}/pay-credit`, {
+                  paymentDetails,
+                  amountUSD: formValues.amount
+              });
+
+              Swal.fire('Éxito', 'Abono registrado correctamente', 'success');
+              // Recargar datos del cliente específico para ver cambios al instante
+              const res = await axios.get(`${API_URL}/credits/customer/${selectedCreditCustomer.customer_id}`);
+              setCustomerCreditsDetails(res.data);
+              fetchData(); // Actualizar dashboard general
+          } catch (error) {
+              Swal.fire('Error', error.response?.data?.error || 'Falló el pago', 'error');
+          }
+      }
+  };
 
   // --- Funciones de Reporte de Crédito ---
   const markAsPaid = async (saleId) => {
@@ -1333,58 +1413,104 @@ function App() {
               </div>
            </div>
         ) : view === 'CREDIT_REPORT' ? (
-             /* NUEVO PANEL DE REPORTES DE CRÉDITO */
+             /* NUEVO PANEL DE REPORTES DE CRÉDITO AGRUPADO */
            <div className="p-4 md:p-8 overflow-y-auto h-full">
-               {/* Contenido CREDIT_REPORT */}
-               <h2 className="text-2xl font-black text-gray-800 mb-6">Cuentas por Cobrar (Crédito)</h2>
+               <h2 className="text-2xl font-black text-gray-800 mb-6">Cuentas por Cobrar (Consolidado)</h2>
                
-               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                    <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
-                        <p className="text-gray-400 text-xs font-bold uppercase">Créditos Pendientes</p>
-                        <p className="text-3xl font-black text-higea-blue mt-1">{pendingCredits.length}</p>
-                    </div>
-                    <div className="bg-white p-5 rounded-3xl shadow-sm border border-red-100 bg-red-50/30">
-                        <p className="text-red-400 text-xs font-bold uppercase">Vencidos (Alerta)</p>
-                        <p className="text-3xl font-black text-red-600 mt-1">{overdueCount}</p>
-                    </div>
-               </div>
-               
-               <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                   <div className="p-5 border-b border-gray-100"><h3 className="font-bold text-gray-800">Listado de Créditos PENDIENTES</h3></div>
-                   <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs md:text-sm text-gray-600">
-                            <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                                <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Cliente (Cédula)</th><th className="px-4 py-3">Vencimiento</th><th className="px-4 py-3 text-right">Monto Ref</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Acción</th></tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {pendingCredits.map((credit) => (
-                                    <tr key={credit.id} className={`${credit.is_overdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-blue-50'}`}>
-                                        <td className="px-4 py-3 font-bold text-higea-blue cursor-pointer" onClick={() => showSaleDetail(credit)}>#{credit.id}</td>
-                                        <td className="px-4 py-3">
-                                            <p className="font-bold text-gray-800">{credit.full_name}</p>
-                                            <p className="text-xs text-gray-500">CI: {credit.id_number}</p>
-                                        </td>
-                                        <td className={`px-4 py-3 font-bold ${credit.is_overdue ? 'text-red-600' : 'text-gray-800'}`}>
-                                            {new Date(credit.due_date).toLocaleDateString()}
-                                        </td>
-                                        <td className="px-4 py-3 text-right font-black text-higea-red">Ref {parseFloat(credit.total_usd).toFixed(2)}</td>
-                                        <td className="px-4 py-3">
-                                            <span className={`px-2 py-1 rounded text-[10px] font-bold ${credit.is_overdue ? 'bg-red-200 text-red-800' : 'bg-yellow-200 text-yellow-800'}`}>
-                                                {/* 🎯 CORRECCIÓN DE ETIQUETA: Mostrar VENCIDO si aplica */}
-                                                {credit.is_overdue ? 'VENCIDO' : credit.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3 text-right">
-                                            <button onClick={() => markAsPaid(credit.id)} className="bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-green-600 active:scale-95 transition-transform">
-                                                Saldar
-                                            </button>
-                                        </td>
+               {/* Si no hay cliente seleccionado, mostramos la LISTA GENERAL AGRUPADA */}
+               {!selectedCreditCustomer ? (
+                   <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                       <div className="p-5 border-b border-gray-100 bg-gray-50"><h3 className="font-bold text-gray-800">Clientes con Deuda ({groupedCredits.length})</h3></div>
+                       <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                                <thead className="bg-gray-100 text-gray-500 uppercase font-bold">
+                                    <tr>
+                                        <th className="px-4 py-3">Cliente</th>
+                                        <th className="px-4 py-3">Identificador</th>
+                                        <th className="px-4 py-3 text-center">Facturas</th>
+                                        <th className="px-4 py-3 text-right">Deuda Total</th>
+                                        <th className="px-4 py-3 text-right">Restante</th>
+                                        <th className="px-4 py-3 text-center">Acción</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {groupedCredits.map((client) => (
+                                        <tr key={client.customer_id} className="hover:bg-blue-50 cursor-pointer" onClick={() => openCustomerCredits(client)}>
+                                            <td className="px-4 py-3 font-bold text-higea-blue">{client.full_name}</td>
+                                            <td className="px-4 py-3">{client.id_number}</td>
+                                            <td className="px-4 py-3 text-center"><span className="bg-gray-200 px-2 py-1 rounded-full text-xs font-bold">{client.total_bills}</span></td>
+                                            <td className="px-4 py-3 text-right text-gray-400">Ref {parseFloat(client.total_debt).toFixed(2)}</td>
+                                            <td className="px-4 py-3 text-right font-black text-higea-red text-base">Ref {parseFloat(client.remaining_balance).toFixed(2)}</td>
+                                            <td className="px-4 py-3 text-center">
+                                                <button className="bg-blue-100 text-higea-blue text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-200">
+                                                    Ver Detalles
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {groupedCredits.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-gray-400">¡Al día! No hay deudas pendientes.</td></tr>}
+                                </tbody>
+                            </table>
+                       </div>
                    </div>
-               </div>
+               ) : (
+                   /* Si hay cliente seleccionado, mostramos SUS FACTURAS */
+                   <div className="bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden animate-slide-up">
+                        <div className="p-5 border-b border-gray-100 bg-blue-50 flex justify-between items-center">
+                            <div>
+                                <button onClick={() => setSelectedCreditCustomer(null)} className="text-gray-500 hover:text-higea-blue font-bold text-sm mb-1 flex items-center gap-1">← Volver al listado</button>
+                                <h3 className="text-xl font-black text-higea-blue">{selectedCreditCustomer.full_name}</h3>
+                                <p className="text-sm text-gray-600">ID: {selectedCreditCustomer.id_number}</p>
+                            </div>
+                            <div className="text-right bg-white p-3 rounded-xl border border-blue-100 shadow-sm">
+                                <p className="text-xs text-gray-500 uppercase font-bold">Total a Pagar</p>
+                                <p className="text-2xl font-black text-higea-red">Ref {parseFloat(selectedCreditCustomer.remaining_balance).toFixed(2)}</p>
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs md:text-sm text-gray-600">
+                                <thead className="bg-gray-100 text-gray-500 uppercase font-bold">
+                                    <tr>
+                                        <th className="px-4 py-3"># Venta</th>
+                                        <th className="px-4 py-3">Fecha</th>
+                                        <th className="px-4 py-3">Vence</th>
+                                        <th className="px-4 py-3 text-right">Total</th>
+                                        <th className="px-4 py-3 text-right">Abonado</th>
+                                        <th className="px-4 py-3 text-right">Pendiente</th>
+                                        <th className="px-4 py-3 text-center">Estado</th>
+                                        <th className="px-4 py-3 text-right">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {customerCreditsDetails.map((sale) => (
+                                        <tr key={sale.id} className={sale.is_overdue ? 'bg-red-50' : ''}>
+                                            <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
+                                            <td className="px-4 py-3">{new Date(sale.created_at).toLocaleDateString()}</td>
+                                            <td className={`px-4 py-3 font-bold ${sale.is_overdue ? 'text-red-600' : ''}`}>
+                                                {new Date(sale.due_date).toLocaleDateString()}
+                                                {sale.is_overdue && <span className="ml-1 text-[9px] bg-red-600 text-white px-1 rounded">VENCIDA</span>}
+                                            </td>
+                                            <td className="px-4 py-3 text-right">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
+                                            <td className="px-4 py-3 text-right text-green-600">Ref {parseFloat(sale.amount_paid_usd || 0).toFixed(2)}</td>
+                                            <td className="px-4 py-3 text-right font-black text-gray-800">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</td>
+                                            <td className="px-4 py-3 text-center">
+                                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-100 text-orange-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                                                    {sale.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 text-right flex gap-2 justify-end">
+                                                <button onClick={() => showSaleDetail(sale)} className="bg-gray-100 text-gray-600 p-2 rounded-lg hover:bg-gray-200" title="Ver Items">👁️</button>
+                                                <button onClick={() => handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0))} className="bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-green-600 shadow-md active:scale-95 transition-transform">
+                                                    Abonar
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                   </div>
+               )}
            </div>
         ) : view === 'CUSTOMERS' ? (
             /* MÓDULO DE CLIENTES (CUSTOMERS) - APLICACIÓN DE PAGINACIÓN Y EDICIÓN RÁPIDA */

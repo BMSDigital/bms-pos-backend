@@ -44,28 +44,16 @@ async function actualizarTasaBCV() {
                 globalBCVRate = cleanRate;
                 console.log(`✅ Tasa BCV actualizada: ${globalBCVRate} Bs/$`);
             } else {
-                // FALLBACK 1: Tasa extraída no es válida
-                console.warn('⚠️ Error: Tasa BCV extraída no es un número válido (> 0). Usando última conocida o FALLBACK.');
-                if (globalBCVRate === 0) {
-                    globalBCVRate = FALLBACK_RATE;
-                    console.log(`✅ Usando tasa de FALLBACK: ${globalBCVRate} Bs/$`);
-                }
+                console.warn('⚠️ Error: Tasa BCV extraída no es válida. Usando FALLBACK.');
+                if (globalBCVRate === 0) globalBCVRate = FALLBACK_RATE;
             }
         } else {
-             // FALLBACK 2: Selector falló
-            console.warn('⚠️ Error: No se encontró el elemento de la tasa BCV. Usando última conocida o FALLBACK.');
-             if (globalBCVRate === 0) {
-                globalBCVRate = FALLBACK_RATE;
-                console.log(`✅ Usando tasa de FALLBACK: ${globalBCVRate} Bs/$`);
-            }
+            console.warn('⚠️ Error: Selector BCV falló. Usando FALLBACK.');
+             if (globalBCVRate === 0) globalBCVRate = FALLBACK_RATE;
         }
     } catch (error) {
-         // FALLBACK 3: Fallo de conexión o request
-        console.error('⚠️ Error obteniendo BCV (Usando última tasa conocida o FALLBACK):', error.message);
-        if (globalBCVRate === 0) {
-            globalBCVRate = FALLBACK_RATE;
-            console.log(`✅ Usando tasa de FALLBACK: ${globalBCVRate} Bs/$`);
-        }
+        console.error('⚠️ Error obteniendo BCV:', error.message);
+        if (globalBCVRate === 0) globalBCVRate = FALLBACK_RATE;
     }
 }
 
@@ -73,49 +61,38 @@ async function actualizarTasaBCV() {
 actualizarTasaBCV();
 setInterval(actualizarTasaBCV, 3600000);
 
-// --- RUTAS DE LA API (ENDPOINTS) ---
-
-// Función auxiliar para buscar o crear un cliente
+// --- FUNCIONES AUXILIARES ---
 async function findOrCreateCustomer(client, customerData) {
     const { full_name, id_number, phone, institution } = customerData;
-    
-    // 1. Buscar cliente por identificador (Ahora solo busca clientes ACTIVO)
     let result = await client.query("SELECT id FROM customers WHERE id_number = $1 AND status = 'ACTIVO'", [id_number]);
-    if (result.rows.length > 0) {
-        return result.rows[0].id;
-    }
+    if (result.rows.length > 0) return result.rows[0].id;
     
-    // 2. Si no existe, crear uno nuevo (Se inserta como ACTIVO por defecto)
     const insertQuery = 'INSERT INTO customers (full_name, id_number, phone, institution, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id_number) DO UPDATE SET full_name = $1, phone = $3, institution = $4, status = $5 RETURNING id';
     const insertValues = [full_name, id_number, phone || null, institution || null, 'ACTIVO'];
     result = await client.query(insertQuery, insertValues);
     return result.rows[0].id;
 }
 
+// --- RUTAS DE LA API (ENDPOINTS) ---
 
-// 1. Estado del Sistema y Tasa
+// 1. Estado del Sistema
 app.get('/api/status', (req, res) => {
-    // 💡 Incluimos la tasa de FALLBACK aquí para que el frontend pueda compararla.
     res.json({
         status: 'online',
         bcv_rate: globalBCVRate,
-        fallback_rate: FALLBACK_RATE, // NUEVO: Exportamos la tasa de fallback
+        fallback_rate: FALLBACK_RATE,
         server_time: new Date()
     });
 });
 
-// 2. Obtener Productos (Calculando precio en Bs al vuelo)
+// 2. Obtener Productos
 app.get('/api/products', async (req, res) => {
     try {
-        // MODIFICADO: Se añade icon_emoji y AHORA is_taxable (Estado fiscal)
         const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable FROM products ORDER BY id ASC');
-        
-        // Aquí aplicamos la ESTRATEGIA DE PRECIOS
         const productsWithVes = result.rows.map(product => ({
-            ...product, // Copia datos originales (nombre, precio_usd, etc)
-            price_ves: (parseFloat(product.price_usd) * globalBCVRate).toFixed(2) // Calcula Bs
+            ...product,
+            price_ves: (parseFloat(product.price_usd) * globalBCVRate).toFixed(2)
         }));
-
         res.json(productsWithVes);
     } catch (err) {
         console.error(err);
@@ -123,33 +100,22 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// 3. Crear/Actualizar un Producto (CRUD)
+// 3. Crear/Actualizar Producto
 app.post('/api/products', async (req, res) => {
-    // MODIFICADO: Incluir is_taxable
     const { id, name, category, price_usd, stock, icon_emoji, is_taxable } = req.body;
-    
-    if (!name || !price_usd || price_usd <= 0) {
-        return res.status(400).json({ error: 'Nombre y Precio (USD > 0) son obligatorios.' });
-    }
+    if (!name || !price_usd || price_usd <= 0) return res.status(400).json({ error: 'Datos inválidos.' });
     
     try {
         let result;
-        // Convertir is_taxable a booleano para la DB (viene como booleano o string 'true'/'false')
         const isTaxableValue = typeof is_taxable === 'boolean' ? is_taxable : (is_taxable === 'true');
 
         if (id) {
-            // Lógica de Actualización (Editar producto existente)
-            // MODIFICADO: Agregada columna is_taxable
             const query = 'UPDATE products SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, is_taxable = $6 WHERE id = $7 RETURNING *';
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, id];
-            result = await pool.query(query, values);
+            result = await pool.query(query, [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, id]);
             if (result.rowCount === 0) return res.status(404).json({ error: 'Producto no encontrado' });
         } else {
-            // Lógica de Inserción (Crear nuevo producto)
-            // MODIFICADO: Agregada columna is_taxable
             const query = 'INSERT INTO products (name, category, price_usd, stock, icon_emoji, is_taxable) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *';
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue];
-            result = await pool.query(query, values);
+            result = await pool.query(query, [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue]);
         }
         res.json(result.rows[0]);
     } catch (err) {
@@ -157,240 +123,104 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// 4. PROCESAR VENTA (MODIFICADA para Base Imponible/Exento y Crédito)
+// 4. PROCESAR VENTA
 app.post('/api/sales', async (req, res) => {
-    // MODIFICADO: Los items ahora deben incluir is_taxable
     const { items, payment_method, customer_data, is_credit, due_days } = req.body; 
-    
     const client = await pool.connect();
     
     try {
-        await client.query('BEGIN'); // Iniciar transacción segura
+        await client.query('BEGIN');
 
-        let subtotalTaxableUsd = 0; // Base Imponible
-        let subtotalExemptUsd = 0;  // Exento
+        let subtotalTaxableUsd = 0;
+        let subtotalExemptUsd = 0;
 
-        // 1. Recorrer items para verificar stock y calcular subtotales fiscales
         for (const item of items) {
             const itemTotalBase = parseFloat(item.price_usd) * item.quantity;
-
-            // RESTAR STOCK (Atómicamente)
             const updateResult = await client.query(
-                `UPDATE products 
-                 SET stock = stock - $1 
-                 WHERE id = $2 AND stock >= $1 
-                 RETURNING id`,
+                `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1 RETURNING id`,
                 [item.quantity, item.product_id]
             );
 
-            if (updateResult.rowCount === 0) {
-                // Si no actualizó nada, es porque no había stock
-                throw new Error(`Stock insuficiente para el producto ID ${item.product_id}`);
-            }
+            if (updateResult.rowCount === 0) throw new Error(`Stock insuficiente ID ${item.product_id}`);
             
-            // Lógica para separar gravado y exento
-            if (item.is_taxable) {
-                subtotalTaxableUsd += itemTotalBase;
-            } else {
-                subtotalExemptUsd += itemTotalBase;
-            }
+            if (item.is_taxable) subtotalTaxableUsd += itemTotalBase;
+            else subtotalExemptUsd += itemTotalBase;
         }
         
-        // 2. Cálculo de IVA y Total Final (con IVA)
         const ivaUsd = subtotalTaxableUsd * IVA_RATE;
         const finalTotalUsd = subtotalTaxableUsd + subtotalExemptUsd + ivaUsd;
         const totalVes = finalTotalUsd * globalBCVRate; 
 
-        // 3. Manejo de Crédito y Cliente
         let saleStatus = 'PAGADO';
         let customerId = null;
         let dueDate = null;
+        // Si es contado, el pagado es igual al total. Si es crédito, 0 (por ahora).
+        let amountPaidUsd = finalTotalUsd; 
         
         if (is_credit && customer_data) {
             customerId = await findOrCreateCustomer(client, customer_data); 
             saleStatus = 'PENDIENTE';
+            amountPaidUsd = 0; // Crédito inicial = 0 pagado
             const days = due_days === 30 ? 30 : 15;
             dueDate = `CURRENT_TIMESTAMP + INTERVAL '${days} days'`;
         }
 
-        // 4. Guardar la Cabecera de la Venta (con desglose fiscal)
         const saleQuery = `
             INSERT INTO sales (
                 total_usd, total_ves, bcv_rate_snapshot, payment_method, status, customer_id, due_date,
-                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd
+                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, amount_paid_usd
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, ${dueDate || 'NULL'}, $7, $8, $9, $10) RETURNING id
+            VALUES ($1, $2, $3, $4, $5, $6, ${dueDate || 'NULL'}, $7, $8, $9, $10, $11) RETURNING id
         `;
         const saleValues = [
-            finalTotalUsd.toFixed(2), 
-            totalVes.toFixed(2), 
-            globalBCVRate, 
-            payment_method, 
-            saleStatus, 
-            customerId,
-            subtotalTaxableUsd.toFixed(2),
-            subtotalExemptUsd.toFixed(2),
-            IVA_RATE,
-            ivaUsd.toFixed(2)
+            finalTotalUsd.toFixed(2), totalVes.toFixed(2), globalBCVRate, payment_method, saleStatus, customerId,
+            subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2)
         ];
         
         const saleResult = await client.query(saleQuery, saleValues);
         const saleId = saleResult.rows[0].id;
 
-        // 5. Guardar los Detalles (Items)
         for (const item of items) {
             await client.query(
-                `INSERT INTO sale_items (sale_id, product_id, quantity, price_at_moment_usd) 
-                 VALUES ($1, $2, $3, $4)`,
+                `INSERT INTO sale_items (sale_id, product_id, quantity, price_at_moment_usd) VALUES ($1, $2, $3, $4)`,
                 [saleId, item.product_id, item.quantity, item.price_usd]
             );
         }
 
-        await client.query('COMMIT'); // ¡Confirmar cambios!
-        
-        console.log(`✅ Venta registrada ID: ${saleId} (Status: ${saleStatus})`);
-        res.json({ success: true, saleId, status: saleStatus,
-            // Datos para el mensaje de éxito del frontend
-            finalTotalUsd: finalTotalUsd.toFixed(2)
-        });
+        await client.query('COMMIT');
+        console.log(`✅ Venta registrada ID: ${saleId}`);
+        res.json({ success: true, saleId, status: saleStatus, finalTotalUsd: finalTotalUsd.toFixed(2) });
 
     } catch (error) {
-        await client.query('ROLLBACK'); // Si algo falla, deshacer todo
+        await client.query('ROLLBACK');
         console.error('❌ Error en venta:', error.message);
-        // Devolvemos el mensaje de error al frontend
         res.status(500).json({ success: false, message: error.message });
     } finally {
         client.release();
     }
 });
 
+// --- REPORTES Y CRÉDITOS ---
 
-// --- 5. REPORTES Y ESTADÍSTICAS (Actualizados) ---
-
-// F. Listado de Cuentas por Cobrar (Créditos Pendientes)
-app.get('/api/reports/credit-pending', async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                s.id, 
-                s.total_usd, 
-                s.total_ves,
-                s.status,
-                s.created_at,
-                s.due_date,
-                c.full_name,
-                c.id_number,
-                c.phone,
-                c.institution,
-                CASE WHEN s.due_date < NOW() THEN TRUE ELSE FALSE END as is_overdue
-            FROM sales s
-            JOIN customers c ON s.customer_id = c.id
-            WHERE s.status = 'PENDIENTE'
-            ORDER BY s.due_date ASC
-        `);
-        res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// G. Marcar Crédito como PAGADO
-app.post('/api/sales/:id/pay-credit', async (req, res) => {
-    const { id } = req.params;
-    const { paymentDetails } = req.body; // Nuevo detalle de pago
-    
-    try {
-        const result = await pool.query(
-            "UPDATE sales SET status = 'PAGADO', payment_method = payment_method || ' + [PAGO SALDADO: ' || $2 || ']' WHERE id = $1 AND status = 'PENDIENTE' RETURNING id",
-            [id, paymentDetails]
-        );
-
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Venta no encontrada o ya pagada.' });
-        }
-        res.json({ success: true, message: 'Crédito saldado con éxito.' });
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// H. Obtener detalle de una venta específica (MEJORADO para incluir desglose fiscal)
-app.get('/api/sales/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        // 1. Obtener la información de la venta (incluyendo la tasa y el desglose fiscal)
-        const saleInfoResult = await pool.query(`
-            SELECT 
-                total_usd, total_ves, bcv_rate_snapshot, 
-                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd
-            FROM sales
-            WHERE id = $1
-        `, [id]);
-
-        if (saleInfoResult.rows.length === 0) {
-             return res.status(404).json({ error: 'Venta no encontrada.' });
-        }
-        const saleInfo = saleInfoResult.rows[0];
-
-        // 2. Obtener los ítems de la venta
-        const itemsResult = await pool.query(`
-            SELECT p.name, si.quantity, si.price_at_moment_usd
-            FROM sale_items si
-            JOIN products p ON si.product_id = p.id
-            WHERE si.sale_id = $1
-        `, [id]);
-
-        // 3. Combinar y enviar
-        res.json({
-            ...saleInfo,
-            items: itemsResult.rows
-        });
-    } catch (err) {
-        console.error('Error al obtener detalle de venta:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// A. Resumen del Día (Total vendido hoy)
+// A. Resumen del Día
 app.get('/api/reports/daily', async (req, res) => {
     try {
-        const client = await pool.connect();
-        // Sumamos todas las ventas donde la fecha sea HOY
-        const result = await client.query(`
-            SELECT 
-                COUNT(*) as total_transactions,
-                COALESCE(SUM(total_usd), 0) as total_usd,
-                COALESCE(SUM(total_ves), 0) as total_ves
-            FROM sales 
-            WHERE DATE(created_at) = CURRENT_DATE
+        const result = await pool.query(`
+            SELECT COUNT(*) as total_transactions, COALESCE(SUM(total_usd), 0) as total_usd, COALESCE(SUM(total_ves), 0) as total_ves
+            FROM sales WHERE DATE(created_at) = CURRENT_DATE
         `);
-        client.release();
-        
         res.json(result.rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// B. Últimas Ventas (Historial reciente) -> MODIFICADO para incluir datos de cliente
+// B. Últimas Ventas
 app.get('/api/reports/recent-sales', async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT 
-                s.id, 
-                s.total_usd, 
-                s.total_ves, 
-                s.payment_method, 
-                to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as full_date,
-                s.status,
-                c.full_name,
-                c.id_number
-            FROM sales s
-            LEFT JOIN customers c ON s.customer_id = c.id
-            ORDER BY s.id DESC 
-            LIMIT 10
+            SELECT s.id, s.total_usd, s.total_ves, s.payment_method, to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as full_date, s.status, c.full_name, c.id_number
+            FROM sales s LEFT JOIN customers c ON s.customer_id = c.id ORDER BY s.id DESC LIMIT 10
         `);
         res.json(result.rows);
     } catch (err) {
@@ -398,28 +228,159 @@ app.get('/api/reports/recent-sales', async (req, res) => {
     }
 });
 
-// C. NUEVO: Alertas de Stock Bajo (Resuelve el 404 del log)
+// C. Stock Bajo
 app.get('/api/reports/low-stock', async (req, res) => {
     try {
-        // MODIFICADO: Incluye is_taxable
-        const result = await pool.query(`
-            SELECT id, name, stock, category, icon_emoji, is_taxable
-            FROM products
-            WHERE stock <= 10
-            ORDER BY stock ASC
-        `);
+        const result = await pool.query(`SELECT id, name, stock, category, icon_emoji, is_taxable FROM products WHERE stock <= 10 ORDER BY stock ASC`);
         res.json(result.rows);
     } catch (err) {
-        console.error('❌ Error al obtener stock bajo:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-// ====================================================================
-// --- RUTAS: MÓDULO DE CLIENTES (Gestión de Clientes) ---
-// ====================================================================
+// F. Listado Simple de Créditos Pendientes (Mantenido por compatibilidad)
+app.get('/api/reports/credit-pending', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT s.id, s.total_usd, s.total_ves, s.status, s.created_at, s.due_date, c.full_name, c.id_number, c.phone,
+                CASE WHEN s.due_date < NOW() THEN TRUE ELSE FALSE END as is_overdue
+            FROM sales s JOIN customers c ON s.customer_id = c.id WHERE s.status IN ('PENDIENTE', 'PARCIAL') ORDER BY s.due_date ASC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
-// A. Listar Clientes
+// --- NUEVOS ENDPOINTS PARA CRÉDITO AGRUPADO Y ABONOS ---
+
+// I. Reporte de Crédito AGRUPADO por Cliente (Nuevo)
+app.get('/api/reports/credit-grouped', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                c.id as customer_id,
+                c.full_name,
+                c.id_number,
+                c.phone,
+                COUNT(s.id) as total_bills,
+                SUM(s.total_usd) as total_debt,
+                SUM(s.amount_paid_usd) as total_paid,
+                (SUM(s.total_usd) - SUM(s.amount_paid_usd)) as remaining_balance
+            FROM sales s
+            JOIN customers c ON s.customer_id = c.id
+            WHERE s.status IN ('PENDIENTE', 'PARCIAL')
+            GROUP BY c.id, c.full_name, c.id_number, c.phone
+            ORDER BY remaining_balance DESC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// J. Detalle de Facturas de un Cliente (Nuevo)
+app.get('/api/credits/customer/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query(`
+            SELECT 
+                s.id, s.total_usd, s.amount_paid_usd, (s.total_usd - s.amount_paid_usd) as remaining_amount,
+                s.total_ves, s.status, s.created_at, s.due_date,
+                CASE WHEN s.due_date < NOW() THEN TRUE ELSE FALSE END as is_overdue
+            FROM sales s
+            WHERE s.customer_id = $1 AND s.status IN ('PENDIENTE', 'PARCIAL')
+            ORDER BY s.due_date ASC
+        `, [id]);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// G. Abonar o Saldar Crédito (MEJORADO: Soporta parciales)
+app.post('/api/sales/:id/pay-credit', async (req, res) => {
+    const { id } = req.params;
+    const { paymentDetails, amountUSD } = req.body; 
+    
+    // Si no envían monto (compatibilidad anterior), asumimos pago total
+    // Pero lo ideal es que el frontend envíe amountUSD.
+    
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Verificar deuda actual
+        const saleRes = await client.query("SELECT total_usd, amount_paid_usd FROM sales WHERE id = $1", [id]);
+        if (saleRes.rows.length === 0) throw new Error('Venta no encontrada');
+        
+        const sale = saleRes.rows[0];
+        const total = parseFloat(sale.total_usd);
+        const currentPaid = parseFloat(sale.amount_paid_usd || 0);
+        
+        // Si no se especifica monto, se asume el restante total (Saldar)
+        let payAmount = amountUSD ? parseFloat(amountUSD) : (total - currentPaid);
+        
+        if (payAmount <= 0) throw new Error('Monto de abono inválido');
+
+        const newPaid = currentPaid + payAmount;
+        
+        // Validación de sobrepago (con margen de 0.05)
+        if (newPaid > total + 0.05) throw new Error('El monto excede la deuda restante.');
+
+        // 2. Calcular nuevo estatus
+        let newStatus = 'PARCIAL';
+        if (newPaid >= total - 0.05) {
+            newStatus = 'PAGADO';
+        }
+
+        // 3. Actualizar
+        const updateQuery = `
+            UPDATE sales 
+            SET status = $1, 
+                amount_paid_usd = $2, 
+                payment_method = payment_method || ' || ' || $3 
+            WHERE id = $4 
+            RETURNING id
+        `;
+        const logMsg = `[Abono: $${payAmount.toFixed(2)} - ${paymentDetails}]`;
+        
+        await client.query(updateQuery, [newStatus, newPaid, logMsg, id]);
+
+        await client.query('COMMIT');
+        res.json({ success: true, message: 'Abono registrado.', newStatus, remaining: total - newPaid });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// H. Detalle de Venta
+app.get('/api/sales/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const saleInfoResult = await pool.query(`
+            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd
+            FROM sales WHERE id = $1
+        `, [id]);
+
+        if (saleInfoResult.rows.length === 0) return res.status(404).json({ error: 'Venta no encontrada.' });
+        
+        const itemsResult = await pool.query(`
+            SELECT p.name, si.quantity, si.price_at_moment_usd FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = $1
+        `, [id]);
+
+        res.json({ ...saleInfoResult.rows[0], items: itemsResult.rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- GESTIÓN DE CLIENTES ---
+
 app.get('/api/customers', async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM customers ORDER BY full_name ASC');
@@ -429,78 +390,45 @@ app.get('/api/customers', async (req, res) => {
     }
 });
 
-// B. Crear/Actualizar Cliente (Punto 4: Modificación/Edición)
 app.post('/api/customers', async (req, res) => {
     const { id, full_name, id_number, phone, institution, status } = req.body;
-    
-    if (!full_name || !id_number || !status) {
-        return res.status(400).json({ error: 'Nombre, Identificador y Estatus son obligatorios.' });
-    }
+    if (!full_name || !id_number || !status) return res.status(400).json({ error: 'Datos obligatorios faltantes.' });
     
     const client = await pool.connect(); 
-    
     try {
         let result;
         if (id) {
-            // Actualizar cliente existente
             const query = 'UPDATE customers SET full_name = $1, id_number = $2, phone = $3, institution = $4, status = $5 WHERE id = $6 RETURNING *';
-            const values = [full_name, id_number, phone, institution, status, id];
-            result = await client.query(query, values);
+            result = await client.query(query, [full_name, id_number, phone, institution, status, id]);
             if (result.rowCount === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
         } else {
-            // Crear nuevo cliente (usando ON CONFLICT para manejar ID_NUMBER ya existentes)
-            const query = `
-                INSERT INTO customers (full_name, id_number, phone, institution, status) 
-                VALUES ($1, $2, $3, $4, $5) 
-                ON CONFLICT (id_number) DO UPDATE 
-                SET full_name = $1, phone = $3, institution = $4, status = $5
-                RETURNING *`;
-            const values = [full_name, id_number, phone, institution, status];
-            result = await client.query(query, values); 
+            const query = `INSERT INTO customers (full_name, id_number, phone, institution, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id_number) DO UPDATE SET full_name = $1, phone = $3, institution = $4, status = $5 RETURNING *`;
+            result = await client.query(query, [full_name, id_number, phone, institution, status]); 
         }
         res.json(result.rows[0]);
-
     } catch (err) {
-        // Estandarización de error para UNIQUE Constraint (Duplicado)
-        if (err.code === '23505') { 
-            res.status(409).json({ error: `El Identificador ${id_number} ya está registrado.` });
-        } else {
-             res.status(500).json({ error: `Error DB al guardar cliente: ${err.message}` });
-        }
+        if (err.code === '23505') res.status(409).json({ error: `Identificador ${id_number} duplicado.` });
+        else res.status(500).json({ error: err.message });
     } finally {
-        client.release(); // LIBERAR la conexión temporal
+        client.release();
     }
 });
 
-// C. Búsqueda de Cliente (Corregida la variable searchQuery)
 app.get('/api/customers/search', async (req, res) => {
     const { query } = req.query; 
-    if (!query) {
-        return res.status(400).json({ error: 'El parámetro "query" es requerido.' });
-    }
-    
-    // Corregido: La variable searchQuery debe ser definida aquí
+    if (!query) return res.status(400).json({ error: 'Parámetro query requerido.' });
     const searchQuery = `%${query.toLowerCase()}%`; 
-
     try {
         const result = await pool.query(
-            `SELECT id, full_name, id_number, phone, institution 
-             FROM customers 
-             WHERE (LOWER(id_number) LIKE $1 OR LOWER(full_name) LIKE $1)
-             AND status = 'ACTIVO'
-             ORDER BY full_name ASC 
-             LIMIT 10`,
+            `SELECT id, full_name, id_number, phone, institution FROM customers WHERE (LOWER(id_number) LIKE $1 OR LOWER(full_name) LIKE $1) AND status = 'ACTIVO' ORDER BY full_name ASC LIMIT 10`,
             [searchQuery]
         );
         res.json(result.rows);
     } catch (err) {
-        console.error('Error al buscar cliente:', err);
         res.status(500).json({ error: 'Error al buscar cliente' });
     }
 });
 
-
-// Iniciar Servidor
 app.listen(port, () => {
     console.log(`🚀 Servidor BMS corriendo en puerto ${port}`);
 });
