@@ -429,50 +429,46 @@ app.get('/api/customers/search', async (req, res) => {
     }
 });
 
-// --- K. ESTADÍSTICAS AVANZADAS Y REPORTES GERENCIALES ---
+// --- K. ESTADÍSTICAS AVANZADAS Y REPORTES GERENCIALES (NUEVO) ---
 
 app.get('/api/reports/analytics', async (req, res) => {
     const { startDate, endDate } = req.query;
-    
-    // Por defecto: Últimos 30 días si no envían fechas
+    // Por defecto: Últimos 30 días
     const start = startDate || new Date(new Date().setDate(new Date().getDate() - 30)).toISOString();
     const end = endDate || new Date().toISOString();
 
     const client = await pool.connect();
     try {
-        // 1. Ventas por Producto (Top 5 Más Vendidos)
+        // 1. Top Productos
         const topProductsQuery = `
-            SELECT p.name, SUM(si.quantity) as total_qty, SUM(si.quantity * si.price_at_moment_usd) as total_revenue
+            SELECT p.name, SUM(si.quantity) as total_qty 
             FROM sale_items si
             JOIN sales s ON si.sale_id = s.id
             JOIN products p ON si.product_id = p.id
             WHERE s.created_at BETWEEN $1 AND $2 AND s.status != 'ANULADO'
             GROUP BY p.id, p.name
             ORDER BY total_qty DESC
-            LIMIT 5
-        `;
+            LIMIT 5`;
 
-        // 2. Mejores Clientes (Top 5 Compradores)
+        // 2. Top Clientes
         const topCustomersQuery = `
-            SELECT c.full_name, COUNT(s.id) as transactions, SUM(s.total_usd) as total_spent
+            SELECT c.full_name, SUM(s.total_usd) as total_spent
             FROM sales s
             JOIN customers c ON s.customer_id = c.id
             WHERE s.created_at BETWEEN $1 AND $2 AND s.status != 'ANULADO'
             GROUP BY c.id, c.full_name
             ORDER BY total_spent DESC
-            LIMIT 5
-        `;
+            LIMIT 5`;
 
-        // 3. Ventas Diarias (Gráfico de Línea/Barra)
+        // 3. Ventas en el tiempo
         const salesOverTimeQuery = `
             SELECT DATE(created_at) as sale_date, SUM(total_usd) as total_usd, SUM(total_ves) as total_ves
             FROM sales
-            WHERE created_at BETWEEN $1 AND $2 AND s.status != 'ANULADO'
+            WHERE created_at BETWEEN $1 AND $2 AND status != 'ANULADO'
             GROUP BY DATE(created_at)
-            ORDER BY sale_date ASC
-        `;
+            ORDER BY sale_date ASC`;
 
-        // 4. Top Deudores (Para el Dashboard)
+        // 4. Top Deudores (Histórico)
         const topDebtorsQuery = `
             SELECT c.full_name, (SUM(s.total_usd) - SUM(s.amount_paid_usd)) as debt
             FROM sales s
@@ -480,14 +476,13 @@ app.get('/api/reports/analytics', async (req, res) => {
             WHERE s.status IN ('PENDIENTE', 'PARCIAL')
             GROUP BY c.id, c.full_name
             ORDER BY debt DESC
-            LIMIT 5
-        `;
+            LIMIT 5`;
 
         const [topProducts, topCustomers, salesTime, topDebtors] = await Promise.all([
             client.query(topProductsQuery, [start, end]),
             client.query(topCustomersQuery, [start, end]),
             client.query(salesOverTimeQuery, [start, end]),
-            client.query(topDebtorsQuery) // Sin rango de fecha, es deuda histórica
+            client.query(topDebtorsQuery)
         ]);
 
         res.json({
@@ -496,7 +491,6 @@ app.get('/api/reports/analytics', async (req, res) => {
             salesOverTime: salesTime.rows,
             topDebtors: topDebtors.rows
         });
-
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });
@@ -505,7 +499,7 @@ app.get('/api/reports/analytics', async (req, res) => {
     }
 });
 
-// L. Obtener Ventas de HOY Detalladas (Para el click en el Dashboard)
+// L. Ventas de HOY Detalladas
 app.get('/api/reports/sales-today', async (req, res) => {
     try {
         const result = await pool.query(`

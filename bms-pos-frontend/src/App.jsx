@@ -381,17 +381,16 @@ function App() {
     try {
       const statusRes = await axios.get(`${API_URL}/status`);
       setBcvRate(statusRes.data.bcv_rate);
-      setFallbackRate(statusRes.data.fallback_rate); // 💡 NUEVO: Guardar la tasa de fallback
+      setFallbackRate(statusRes.data.fallback_rate);
 
       const prodRes = await axios.get(`${API_URL}/products`);
       const allProducts = prodRes.data
-        // NUEVO: Asegurar que 'is_taxable' se maneje como booleano al cargar.
-        .map(p => ({ ...p, is_taxable: p.is_taxable === true || p.is_taxable === 't' || p.is_taxable === 1 || p.is_taxable === '1' }))
+        .map(p => ({ ...p, is_taxable: p.is_taxable === true || p.is_taxable === 't' || p.is_taxable === 1 }))
         .sort((a, b) => a.id - b.id);
         
       setProducts(allProducts);
       setFilteredProducts(allProducts);
-      setFilteredInventory(allProducts); // Inicializar la lista de inventario filtrado
+      setFilteredInventory(allProducts);
       setCategories(['Todos', ...new Set(allProducts.map(p => p.category))]);
 
       const statsRes = await axios.get(`${API_URL}/reports/daily`);
@@ -401,20 +400,28 @@ function App() {
       const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
       setLowStock(stockRes.data);
       
-      // Carga reporte agrupado (Nuevo)
-      const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
-      setGroupedCredits(groupedRes.data);
+      // --- CORRECCIÓN AQUÍ: Definir creditsRes antes de usarlo ---
+      const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
+      setPendingCredits(creditsRes.data);
+      
       const overdue = creditsRes.data.filter(c => c.is_overdue).length;
       setOverdueCount(overdue);
-	  
-	  // Cargar datos analíticos (Top Deudores viene de aquí ahora)
-	  const analyticsRes = await axios.get(`${API_URL}/reports/analytics`); 
-      setTopDebtors(analyticsRes.data.topDebtors);
-      setAnalyticsData(analyticsRes.data);
+
+      const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
+      setGroupedCredits(groupedRes.data);
+      
+      // Intentar cargar analíticas (con manejo de error suave)
+      try {
+          const analyticsRes = await axios.get(`${API_URL}/reports/analytics`); 
+          setTopDebtors(analyticsRes.data.topDebtors || []);
+          setAnalyticsData(analyticsRes.data);
+      } catch (analyticsError) {
+          console.warn("Analytics endpoint not ready yet", analyticsError);
+      }
       
       setLoading(false);
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Error fetching data:", error);
       setLoading(false);
     }
   };
@@ -2133,9 +2140,11 @@ function App() {
           </button>
           
           <button onClick={() => {fetchData(); setView('CREDIT_REPORT');}} className={`flex flex-col items-center ${view === 'CREDIT_REPORT' ? 'text-higea-blue' : 'text-gray-400'}`}>
-             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-              <span className="text-[10px] font-bold">Crédito</span>
-          </button>
+			<svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+			</svg>
+			<span className="text-[10px] font-bold">Crédito</span>
+		  </button>
           
           {/* BOTÓN NUEVO MÓDULO MÓVIL (Punto 1) */}
           <button onClick={() => { setView('CUSTOMERS'); }} className={`flex flex-col items-center ${view === 'CUSTOMERS' ? 'text-higea-blue' : 'text-gray-400'}`}>
