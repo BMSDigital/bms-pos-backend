@@ -168,7 +168,18 @@ function App() {
   const productsPerPage = 12; // Límite por página (puedes ajustarlo)
   // ------------------------------------------
   
+  // --- NUEVOS ESTADOS DASHBOARD MEJORADO ---
+  const [showStockModal, setShowStockModal] = useState(false); // Modal Alerta Stock
+  const [showDailySalesModal, setShowDailySalesModal] = useState(false); // Modal Detalle Ventas Hoy
+  const [dailySalesList, setDailySalesList] = useState([]); // Datos para el modal anterior
+  const [topDebtors, setTopDebtors] = useState([]); // Top deudores para dashboard
   
+  // --- ESTADOS REPORTE GERENCIAL AVANZADO ---
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [reportDateRange, setReportDateRange] = useState({
+      start: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
+      end: new Date().toISOString().split('T')[0]
+  });
 
   // 1. Carga inicial de datos al montar el componente
   useEffect(() => { fetchData(); }, []);
@@ -395,6 +406,11 @@ function App() {
       setGroupedCredits(groupedRes.data);
       const overdue = creditsRes.data.filter(c => c.is_overdue).length;
       setOverdueCount(overdue);
+	  
+	  // Cargar datos analíticos (Top Deudores viene de aquí ahora)
+	  const analyticsRes = await axios.get(`${API_URL}/reports/analytics`); 
+      setTopDebtors(analyticsRes.data.topDebtors);
+      setAnalyticsData(analyticsRes.data);
       
       setLoading(false);
     } catch (error) {
@@ -1150,6 +1166,63 @@ function App() {
           </div>
       );
   }
+  
+  // Cargar detalle de ventas de hoy al hacer click en la tarjeta
+  const openDailySalesDetail = async () => {
+      try {
+          Swal.fire({title: 'Cargando...', didOpen: () => Swal.showLoading()});
+          const res = await axios.get(`${API_URL}/reports/sales-today`);
+          setDailySalesList(res.data);
+          setShowDailySalesModal(true);
+          Swal.close();
+      } catch (error) {
+          Swal.close();
+      }
+  };
+
+  // Cargar Reporte Avanzado con Filtro de Fecha
+  const fetchAdvancedReport = async () => {
+      try {
+          Swal.fire({title: 'Generando Estadísticas...', didOpen: () => Swal.showLoading()});
+          const res = await axios.get(`${API_URL}/reports/analytics?startDate=${reportDateRange.start}&endDate=${reportDateRange.end}`);
+          setAnalyticsData(res.data);
+          Swal.close();
+      } catch (error) {
+          Swal.fire('Error', 'No se pudo generar el reporte', 'error');
+      }
+  };
+
+  // COMPONENTE VISUAL: Barra de Progreso Simple (Para gráficas sin librerías)
+  const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney }) => {
+      if (!data || data.length === 0) return <p className="text-gray-400 text-sm">Sin datos disponibles.</p>;
+      
+      const maxValue = Math.max(...data.map(d => parseFloat(d[valueKey])));
+      
+      return (
+          <div className="space-y-3">
+              {data.map((item, idx) => {
+                  const val = parseFloat(item[valueKey]);
+                  const percent = maxValue > 0 ? (val / maxValue) * 100 : 0;
+                  return (
+                      <div key={idx} className="w-full">
+                          <div className="flex justify-between text-xs mb-1">
+                              <span className="font-bold text-gray-700 truncate w-2/3">{item[labelKey]}</span>
+                              <span className="font-medium text-gray-600">
+                                  {formatMoney ? `Ref ${val.toFixed(2)}` : val}
+                              </span>
+                          </div>
+                          <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                              <div 
+                                  className={`h-2.5 rounded-full ${colorClass}`} 
+                                  style={{ width: `${percent}%`, transition: 'width 1s ease-in-out' }}
+                              ></div>
+                          </div>
+                      </div>
+                  )
+              })}
+          </div>
+      )
+  };
 
   // --- RESTO DE COMPONENTES Y LÓGICA DE UI ---
   const CartItem = ({ item }) => (
@@ -1219,6 +1292,11 @@ function App() {
           {/* 💡 NUEVO BOTÓN: Gestión de Productos */}
           <button onClick={() => { setView('PRODUCTS'); }} className={`p-3 rounded-xl transition-all ${view === 'PRODUCTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          </button>
+		  
+		  {/* ↓↓↓ NUEVO BOTÓN AQUÍ (Reportes Avanzados) ↓↓↓ */}
+          <button onClick={() => { setView('ADVANCED_REPORTS'); fetchAdvancedReport(); }} className={`p-3 rounded-xl transition-all ${view === 'ADVANCED_REPORTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
           </button>
           
       </nav>
@@ -1347,64 +1425,95 @@ function App() {
               </aside>
            </div>
         ) : view === 'DASHBOARD' ? (
-           <div className="p-4 md:p-8 overflow-y-auto h-full">
-              {/* Contenido DASHBOARD */}
+           <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up">
               <h2 className="text-2xl font-black text-gray-800 mb-6">Panel Gerencial</h2>
               
+              {/* Tarjetas KPI Superiores */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
-                      <p className="text-gray-400 text-xs font-bold uppercase">Ventas Hoy (Ref)</p>
-                      <p className="text-3xl font-black text-higea-blue mt-1">Ref {parseFloat(stats.total_usd).toFixed(2)}</p>
-                  </div>
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
-                      <p className="text-gray-400 text-xs font-bold uppercase">Ventas Hoy (Bs)</p>
-                      <p className="text-3xl font-black text-gray-800 mt-1">Bs {parseFloat(stats.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</p>
-                  </div>
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-orange-100 bg-orange-50/30">
-                      <p className="text-orange-400 text-xs font-bold uppercase">Créditos Pendientes</p>
-                      <p className="text-3xl font-black text-orange-600 mt-1">{pendingCredits.length}</p>
-                  </div>
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-red-100 bg-red-50/30">
-                      <p className="text-red-400 text-xs font-bold uppercase">Alertas Stock ({lowStock.length})</p>
-                      <div className="mt-2 space-y-1 max-h-20 overflow-y-auto">
-                          {lowStock.map((p, i) => (
-                              <div key={i} className="flex justify-between text-xs"><span className="truncate w-3/4">{p.name}</span><span className="font-bold text-red-500">{p.stock}</span></div>
-                          ))}
+                  {/* 1. VENTAS HOY (Clickable) */}
+                  <div 
+                      onClick={openDailySalesDetail} 
+                      className="bg-white p-5 rounded-3xl shadow-sm border border-blue-100 cursor-pointer hover:shadow-md transition-all active:scale-95 group"
+                  >
+                      <div className="flex justify-between items-start">
+                          <div>
+                              <p className="text-gray-400 text-xs font-bold uppercase group-hover:text-higea-blue transition-colors">Ventas Hoy (Ref)</p>
+                              <p className="text-3xl font-black text-higea-blue mt-1">Ref {parseFloat(stats.total_usd).toFixed(2)}</p>
+                              <p className="text-[10px] text-gray-400 mt-1">Click para ver detalle</p>
+                          </div>
+                          <div className="bg-blue-50 p-2 rounded-xl group-hover:bg-blue-100 transition-colors">
+                              <svg className="w-6 h-6 text-higea-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          </div>
                       </div>
+                  </div>
+
+                  {/* 2. VENTAS HOY BS */}
+                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
+                       <p className="text-gray-400 text-xs font-bold uppercase">Ventas Hoy (Bs)</p>
+                       <p className="text-3xl font-black text-gray-800 mt-1">Bs {parseFloat(stats.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</p>
+                  </div>
+
+                  {/* 3. ALERTAS DE STOCK (Limitado a 4 con Modal) */}
+                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-red-100 bg-red-50/30 relative">
+                      <div className="flex justify-between items-center mb-2">
+                        <p className="text-red-400 text-xs font-bold uppercase">Alertas Stock ({lowStock.length})</p>
+                        {lowStock.length > 4 && (
+                            <button onClick={() => setShowStockModal(true)} className="text-[10px] font-bold text-red-600 bg-white px-2 py-1 rounded-full border border-red-100 hover:bg-red-50">Ver Todo</button>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                          {lowStock.slice(0, 4).map((p, i) => ( // Limite de 4
+                              <div key={i} className="flex justify-between items-center text-xs bg-white p-1.5 rounded-lg border border-red-50">
+                                  <span className="truncate w-3/4 font-medium text-gray-600">{p.icon_emoji} {p.name}</span>
+                                  <span className="font-bold text-red-500 bg-red-100 px-1.5 rounded">{p.stock}</span>
+                              </div>
+                          ))}
+                          {lowStock.length === 0 && <p className="text-xs text-green-600 font-bold">¡Inventario Saludable!</p>}
+                      </div>
+                  </div>
+
+                  {/* 4. TOP DEUDORES (Mini Lista) */}
+                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-orange-100 bg-orange-50/30">
+                       <p className="text-orange-400 text-xs font-bold uppercase mb-2">Top Deudores</p>
+                       <div className="space-y-2">
+                           {topDebtors.slice(0, 3).map((d, i) => (
+                               <div key={i} className="flex justify-between items-center text-xs">
+                                   <span className="truncate w-2/3 font-bold text-gray-600">{d.full_name.split(' ')[0]}...</span>
+                                   <span className="font-black text-orange-600">Ref {parseFloat(d.debt).toFixed(2)}</span>
+                               </div>
+                           ))}
+                           {topDebtors.length === 0 && <p className="text-xs text-gray-400">Sin deudas pendientes.</p>}
+                           {topDebtors.length > 0 && <button onClick={() => setView('CREDIT_REPORT')} className="w-full mt-2 text-[10px] font-bold text-orange-600 hover:underline">Ir a Cobranzas →</button>}
+                       </div>
                   </div>
               </div>
 
+              {/* ÚLTIMAS TRANSACCIONES (Igual que antes pero con mejor estilo) */}
               <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                  <div className="p-5 border-b border-gray-100"><h3 className="font-bold text-gray-800">Últimas Transacciones</h3></div>
+                  <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+                      <h3 className="font-bold text-gray-800">Últimas Transacciones</h3>
+                      <span className="text-xs text-gray-400">Mostrando últimas 10</span>
+                  </div>
                   <div className="overflow-x-auto">
                       <table className="w-full text-left text-xs md:text-sm text-gray-600">
                           <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                              <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente / Método</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Total Ref</th><th className="px-4 py-3 text-right">Total Bs</th></tr>
+                              <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3 text-center">Estatus</th><th className="px-4 py-3 text-right">Monto Ref</th><th className="px-4 py-3 text-right">Monto Bs</th></tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                               {recentSales.map((sale) => (
-                                  <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer active:bg-blue-100">
+                                  <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer transition-colors">
                                       <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
                                       <td className="px-4 py-3">{sale.full_date}</td>
-                                      <td className="px-4 py-3"> 
-                                          {sale.status === 'PENDIENTE' && sale.full_name ? (
-                                              <div className="flex flex-col">
-                                                  <span className="font-bold text-gray-800 leading-tight">{sale.full_name}</span>
-                                                  <span className="text-xs text-gray-500">CI: {sale.id_number}</span>
-                                              </div>
-                                          ) : (
-                                              <span className="px-2 py-1 rounded bg-gray-100 text-[10px]">{sale.payment_method.slice(0, 30)}...</span>
-                                          )}
-                                      </td>
-                                      <td className="px-4 py-3">
+                                      <td className="px-4 py-3 font-medium text-gray-700">{sale.full_name || 'Consumidor Final'}</td>
+                                      <td className="px-4 py-3 text-center">
                                           <span className={`px-2 py-1 rounded text-[10px] font-bold ${
                                             sale.status === 'PENDIENTE' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
                                           }`}>
                                               {sale.status}
                                           </span>
                                       </td>
-                                      <td className="px-4 py-3 text-right font-bold text-higea-red">Ref {parseFloat(sale.total_usd).toFixed(2)}</td> 
-                                      <td className="px-4 py-3 text-right font-bold">Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</td> 
+                                      <td className="px-4 py-3 text-right font-black text-gray-800">Ref {parseFloat(sale.total_usd).toFixed(2)}</td> 
+                                      <td className="px-4 py-3 text-right text-gray-500">Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</td> 
                                   </tr>
                               ))}
                           </tbody>
@@ -1874,6 +1983,132 @@ function App() {
                     );
                 })()}
             </div>
+        ): view === 'ADVANCED_REPORTS' ? (
+            /* --- VISTA: REPORTES GERENCIALES AVANZADOS --- */
+            <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up">
+                
+                {/* Cabecera y Filtros */}
+                <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+                    <h2 className="text-2xl font-black text-gray-800">Reportes Gerenciales</h2>
+                    
+                    {/* Filtro de Fechas */}
+                    <div className="flex gap-2 bg-white p-2 rounded-xl shadow-sm border border-gray-200 items-center">
+                        <span className="text-xs font-bold text-gray-400 pl-2">Desde:</span>
+                        <input 
+                            type="date" 
+                            value={reportDateRange.start}
+                            onChange={(e) => setReportDateRange(prev => ({...prev, start: e.target.value}))}
+                            className="text-xs font-bold text-gray-600 outline-none bg-transparent"
+                        />
+                        <span className="text-xs font-bold text-gray-400">Hasta:</span>
+                        <input 
+                            type="date" 
+                            value={reportDateRange.end}
+                            onChange={(e) => setReportDateRange(prev => ({...prev, end: e.target.value}))}
+                            className="text-xs font-bold text-gray-600 outline-none bg-transparent"
+                        />
+                        <button onClick={fetchAdvancedReport} className="bg-higea-blue text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-700 shadow-sm transition-all active:scale-95">
+                            Filtrar
+                        </button>
+                    </div>
+                </div>
+
+                {analyticsData ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
+                        
+                        {/* 1. GRÁFICA: PRODUCTOS MÁS VENDIDOS */}
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                            <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
+                                <span className="bg-blue-100 text-higea-blue p-1.5 rounded-lg text-lg">🏆</span> 
+                                Productos Más Vendidos
+                            </h3>
+                            <SimpleBarChart 
+                                data={analyticsData.topProducts} 
+                                labelKey="name" 
+                                valueKey="total_qty" 
+                                colorClass="bg-higea-blue"
+                            />
+                        </div>
+
+                        {/* 2. GRÁFICA: MEJORES CLIENTES */}
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                            <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
+                                <span className="bg-green-100 text-green-600 p-1.5 rounded-lg text-lg">👥</span> 
+                                Mejores Clientes (Volumen de Compra)
+                            </h3>
+                            <SimpleBarChart 
+                                data={analyticsData.topCustomers} 
+                                labelKey="full_name" 
+                                valueKey="total_spent" 
+                                colorClass="bg-green-500"
+                                formatMoney={true}
+                            />
+                        </div>
+
+                        {/* 3. TABLA: EVOLUCIÓN DE VENTAS DIARIA */}
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 col-span-1 md:col-span-2">
+                            <h3 className="font-bold text-gray-800 mb-4">Evolución de Ventas (Rango Seleccionado)</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm text-gray-600">
+                                    <thead className="bg-gray-50 text-gray-500 uppercase text-xs font-bold">
+                                        <tr>
+                                            <th className="px-4 py-3 rounded-l-lg">Fecha</th>
+                                            <th className="px-4 py-3 text-right">Total Ref</th>
+                                            <th className="px-4 py-3 text-right">Total Bs</th>
+                                            <th className="px-4 py-3 rounded-r-lg w-1/3">Tendencia</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {analyticsData.salesOverTime.map((day, idx) => {
+                                            // Calcular porcentaje relativo al día máximo para la barrita
+                                            const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
+                                            const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
+                                            
+                                            return (
+                                                <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                                                    <td className="px-4 py-3 font-medium text-gray-800">
+                                                        {new Date(day.sale_date).toLocaleDateString('es-VE', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right font-black text-higea-blue text-base">
+                                                        Ref {parseFloat(day.total_usd).toFixed(2)}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right text-gray-500 font-bold">
+                                                        Bs {parseFloat(day.total_ves).toLocaleString('es-VE', {maximumFractionDigits: 2})}
+                                                    </td>
+                                                    <td className="px-4 py-3 align-middle">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="h-2 bg-gray-100 rounded-full flex-1 overflow-hidden">
+                                                                <div 
+                                                                    className="h-full bg-gradient-to-r from-blue-400 to-higea-blue rounded-full" 
+                                                                    style={{ width: `${percent}%` }}
+                                                                ></div>
+                                                            </div>
+                                                            <span className="text-[10px] font-bold text-gray-400">{Math.round(percent)}%</span>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })}
+                                        {analyticsData.salesOverTime.length === 0 && (
+                                            <tr>
+                                                <td colSpan="4" className="p-8 text-center text-gray-400 italic">
+                                                    No se encontraron ventas registradas en este rango de fechas.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex flex-col items-center justify-center h-64 text-gray-400">
+                        <div className="w-10 h-10 border-4 border-gray-200 border-t-higea-blue rounded-full animate-spin mb-3"></div>
+                        <p>Cargando datos analíticos...</p>
+                    </div>
+                )}
+            </div>
+
         ) : (
              <div className="h-full p-8 text-center text-red-500">Vista no encontrada.</div>
         )}
@@ -2086,6 +2321,78 @@ function App() {
               </div>
           </div>
       )}
+	  
+	  {/* MODAL: STOCK COMPLETO */}
+      {showStockModal && (
+          <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl w-full max-w-lg h-[80vh] flex flex-col shadow-2xl animate-scale-up">
+                  <div className="p-5 border-b flex justify-between items-center bg-red-50 rounded-t-3xl">
+                      <h3 className="font-bold text-red-600">⚠️ Reporte de Stock Bajo</h3>
+                      <button onClick={() => setShowStockModal(false)} className="bg-white p-1 rounded-full text-red-500">✕</button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-5">
+                      <table className="w-full text-sm">
+                          <thead className="bg-gray-100 text-gray-500 uppercase text-xs">
+                              <tr><th className="px-2 py-2 text-left">Producto</th><th className="px-2 py-2 text-right">Stock</th><th className="px-2 py-2 text-center">Cat</th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                              {lowStock.map(p => (
+                                  <tr key={p.id}>
+                                      <td className="px-2 py-3 font-medium">{p.icon_emoji} {p.name}</td>
+                                      <td className="px-2 py-3 text-right font-black text-red-500">{p.stock}</td>
+                                      <td className="px-2 py-3 text-center text-xs text-gray-400">{p.category}</td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
+                  <div className="p-4 border-t text-center bg-gray-50 rounded-b-3xl">
+                      <button onClick={() => setShowStockModal(false)} className="text-gray-500 font-bold text-sm">Cerrar</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* MODAL: VENTAS DE HOY DETALLADAS */}
+      {showDailySalesModal && (
+          <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl animate-scale-up">
+                  <div className="p-5 border-b flex justify-between items-center bg-blue-50 rounded-t-3xl">
+                      <div>
+                          <h3 className="font-bold text-higea-blue">Resumen de Ventas - HOY</h3>
+                          <p className="text-xs text-gray-500">{new Date().toLocaleDateString()}</p>
+                      </div>
+                      <button onClick={() => setShowDailySalesModal(false)} className="bg-white p-1 rounded-full text-blue-500">✕</button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-0">
+                      <table className="w-full text-sm text-left">
+                          <thead className="bg-gray-100 text-gray-500 uppercase text-xs sticky top-0">
+                              <tr><th className="px-4 py-3">Hora</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Método</th><th className="px-4 py-3 text-right">Monto</th><th className="px-4 py-3"></th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                              {dailySalesList.map(sale => (
+                                  <tr key={sale.id} className="hover:bg-blue-50">
+                                      <td className="px-4 py-3 text-gray-500">{new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+                                      <td className="px-4 py-3 font-bold text-gray-700">{sale.full_name || 'Consumidor Final'}</td>
+                                      <td className="px-4 py-3 text-xs">{sale.payment_method.split('[')[0].slice(0, 15)}...</td>
+                                      <td className="px-4 py-3 text-right font-black text-higea-blue">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
+                                      <td className="px-4 py-3 text-center">
+                                          <button onClick={() => showSaleDetail(sale)} className="text-gray-400 hover:text-blue-500">👁️</button>
+                                      </td>
+                                  </tr>
+                              ))}
+                              {dailySalesList.length === 0 && <tr><td colSpan="5" className="p-5 text-center text-gray-400">Aún no hay ventas hoy.</td></tr>}
+                          </tbody>
+                      </table>
+                  </div>
+                  <div className="p-4 border-t bg-gray-50 flex justify-between items-center rounded-b-3xl">
+                      <div className="text-xs text-gray-500">Total Transacciones: <b>{dailySalesList.length}</b></div>
+                      <div className="text-xl font-black text-higea-blue">Total: Ref {dailySalesList.reduce((acc, curr) => acc + parseFloat(curr.total_usd), 0).toFixed(2)}</div>
+                  </div>
+              </div>
+          </div>
+      )}
+	  
     </div>
   );
 }
