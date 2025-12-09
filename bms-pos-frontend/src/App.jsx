@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
-import XLSX from 'xlsx-js-style';
 
 // --- NUEVAS FUNCIONES DE VALIDACIÓN Y FORMATO ---
 
@@ -1217,163 +1216,143 @@ function App() {
   
   // --- FUNCIÓN PARA EXPORTAR A EXCEL (CSV) ---
   const exportReportToCSV = () => {
+      // 1. Validar datos
       if (!analyticsData || !analyticsData.salesOverTime || analyticsData.salesOverTime.length === 0) {
-          return Swal.fire('Sin datos', 'No hay información para exportar.', 'warning');
+          return Swal.fire('Sin datos', 'No hay información para exportar en este rango.', 'warning');
       }
 
       try {
-          // 1. Crear el libro de trabajo
-          const wb = XLSX.utils.book_new();
+          // 2. Estilos CSS para el Excel (Colores institucionales Higea)
+          // Esto le dará el toque "Profesional" y "Novedoso"
+          const styles = `
+            <style>
+              .header { background-color: #0056B3; color: white; font-weight: bold; text-align: center; border: 1px solid #000; }
+              .sub-header { background-color: #E11D2B; color: white; font-weight: bold; text-align: left; border: 1px solid #000; }
+              .row-even { background-color: #f2f2f2; border: 1px solid #ccc; }
+              .row-odd { background-color: #ffffff; border: 1px solid #ccc; }
+              .money { text-align: right; }
+              .title { font-size: 18px; font-weight: bold; text-align: center; height: 40px; }
+              .meta { font-style: italic; color: #555; text-align: center; }
+              td { padding: 5px; }
+            </style>
+          `;
 
-          // 2. Definir Estilos Corporativos (Higea)
-          const styles = {
-              title: {
-                  font: { bold: true, sz: 16, color: { rgb: "FFFFFF" } },
-                  fill: { fgColor: { rgb: "E11D2B" } }, // Rojo Higea
-                  alignment: { horizontal: "center", vertical: "center" }
-              },
-              header: {
-                  font: { bold: true, color: { rgb: "FFFFFF" } },
-                  fill: { fgColor: { rgb: "0056B3" } }, // Azul Higea
-                  alignment: { horizontal: "center" },
-                  border: { bottom: { style: "thin", color: { rgb: "000000" } } }
-              },
-              subHeader: {
-                  font: { bold: true, color: { rgb: "333333" } },
-                  fill: { fgColor: { rgb: "FFEB3B" } }, // Amarillo tenue
-                  border: { bottom: { style: "medium", color: { rgb: "E11D2B" } } }
-              },
-              cell: {
-                  border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }
-              },
-              currency: {
-                  numFmt: '"Ref" #,##0.00', // Formato moneda Excel
-                  border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }
-              },
-              bsCurrency: {
-                  numFmt: '"Bs" #,##0', 
-                  border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }
-              }
-          };
+          // 3. Construir el contenido HTML (Tablas)
+          let html = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head>
+              <meta charset="UTF-8">
+              ${styles}
+            </head>
+            <body>
+              <table>
+                <tr><td colspan="5" class="title">REPORTE GERENCIAL DE VENTAS - HIGEA</td></tr>
+                <tr><td colspan="5" class="meta">Generado el: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</td></tr>
+                <tr><td colspan="5" class="meta">Rango: ${reportDateRange.start} al ${reportDateRange.end}</td></tr>
+                <tr><td></td></tr>
 
-          // 3. Construir filas de datos
-          let rows = [];
+                <tr><td colspan="5" class="sub-header">HISTÓRICO DE VENTAS DIARIAS</td></tr>
+                <tr>
+                    <td class="header">Fecha</td>
+                    <td class="header">Transacciones</td>
+                    <td class="header">Total Ref (USD)</td>
+                    <td class="header">Total Bs</td>
+                    <td class="header">Ticket Promedio</td>
+                </tr>
+          `;
 
-          // -- Título Principal --
-          rows.push([`REPORTE GERENCIAL HIGEA (${reportDateRange.start} al ${reportDateRange.end})`]);
-          rows.push([]); // Espacio
-
-          // -- SECCIÓN 1: HISTÓRICO DIARIO --
-          rows.push(["HISTÓRICO DE VENTAS DIARIAS"]); // Subtítulo
-          rows.push(["Fecha", "Transacciones", "Total Ref", "Total Bs", "Ticket Promedio"]); // Encabezados
-
-          let totalPeriodoRef = 0;
-
-          analyticsData.salesOverTime.forEach(day => {
-              const ticketAvg = day.tx_count > 0 ? (day.total_usd / day.tx_count) : 0;
-              totalPeriodoRef += parseFloat(day.total_usd);
+          // Llenar datos diarios
+          analyticsData.salesOverTime.forEach((row, index) => {
+              const rowClass = index % 2 === 0 ? 'row-even' : 'row-odd';
+              const ticketAvg = row.tx_count > 0 ? (row.total_usd / row.tx_count).toFixed(2) : 0;
+              const date = new Date(row.sale_date).toLocaleDateString();
               
-              rows.push([
-                  { v: new Date(day.sale_date).toLocaleDateString(), s: styles.cell },
-                  { v: parseInt(day.tx_count), s: styles.cell },
-                  { v: parseFloat(day.total_usd), s: styles.currency },
-                  { v: parseFloat(day.total_ves), s: styles.bsCurrency },
-                  { v: ticketAvg, s: styles.currency }
-              ]);
-          });
-          rows.push([]); 
-
-          // -- SECCIÓN 2: PRODUCTOS TOP --
-          rows.push(["TOP PRODUCTOS ESTRELLA"]);
-          rows.push(["Producto", "", "Unidades", "Ingresos (Ref)"]); // La columna B vacía para fusión
-
-          analyticsData.topProducts.forEach(prod => {
-              rows.push([
-                  { v: prod.name, s: styles.cell },
-                  { v: "", s: styles.cell }, // Placeholder para merge
-                  { v: parseInt(prod.total_qty), s: styles.cell },
-                  { v: parseFloat(prod.total_revenue), s: styles.currency }
-              ]);
-          });
-          rows.push([]);
-
-          // -- SECCIÓN 3: VENTAS POR CATEGORÍA --
-          rows.push(["RENDIMIENTO POR CATEGORÍA"]);
-          rows.push(["Categoría", "Total Facturado (Ref)"]);
-
-          analyticsData.salesByCategory.forEach(cat => {
-              rows.push([
-                  { v: cat.category, s: styles.cell },
-                  { v: parseFloat(cat.total_usd), s: styles.currency }
-              ]);
-          });
-          rows.push([]);
-
-          // -- TOTAL FINAL --
-          rows.push(["TOTAL INGRESOS PERIODO:", { v: totalPeriodoRef, s: styles.currency }]);
-
-          // 4. Crear Hoja y Asignar Datos
-          const ws = XLSX.utils.aoa_to_sheet(rows);
-
-          // 5. Aplicar Estilos a Celdas Específicas (Títulos y Headers)
-          // Título Principal (A1)
-          ws["A1"].s = styles.title;
-          
-          // Subtítulos de Sección (Busca por índice de fila aproximado o lógica de inserción)
-          // Nota: Al usar aoa_to_sheet, el objeto ws guarda las celdas por ref (A1, B2, etc)
-          // Aquí iteramos para aplicar estilos a los headers que sabemos dónde están
-          
-          // Helper para encontrar fila de un texto
-          const findRow = (text) => rows.findIndex(r => r[0] === text || (r[0].v && r[0].v === text));
-          
-          // Estilizar Subtítulos
-          ["HISTÓRICO DE VENTAS DIARIAS", "TOP PRODUCTOS ESTRELLA", "RENDIMIENTO POR CATEGORÍA"].forEach(title => {
-              const rowIdx = findRow(title);
-              if (rowIdx > -1) {
-                  const cellRef = XLSX.utils.encode_cell({r: rowIdx, c: 0});
-                  ws[cellRef].s = styles.subHeader;
-              }
+              html += `
+                <tr>
+                    <td class="${rowClass}">${date}</td>
+                    <td class="${rowClass}" style="text-align:center;">${row.tx_count}</td>
+                    <td class="${rowClass} money">${parseFloat(row.total_usd).toFixed(2)}</td>
+                    <td class="${rowClass} money">${parseFloat(row.total_ves).toLocaleString('es-VE', {minimumFractionDigits: 2})}</td>
+                    <td class="${rowClass} money">${ticketAvg}</td>
+                </tr>
+              `;
           });
 
-          // Estilizar Headers de Tablas (La fila siguiente al subtítulo)
-          ["HISTÓRICO DE VENTAS DIARIAS", "TOP PRODUCTOS ESTRELLA", "RENDIMIENTO POR CATEGORÍA"].forEach(title => {
-              const titleRow = findRow(title);
-              if (titleRow > -1) {
-                  const headerRow = titleRow + 1;
-                  // Asumimos ancho de 5 columnas máx
-                  for (let c = 0; c < 5; c++) {
-                      const cellRef = XLSX.utils.encode_cell({r: headerRow, c: c});
-                      if (ws[cellRef]) ws[cellRef].s = styles.header;
-                  }
-              }
+          // SECCIÓN 2: PRODUCTOS TOP
+          html += `
+                <tr><td></td></tr>
+                <tr><td colspan="3" class="sub-header">TOP PRODUCTOS ESTRELLA</td></tr>
+                <tr>
+                    <td class="header" colspan="2">Producto</td>
+                    <td class="header">Unidades Vendidas</td>
+                    <td class="header">Ingresos Generados (Ref)</td>
+                </tr>
+          `;
+
+          analyticsData.topProducts.forEach((row, index) => {
+              const rowClass = index % 2 === 0 ? 'row-even' : 'row-odd';
+              html += `
+                <tr>
+                    <td class="${rowClass}" colspan="2">${row.name}</td>
+                    <td class="${rowClass}" style="text-align:center;">${row.total_qty}</td>
+                    <td class="${rowClass} money">${parseFloat(row.total_revenue).toFixed(2)}</td>
+                </tr>
+              `;
           });
 
-          // 6. Fusiones de Celdas (Merges)
-          // !merges espera un array de objetos {s: {r, c}, e: {r, c}} (Start/End)
-          ws['!merges'] = [
-              { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // Título Principal (A1:E1)
-              { s: { r: findRow("HISTÓRICO DE VENTAS DIARIAS"), c: 0 }, e: { r: findRow("HISTÓRICO DE VENTAS DIARIAS"), c: 4 } },
-              { s: { r: findRow("TOP PRODUCTOS ESTRELLA"), c: 0 }, e: { r: findRow("TOP PRODUCTOS ESTRELLA"), c: 3 } },
-              // Fusión para nombre de producto (ocupa A y B) en la sección productos
-              // (Lógica un poco más compleja para iterar, lo dejamos simple por ahora)
-          ];
+          // SECCIÓN 3: VENTAS POR CATEGORÍA
+          html += `
+                <tr><td></td></tr>
+                <tr><td colspan="2" class="sub-header">RENDIMIENTO POR CATEGORÍA</td></tr>
+                <tr>
+                    <td class="header">Categoría</td>
+                    <td class="header">Total Facturado (Ref)</td>
+                </tr>
+          `;
 
-          // 7. Ancho de Columnas
-          ws['!cols'] = [
-              { wch: 25 }, // A (Fecha / Nombre)
-              { wch: 15 }, // B (Cant / Transacciones)
-              { wch: 20 }, // C (Monto Ref)
-              { wch: 20 }, // D (Monto Bs)
-              { wch: 20 }  // E (Promedio)
-          ];
+          analyticsData.salesByCategory.forEach((row, index) => {
+              const rowClass = index % 2 === 0 ? 'row-even' : 'row-odd';
+              html += `
+                <tr>
+                    <td class="${rowClass}">${row.category}</td>
+                    <td class="${rowClass} money">${parseFloat(row.total_usd).toFixed(2)}</td>
+                </tr>
+              `;
+          });
 
-          // 8. Escribir y Descargar
-          XLSX.utils.book_append_sheet(wb, ws, "Reporte Gerencial");
-          XLSX.writeFile(wb, `Reporte_Higea_Comercial_${reportDateRange.start}.xlsx`);
+          // Totales Generales al final
+          const totalGeneralUSD = analyticsData.salesOverTime.reduce((acc, curr) => acc + parseFloat(curr.total_usd), 0);
+          html += `
+                <tr><td></td></tr>
+                <tr>
+                    <td colspan="2" style="font-weight:bold; font-size:14px; text-align:right;">TOTAL GENERAL PERIODO:</td>
+                    <td style="font-weight:bold; font-size:14px; background-color:#FFFF00; border:1px solid #000;" class="money">
+                        Ref ${totalGeneralUSD.toFixed(2)}
+                    </td>
+                </tr>
+          `;
+
+          html += `
+              </table>
+            </body>
+            </html>
+          `;
+
+          // 4. Crear Blob y Descargar
+          // Usamos 'application/vnd.ms-excel' para que el SO reconozca que debe abrirse con Excel
+          const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          // La extensión .xls es necesaria para este truco de HTML
+          link.setAttribute("download", `Reporte_Gerencial_Higea_${reportDateRange.start}.xls`);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
 
       } catch (error) {
-          console.error(error);
-          Swal.fire('Error', 'No se pudo generar el Excel.', 'error');
+          console.error("Error exportando Excel:", error);
+          Swal.fire('Error', 'No se pudo generar el reporte.', 'error');
       }
   };
 
