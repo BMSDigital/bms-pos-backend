@@ -510,6 +510,23 @@ app.get('/api/reports/analytics', async (req, res) => {
     }
 });
 
+// L. Obtener Ventas de HOY Detalladas (ESTE ES EL BLOQUE QUE TE FALTA)
+app.get('/api/reports/sales-today', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT s.*, c.full_name 
+            FROM sales s
+            LEFT JOIN customers c ON s.customer_id = c.id
+            WHERE DATE(s.created_at) = CURRENT_DATE
+            ORDER BY s.id DESC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.listen(port, () => {
     console.log(`🚀 Servidor BMS corriendo en puerto ${port}`);
 });

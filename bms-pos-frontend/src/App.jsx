@@ -1188,16 +1188,29 @@ function App() {
       );
   }
   
-  // Cargar detalle de ventas de hoy al hacer click en la tarjeta
   const openDailySalesDetail = async () => {
       try {
           Swal.fire({title: 'Cargando...', didOpen: () => Swal.showLoading()});
           const res = await axios.get(`${API_URL}/reports/sales-today`);
-          setDailySalesList(res.data);
+          
+          // --- PROTECCIÓN: Limpiar datos antes de guardarlos en el estado ---
+          const safeData = res.data.map(sale => ({
+              ...sale,
+              // 1. Evita error en .split() si el método es null
+              payment_method: sale.payment_method || 'Desconocido', 
+              // 2. Evita NaN en las sumas
+              total_usd: parseFloat(sale.total_usd) || 0,
+              // 3. Texto por defecto para nombre
+              full_name: sale.full_name || 'Consumidor Final'
+          }));
+
+          setDailySalesList(safeData);
           setShowDailySalesModal(true);
           Swal.close();
       } catch (error) {
+          console.error("Error cargando ventas diarias:", error);
           Swal.close();
+          Swal.fire('Error', 'No se pudo cargar el reporte de hoy', 'error');
       }
   };
   
