@@ -269,6 +269,51 @@ function App() {
     // Desplazarse hacia arriba para que el usuario vea el formulario
     window.scrollTo(0, 0); 
 }
+
+// --- FUNCIÓN PARA AGREGAR SALDO INICIAL A CLIENTE ---
+  const addInitialBalance = async (customer) => {
+      const { value: formValues } = await Swal.fire({
+          title: `Saldo Inicial: ${customer.full_name}`,
+          html: `
+              <p class="text-sm text-gray-500 mb-4">Ingresa el monto de la deuda antigua para traerla al sistema actual.</p>
+              <input id="swal-balance-amount" type="number" step="0.01" class="swal2-input" placeholder="Monto en USD (Ref)">
+              <input id="swal-balance-desc" type="text" class="swal2-input" placeholder="Nota (Ej: Deuda año 2024)">
+          `,
+          focusConfirm: false,
+          showCancelButton: true,
+          confirmButtonText: 'Registrar Deuda',
+          confirmButtonColor: '#E11D2B', // Rojo institucional
+          preConfirm: () => {
+              const amount = document.getElementById('swal-balance-amount').value;
+              const desc = document.getElementById('swal-balance-desc').value;
+              if (!amount || parseFloat(amount) <= 0) {
+                  Swal.showValidationMessage('Por favor ingrese un monto válido');
+              }
+              return { amount, desc };
+          }
+      });
+
+      if (formValues) {
+          try {
+              Swal.fire({ title: 'Registrando...', didOpen: () => Swal.showLoading() });
+              
+              await axios.post(`${API_URL}/customers/${customer.id}/initial-balance`, {
+                  amount: formValues.amount,
+                  description: formValues.desc
+              });
+
+              Swal.fire('¡Listo!', 'El saldo inicial ha sido cargado como una cuenta por cobrar.', 'success');
+              
+              // Recargar datos si estamos en la vista de reportes o clientes
+              fetchData();
+              loadCustomers(); 
+
+          } catch (error) {
+              console.error(error);
+              Swal.fire('Error', 'No se pudo registrar el saldo inicial.', 'error');
+          }
+      }
+  };
   
   // Función para guardar/actualizar el cliente
   const saveCustomer = async (e) => {
@@ -492,6 +537,7 @@ function App() {
       { name: 'Efectivo Ref', currency: 'Ref' },
       { name: 'Efectivo Bs', currency: 'Bs' },
       { name: 'Zelle', currency: 'Ref' },
+      { name: 'Donación', currency: 'Ref' }, // <--- AGREGAR ESTO
       { name: 'Crédito', currency: 'Ref' }, 
       { name: 'Pago Móvil', currency: 'Bs' },
       { name: 'Punto de Venta', currency: 'Bs' },
@@ -1937,11 +1983,24 @@ function App() {
                                                             {customer.status || 'ACTIVO'} 
                                                         </span>
                                                     </td>
-                                                    <td className="px-4 py-3 text-right">
-                                                        <button onClick={(e) => { e.stopPropagation(); editCustomer(customer); }} className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700 active:scale-95 transition-transform">
-                                                            Editar
-                                                        </button>
-                                                    </td>
+                                                    <td className="px-4 py-3 text-right flex justify-end gap-2">
+													{/* Botón Saldo Inicial */}
+													<button 
+														onClick={(e) => { e.stopPropagation(); addInitialBalance(customer); }} 
+														className="bg-green-100 text-green-700 p-1.5 rounded-lg hover:bg-green-200 border border-green-200 transition-colors"
+														title="Agregar Saldo Inicial / Deuda Antigua"
+													>
+														💸 Saldo
+													</button>
+
+													{/* Botón Editar existente */}
+													<button 
+														onClick={(e) => { e.stopPropagation(); editCustomer(customer); }} 
+														className="bg-higea-blue text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-700 active:scale-95 transition-transform"
+													>
+														Editar
+													</button>
+													</td>
                                                 </tr>
                                             ))}
                                         </tbody>

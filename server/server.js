@@ -527,6 +527,60 @@ app.get('/api/reports/sales-today', async (req, res) => {
     }
 });
 
+// [NUEVO] Registrar Saldo Inicial (Deuda Antigua)
+app.post('/api/customers/:id/initial-balance', async (req, res) => {
+    const { id } = req.params; // ID del cliente
+    const { amount, description } = req.body;
+
+    if (!amount || amount <= 0) return res.status(400).json({ error: 'Monto inválido' });
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Verificar que el cliente existe
+        const checkClient = await client.query('SELECT full_name FROM customers WHERE id = $1', [id]);
+        if (checkClient.rows.length === 0) throw new Error('Cliente no encontrado');
+
+        // 2. Crear una "Venta" simbólica que represente la deuda anterior
+        // Status PENDIENTE, Método SALDO_INICIAL, sin ítems de inventario.
+        const saleQuery = `
+            INSERT INTO sales (
+                total_usd, total_ves, bcv_rate_snapshot, payment_method, status, customer_id, due_date,
+                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, amount_paid_usd
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7, $8, $9, $10, $11) RETURNING id
+        `;
+        
+        // Asumimos que la deuda vieja no desglosa impuestos nuevos, la ponemos como exenta para simplificar
+        const values = [
+            amount, // total_usd
+            (amount * globalBCVRate).toFixed(2), // total_ves (aprox al cambio de hoy)
+            globalBCVRate,
+            `SALDO INICIAL - ${description || 'Deuda Anterior'}`, // payment_method (usado como descripción)
+            'PENDIENTE', // Status clave
+            id,
+            0, // subtotal_taxable
+            amount, // subtotal_exempt (Todo el saldo va aquí)
+            0.16, // iva_rate (referencial)
+            0, // iva_usd
+            0 // amount_paid_usd (Nada pagado aun)
+        ];
+
+        await client.query(saleQuery, values);
+
+        await client.query('COMMIT');
+        res.json({ success: true, message: 'Saldo inicial registrado correctamente' });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 app.listen(port, () => {
     console.log(`🚀 Servidor BMS corriendo en puerto ${port}`);
 });
