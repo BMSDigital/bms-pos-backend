@@ -74,6 +74,37 @@ const debounce = (func, delay) => {
     };
 };
 
+// Función para exportar datos a CSV (Excel)
+  const exportReportToCSV = () => {
+      if (!analyticsData || !analyticsData.salesOverTime) return;
+
+      // 1. Encabezados
+      let csvContent = "data:text/csv;charset=utf-8,";
+      csvContent += "Reporte de Ventas - Generado el " + new Date().toLocaleDateString() + "\n\n";
+      
+      // 2. Resumen Diario
+      csvContent += "FECHA,TRANSACCIONES,TOTAL REF,TOTAL BS\n";
+      analyticsData.salesOverTime.forEach(row => {
+          const date = new Date(row.sale_date).toLocaleDateString();
+          csvContent += `${date},${row.tx_count},${row.total_usd},${row.total_ves}\n`;
+      });
+
+      csvContent += "\nPRODUCTOS MAS VENDIDOS\n";
+      csvContent += "PRODUCTO,CANTIDAD,TOTAL INGRESOS (REF)\n";
+      analyticsData.topProducts.forEach(row => {
+          csvContent += `${row.name},${row.total_qty},${row.total_revenue}\n`;
+      });
+
+      // 3. Descargar
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `reporte_ventas_${reportDateRange.start}_${reportDateRange.end}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
 // 💡 MEJORA ARQUITECTURA: Uso de variables de entorno de Vite
 // Necesitas un archivo .env en la raíz del frontend con VITE_API_URL
 const API_URL = import.meta.env.VITE_API_URL || 'https://bms-postventa-api.onrender.com/api';
@@ -1460,22 +1491,27 @@ function App() {
                        <p className="text-3xl font-black text-gray-800 mt-1">Bs {parseFloat(stats.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</p>
                   </div>
 
-                  {/* 3. ALERTAS DE STOCK (Limitado a 4 con Modal) */}
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-red-100 bg-red-50/30 relative">
-                      <div className="flex justify-between items-center mb-2">
+                  {/* 3. ALERTAS DE STOCK (Mejorado) */}
+                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-red-100 bg-red-50/30 relative flex flex-col justify-between">
+                      <div className="flex justify-between items-center mb-3">
                         <p className="text-red-400 text-xs font-bold uppercase">Alertas Stock ({lowStock.length})</p>
-                        {lowStock.length > 4 && (
-                            <button onClick={() => setShowStockModal(true)} className="text-[10px] font-bold text-red-600 bg-white px-2 py-1 rounded-full border border-red-100 hover:bg-red-50">Ver Todo</button>
+                        {/* 💡 MEJORA: Botón siempre visible si hay al menos 1 item */}
+                        {lowStock.length > 0 && (
+                            <button onClick={(e) => { e.stopPropagation(); setShowStockModal(true); }} className="text-[10px] font-bold text-white bg-red-400 px-2 py-1 rounded-lg hover:bg-red-500 shadow-sm transition-colors">
+                                Ver Detalle
+                            </button>
                         )}
                       </div>
-                      <div className="space-y-2">
-                          {lowStock.slice(0, 4).map((p, i) => ( // Limite de 4
-                              <div key={i} className="flex justify-between items-center text-xs bg-white p-1.5 rounded-lg border border-red-50">
-                                  <span className="truncate w-3/4 font-medium text-gray-600">{p.icon_emoji} {p.name}</span>
-                                  <span className="font-bold text-red-500 bg-red-100 px-1.5 rounded">{p.stock}</span>
+                      <div className="space-y-2 mb-2">
+                          {lowStock.slice(0, 4).map((p, i) => (
+                              <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded-xl border border-red-50 shadow-sm">
+                                  <span className="truncate w-3/4 font-medium text-gray-700 flex items-center gap-1">
+                                      <span className="text-base">{p.icon_emoji}</span> {p.name}
+                                  </span>
+                                  <span className="font-black text-red-500 bg-red-50 px-2 py-0.5 rounded-md">{p.stock}</span>
                               </div>
                           ))}
-                          {lowStock.length === 0 && <p className="text-xs text-green-600 font-bold">¡Inventario Saludable!</p>}
+                          {lowStock.length === 0 && <p className="text-xs text-green-600 font-bold bg-green-50 p-2 rounded-lg text-center">¡Inventario Saludable! 🎉</p>}
                       </div>
                   </div>
 
@@ -1990,107 +2026,153 @@ function App() {
                     );
                 })()}
             </div>
-        ): view === 'ADVANCED_REPORTS' ? (
-            /* --- VISTA: REPORTES GERENCIALES AVANZADOS --- */
-            <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up">
+        ) : view === 'ADVANCED_REPORTS' ? (
+            /* --- VISTA: REPORTES GERENCIALES AVANZADOS (MEJORADO UX) --- */
+            <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-[#F8FAFC]">
                 
-                {/* Cabecera y Filtros */}
-                <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                    <h2 className="text-2xl font-black text-gray-800">Reportes Gerenciales</h2>
+                {/* Cabecera y Controles */}
+                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-4">
+                    <div>
+                        <h2 className="text-3xl font-black text-gray-800 tracking-tight">Inteligencia de Negocios</h2>
+                        <p className="text-sm text-gray-500 mt-1">Análisis detallado del rendimiento</p>
+                    </div>
                     
-                    {/* Filtro de Fechas */}
-                    <div className="flex gap-2 bg-white p-2 rounded-xl shadow-sm border border-gray-200 items-center">
-                        <span className="text-xs font-bold text-gray-400 pl-2">Desde:</span>
-                        <input 
-                            type="date" 
-                            value={reportDateRange.start}
-                            onChange={(e) => setReportDateRange(prev => ({...prev, start: e.target.value}))}
-                            className="text-xs font-bold text-gray-600 outline-none bg-transparent"
-                        />
-                        <span className="text-xs font-bold text-gray-400">Hasta:</span>
-                        <input 
-                            type="date" 
-                            value={reportDateRange.end}
-                            onChange={(e) => setReportDateRange(prev => ({...prev, end: e.target.value}))}
-                            className="text-xs font-bold text-gray-600 outline-none bg-transparent"
-                        />
-                        <button onClick={fetchAdvancedReport} className="bg-higea-blue text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-700 shadow-sm transition-all active:scale-95">
-                            Filtrar
+                    <div className="flex flex-wrap gap-3 bg-white p-2 rounded-2xl shadow-sm border border-gray-200">
+                        <div className="flex items-center gap-2 px-2 bg-gray-50 rounded-xl border border-gray-100">
+                            <span className="text-xs font-bold text-gray-400">Rango:</span>
+                            <input 
+                                type="date" 
+                                value={reportDateRange.start}
+                                onChange={(e) => setReportDateRange(prev => ({...prev, start: e.target.value}))}
+                                className="text-sm font-bold text-gray-700 bg-transparent outline-none py-2"
+                            />
+                            <span className="text-gray-300">|</span>
+                            <input 
+                                type="date" 
+                                value={reportDateRange.end}
+                                onChange={(e) => setReportDateRange(prev => ({...prev, end: e.target.value}))}
+                                className="text-sm font-bold text-gray-700 bg-transparent outline-none py-2"
+                            />
+                        </div>
+                        <button onClick={fetchAdvancedReport} className="bg-higea-blue text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 shadow-md transition-all active:scale-95 flex items-center gap-2">
+                            <span>🔍</span> Actualizar
+                        </button>
+                        <button onClick={exportReportToCSV} className="bg-green-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-green-700 shadow-md transition-all active:scale-95 flex items-center gap-2">
+                            <span>📊</span> Exportar Excel
                         </button>
                     </div>
                 </div>
 
                 {analyticsData ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
+                    <div className="space-y-6 pb-20">
                         
-                        {/* 1. GRÁFICA: PRODUCTOS MÁS VENDIDOS */}
-                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                            <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
-                                <span className="bg-blue-100 text-higea-blue p-1.5 rounded-lg text-lg">🏆</span> 
-                                Productos Más Vendidos
-                            </h3>
-                            <SimpleBarChart 
-                                data={analyticsData.topProducts} 
-                                labelKey="name" 
-                                valueKey="total_qty" 
-                                colorClass="bg-higea-blue"
-                            />
+                        {/* 1. CARDS KPI (Indicadores Clave) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="bg-white p-5 rounded-3xl shadow-sm border border-blue-100 relative overflow-hidden group hover:shadow-md transition-all">
+                                <div className="absolute right-0 top-0 h-20 w-20 bg-blue-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                                <p className="text-gray-400 text-xs font-bold uppercase tracking-wider relative z-10">Ingresos Totales (Ref)</p>
+                                <p className="text-4xl font-black text-higea-blue mt-2 relative z-10">
+                                    ${analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toFixed(2)}
+                                </p>
+                            </div>
+                            <div className="bg-white p-5 rounded-3xl shadow-sm border border-purple-100 relative overflow-hidden group hover:shadow-md transition-all">
+                                <div className="absolute right-0 top-0 h-20 w-20 bg-purple-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                                <p className="text-gray-400 text-xs font-bold uppercase tracking-wider relative z-10">Transacciones</p>
+                                <p className="text-4xl font-black text-purple-600 mt-2 relative z-10">
+                                    {analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0)}
+                                </p>
+                            </div>
+                            <div className="bg-white p-5 rounded-3xl shadow-sm border border-orange-100 relative overflow-hidden group hover:shadow-md transition-all">
+                                <div className="absolute right-0 top-0 h-20 w-20 bg-orange-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                                <p className="text-gray-400 text-xs font-bold uppercase tracking-wider relative z-10">Ticket Promedio</p>
+                                <p className="text-4xl font-black text-orange-500 mt-2 relative z-10">
+                                    ${(() => {
+                                        const total = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
+                                        const count = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0);
+                                        return count > 0 ? (total / count).toFixed(2) : '0.00';
+                                    })()}
+                                </p>
+                            </div>
                         </div>
 
-                        {/* 2. GRÁFICA: MEJORES CLIENTES */}
-                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                            <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
-                                <span className="bg-green-100 text-green-600 p-1.5 rounded-lg text-lg">👥</span> 
-                                Mejores Clientes (Volumen de Compra)
-                            </h3>
-                            <SimpleBarChart 
-                                data={analyticsData.topCustomers} 
-                                labelKey="full_name" 
-                                valueKey="total_spent" 
-                                colorClass="bg-green-500"
-                                formatMoney={true}
-                            />
+                        {/* 2. GRÁFICAS DE BARRAS */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {/* Productos Más Vendidos */}
+                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                                        <span className="bg-yellow-100 text-yellow-600 p-1.5 rounded-lg text-lg">🏆</span> 
+                                        Productos Estrella
+                                    </h3>
+                                </div>
+                                <SimpleBarChart 
+                                    data={analyticsData.topProducts} 
+                                    labelKey="name" 
+                                    valueKey="total_qty" 
+                                    colorClass="bg-yellow-400"
+                                />
+                            </div>
+
+                            {/* Ventas por Categoría (NUEVO) */}
+                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                                        <span className="bg-indigo-100 text-indigo-600 p-1.5 rounded-lg text-lg">🏷️</span> 
+                                        Ventas por Categoría (USD)
+                                    </h3>
+                                </div>
+                                <SimpleBarChart 
+                                    data={analyticsData.salesByCategory} 
+                                    labelKey="category" 
+                                    valueKey="total_usd" 
+                                    colorClass="bg-indigo-500"
+                                    formatMoney={true}
+                                />
+                            </div>
                         </div>
 
-                        {/* 3. TABLA: EVOLUCIÓN DE VENTAS DIARIA */}
-                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 col-span-1 md:col-span-2">
-                            <h3 className="font-bold text-gray-800 mb-4">Evolución de Ventas (Rango Seleccionado)</h3>
-                            <div className="overflow-x-auto">
+                        {/* 3. TABLA DE EVOLUCIÓN DETALLADA */}
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                            <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
+                                <span className="bg-gray-100 text-gray-600 p-1.5 rounded-lg text-lg">📅</span> 
+                                Histórico Diario
+                            </h3>
+                            <div className="overflow-x-auto rounded-xl border border-gray-100">
                                 <table className="w-full text-left text-sm text-gray-600">
                                     <thead className="bg-gray-50 text-gray-500 uppercase text-xs font-bold">
                                         <tr>
-                                            <th className="px-4 py-3 rounded-l-lg">Fecha</th>
-                                            <th className="px-4 py-3 text-right">Total Ref</th>
-                                            <th className="px-4 py-3 text-right">Total Bs</th>
-                                            <th className="px-4 py-3 rounded-r-lg w-1/3">Tendencia</th>
+                                            <th className="px-6 py-4">Fecha</th>
+                                            <th className="px-6 py-4 text-center">N° Ventas</th>
+                                            <th className="px-6 py-4 text-right">Total Ref</th>
+                                            <th className="px-6 py-4 text-right">Total Bs</th>
+                                            <th className="px-6 py-4 text-center">Desempeño</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {analyticsData.salesOverTime.map((day, idx) => {
-                                            // Calcular porcentaje relativo al día máximo para la barrita
                                             const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
                                             const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
                                             
                                             return (
-                                                <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                                                    <td className="px-4 py-3 font-medium text-gray-800">
-                                                        {new Date(day.sale_date).toLocaleDateString('es-VE', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                                                <tr key={idx} className="hover:bg-blue-50 transition-colors">
+                                                    <td className="px-6 py-4 font-medium text-gray-800">
+                                                        {new Date(day.sale_date).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric', month: 'long' })}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-black text-higea-blue text-base">
+                                                    <td className="px-6 py-4 text-center">
+                                                        <span className="bg-gray-100 px-2 py-1 rounded-lg text-xs font-bold text-gray-600">{day.tx_count || 0}</span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right font-black text-higea-blue text-base">
                                                         Ref {parseFloat(day.total_usd).toFixed(2)}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right text-gray-500 font-bold">
+                                                    <td className="px-6 py-4 text-right text-gray-500 font-medium">
                                                         Bs {parseFloat(day.total_ves).toLocaleString('es-VE', {maximumFractionDigits: 2})}
                                                     </td>
-                                                    <td className="px-4 py-3 align-middle">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="h-2 bg-gray-100 rounded-full flex-1 overflow-hidden">
-                                                                <div 
-                                                                    className="h-full bg-gradient-to-r from-blue-400 to-higea-blue rounded-full" 
-                                                                    style={{ width: `${percent}%` }}
-                                                                ></div>
-                                                            </div>
-                                                            <span className="text-[10px] font-bold text-gray-400">{Math.round(percent)}%</span>
+                                                    <td className="px-6 py-4 align-middle">
+                                                        <div className="w-24 mx-auto h-2 bg-gray-100 rounded-full overflow-hidden">
+                                                            <div 
+                                                                className={`h-full rounded-full ${percent > 80 ? 'bg-green-500' : percent > 40 ? 'bg-higea-blue' : 'bg-orange-400'}`} 
+                                                                style={{ width: `${percent}%` }}
+                                                            ></div>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -2098,8 +2180,8 @@ function App() {
                                         })}
                                         {analyticsData.salesOverTime.length === 0 && (
                                             <tr>
-                                                <td colSpan="4" className="p-8 text-center text-gray-400 italic">
-                                                    No se encontraron ventas registradas en este rango de fechas.
+                                                <td colSpan="5" className="p-12 text-center text-gray-400 italic">
+                                                    No se encontraron registros en este periodo.
                                                 </td>
                                             </tr>
                                         )}
@@ -2109,9 +2191,9 @@ function App() {
                         </div>
                     </div>
                 ) : (
-                    <div className="flex flex-col items-center justify-center h-64 text-gray-400">
-                        <div className="w-10 h-10 border-4 border-gray-200 border-t-higea-blue rounded-full animate-spin mb-3"></div>
-                        <p>Cargando datos analíticos...</p>
+                    <div className="flex flex-col items-center justify-center h-96 text-gray-400">
+                        <div className="w-12 h-12 border-4 border-gray-200 border-t-higea-blue rounded-full animate-spin mb-4"></div>
+                        <p className="font-medium animate-pulse">Analizando datos...</p>
                     </div>
                 )}
             </div>
@@ -2331,32 +2413,39 @@ function App() {
           </div>
       )}
 	  
-	  {/* MODAL: STOCK COMPLETO */}
+	  {/* MODAL: STOCK COMPLETO (UX Mejorada) */}
       {showStockModal && (
-          <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl w-full max-w-lg h-[80vh] flex flex-col shadow-2xl animate-scale-up">
-                  <div className="p-5 border-b flex justify-between items-center bg-red-50 rounded-t-3xl">
-                      <h3 className="font-bold text-red-600">⚠️ Reporte de Stock Bajo</h3>
-                      <button onClick={() => setShowStockModal(false)} className="bg-white p-1 rounded-full text-red-500">✕</button>
+          <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+              <div className="bg-white rounded-3xl w-full max-w-lg h-[80vh] flex flex-col shadow-2xl animate-scale-up overflow-hidden">
+                  <div className="p-5 border-b flex justify-between items-center bg-red-50">
+                      <div className="flex items-center gap-3">
+                          <div className="bg-red-100 p-2 rounded-full text-red-500">⚠️</div>
+                          <h3 className="font-bold text-red-900 text-lg">Reporte de Stock Bajo</h3>
+                      </div>
+                      <button onClick={() => setShowStockModal(false)} className="bg-white w-8 h-8 rounded-full text-red-500 font-bold shadow-sm hover:bg-red-100 transition-colors">✕</button>
                   </div>
                   <div className="flex-1 overflow-y-auto p-5">
                       <table className="w-full text-sm">
-                          <thead className="bg-gray-100 text-gray-500 uppercase text-xs">
-                              <tr><th className="px-2 py-2 text-left">Producto</th><th className="px-2 py-2 text-right">Stock</th><th className="px-2 py-2 text-center">Cat</th></tr>
+                          <thead className="bg-gray-50 text-gray-400 uppercase text-[10px] font-bold tracking-wider">
+                              <tr><th className="px-3 py-2 text-left rounded-l-lg">Producto</th><th className="px-3 py-2 text-center">Cat</th><th className="px-3 py-2 text-right rounded-r-lg">Stock</th></tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                               {lowStock.map(p => (
-                                  <tr key={p.id}>
-                                      <td className="px-2 py-3 font-medium">{p.icon_emoji} {p.name}</td>
-                                      <td className="px-2 py-3 text-right font-black text-red-500">{p.stock}</td>
-                                      <td className="px-2 py-3 text-center text-xs text-gray-400">{p.category}</td>
+                                  <tr key={p.id} className="hover:bg-red-50/50 transition-colors">
+                                      <td className="px-3 py-3 font-bold text-gray-700 flex items-center gap-2">
+                                          <span className="text-xl">{p.icon_emoji}</span> {p.name}
+                                      </td>
+                                      <td className="px-3 py-3 text-center text-xs text-gray-400 bg-gray-50 rounded-lg m-1">{p.category}</td>
+                                      <td className="px-3 py-3 text-right">
+                                          <span className="bg-red-100 text-red-600 font-black px-3 py-1 rounded-full">{p.stock}</span>
+                                      </td>
                                   </tr>
                               ))}
                           </tbody>
                       </table>
                   </div>
-                  <div className="p-4 border-t text-center bg-gray-50 rounded-b-3xl">
-                      <button onClick={() => setShowStockModal(false)} className="text-gray-500 font-bold text-sm">Cerrar</button>
+                  <div className="p-4 border-t bg-gray-50 text-center">
+                      <button onClick={() => setShowStockModal(false)} className="w-full bg-gray-200 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-300 transition-colors">Cerrar Reporte</button>
                   </div>
               </div>
           </div>
@@ -2364,39 +2453,153 @@ function App() {
 
       {/* MODAL: VENTAS DE HOY DETALLADAS */}
       {showDailySalesModal && (
-          <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl animate-scale-up">
-                  <div className="p-5 border-b flex justify-between items-center bg-blue-50 rounded-t-3xl">
+          <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+              <div className="bg-white rounded-3xl w-full max-w-3xl h-[85vh] flex flex-col shadow-2xl animate-scale-up overflow-hidden">
+                  <div className="p-6 border-b flex justify-between items-center bg-blue-50">
                       <div>
-                          <h3 className="font-bold text-higea-blue">Resumen de Ventas - HOY</h3>
-                          <p className="text-xs text-gray-500">{new Date().toLocaleDateString()}</p>
+                          <h3 className="font-black text-2xl text-higea-blue">Cierre de Caja - HOY</h3>
+                          <p className="text-sm text-blue-400 font-medium">{new Date().toLocaleDateString('es-VE', {weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'})}</p>
                       </div>
-                      <button onClick={() => setShowDailySalesModal(false)} className="bg-white p-1 rounded-full text-blue-500">✕</button>
+                      <button onClick={() => setShowDailySalesModal(false)} className="bg-white w-10 h-10 rounded-full text-blue-500 font-bold shadow-sm hover:bg-blue-100 transition-colors">✕</button>
                   </div>
-                  <div className="flex-1 overflow-y-auto p-0">
-                      <table className="w-full text-sm text-left">
-                          <thead className="bg-gray-100 text-gray-500 uppercase text-xs sticky top-0">
-                              <tr><th className="px-4 py-3">Hora</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Método</th><th className="px-4 py-3 text-right">Monto</th><th className="px-4 py-3"></th></tr>
+                  
+                  <div className="flex-1 overflow-y-auto p-0 bg-gray-50/50">
+                      <table className="w-full text-sm text-left border-collapse">
+                          <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10">
+                              <tr>
+                                  <th className="px-5 py-3">Hora</th>
+                                  <th className="px-5 py-3">Cliente</th>
+                                  <th className="px-5 py-3">Método Pago</th>
+                                  <th className="px-5 py-3 text-right">Total Ref</th>
+                                  <th className="px-5 py-3 text-center">Acción</th>
+                              </tr>
                           </thead>
-                          <tbody className="divide-y divide-gray-100">
+                          <tbody className="divide-y divide-gray-100 bg-white">
                               {dailySalesList.map(sale => (
-                                  <tr key={sale.id} className="hover:bg-blue-50">
-                                      <td className="px-4 py-3 text-gray-500">{new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                                      <td className="px-4 py-3 font-bold text-gray-700">{sale.full_name || 'Consumidor Final'}</td>
-                                      <td className="px-4 py-3 text-xs">{sale.payment_method.split('[')[0].slice(0, 15)}...</td>
-                                      <td className="px-4 py-3 text-right font-black text-higea-blue">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
-                                      <td className="px-4 py-3 text-center">
-                                          <button onClick={() => showSaleDetail(sale)} className="text-gray-400 hover:text-blue-500">👁️</button>
+                                  <tr key={sale.id} className="hover:bg-blue-50 transition-colors group">
+                                      <td className="px-5 py-4 text-gray-500 font-mono text-xs">
+                                          {new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                      </td>
+                                      <td className="px-5 py-4">
+                                          <div className="font-bold text-gray-700">{sale.full_name || 'Consumidor Final'}</div>
+                                          <div className="text-[10px] text-gray-400">ID: #{sale.id}</div>
+                                      </td>
+                                      <td className="px-5 py-4">
+                                          <span className="px-2 py-1 bg-gray-100 rounded-lg text-xs font-medium text-gray-600 border border-gray-200">
+                                              {sale.payment_method.split('[')[0].slice(0, 15)}...
+                                          </span>
+                                      </td>
+                                      <td className="px-5 py-4 text-right">
+                                          <span className="font-black text-higea-blue text-base">Ref {parseFloat(sale.total_usd).toFixed(2)}</span>
+                                      </td>
+                                      <td className="px-5 py-4 text-center">
+                                          <button 
+                                              onClick={() => showSaleDetail(sale)} 
+                                              className="bg-blue-50 text-higea-blue p-2 rounded-lg hover:bg-higea-blue hover:text-white transition-colors shadow-sm"
+                                              title="Ver Detalles Completos"
+                                          >
+                                              👁️
+                                          </button>
                                       </td>
                                   </tr>
                               ))}
-                              {dailySalesList.length === 0 && <tr><td colSpan="5" className="p-5 text-center text-gray-400">Aún no hay ventas hoy.</td></tr>}
+                              {dailySalesList.length === 0 && <tr><td colSpan="5" className="p-12 text-center text-gray-400 italic">No hay movimientos registrados hoy.</td></tr>}
                           </tbody>
                       </table>
                   </div>
-                  <div className="p-4 border-t bg-gray-50 flex justify-between items-center rounded-b-3xl">
-                      <div className="text-xs text-gray-500">Total Transacciones: <b>{dailySalesList.length}</b></div>
-                      <div className="text-xl font-black text-higea-blue">Total: Ref {dailySalesList.reduce((acc, curr) => acc + parseFloat(curr.total_usd), 0).toFixed(2)}</div>
+                  
+                  {/* Footer con Totales */}
+                  <div className="p-5 border-t bg-white flex justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20">
+                      <div className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+                          Transacciones: <span className="text-gray-800 text-lg ml-1">{dailySalesList.length}</span>
+                      </div>
+                      <div className="text-right">
+                          <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado</p>
+                          <p className="text-3xl font-black text-higea-blue leading-none">
+                              Ref {dailySalesList.reduce((acc, curr) => acc + parseFloat(curr.total_usd), 0).toFixed(2)}
+                          </p>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* --- MODAL DETALLE VENTA (CORRECCIÓN Z-INDEX) --- */}
+      {selectedSaleDetail && (
+          // 💡 SOLUCIÓN Z-INDEX: z-[90] asegura que esté por encima de Ventas Hoy (z-[80])
+          <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up">
+                  <button onClick={() => setSelectedSaleDetail(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
+                  
+                  <div className="p-5 border-b bg-gray-50">
+                     <h3 className="font-bold text-lg text-gray-800">Detalle de Venta #{selectedSaleDetail.id}</h3>
+                     <p className='text-[10px] text-red-500 font-bold mt-1 bg-red-50 inline-block px-2 py-0.5 rounded border border-red-100'>NO VÁLIDO PARA CRÉDITO FISCAL</p>
+                  </div>
+
+                  {/* ... (Mismo contenido interno del modal que ya tenías) ... */}
+                  {/* Solo asegúrate de copiar el contenido interno del modal que ya tenías o usar el bloque completo que envié antes si lo necesitas */}
+                  <div className="max-h-[70vh] overflow-y-auto">
+                      
+                      {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.full_name) && (
+                          <div className="p-5 bg-yellow-50 border-b border-yellow-100">
+                               <p className="text-xs font-bold uppercase text-yellow-800 mb-2">Detalles de Crédito</p>
+                               <div className="text-sm space-y-1 text-yellow-900">
+                                    <p><span className="font-bold">Cliente:</span> {selectedSaleDetail.full_name}</p>
+                                    <p><span className="font-bold">Cédula/RIF:</span> {selectedSaleDetail.id_number}</p>
+                                    <p><span className="font-bold">Estado:</span> 
+                                       <span className={`ml-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                                         selectedSaleDetail.status === 'PENDIENTE' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
+                                       }`}>
+                                           {selectedSaleDetail.status}
+                                       </span>
+                                    </p>
+                                    {selectedSaleDetail.due_date && <p><span className="font-bold">Vencimiento:</span> {new Date(selectedSaleDetail.due_date).toLocaleDateString()}</p>}
+                               </div>
+                          </div>
+                      )}
+                      
+                      <div className="p-5 space-y-3 border-b border-gray-100">
+                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos</p>
+                          {selectedSaleDetail.items.map((item, idx) => {
+                                const itemTotalUsd = parseFloat(item.price_at_moment_usd) * item.quantity;
+                                const itemTotalVes = itemTotalUsd * selectedSaleDetail.bcv_rate_snapshot;
+                                
+                                return (
+                                    <div key={idx} className="flex justify-between pb-2 border-b border-gray-100 last:border-b-0">
+                                        <div>
+                                            <p className="font-bold text-sm text-gray-700">{item.name}</p>
+                                            <p className="text-xs text-gray-400">Ref {item.price_at_moment_usd} c/u</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="bg-blue-50 text-higea-blue text-xs font-bold px-2 py-1 rounded">x{item.quantity}</span>
+                                            <p className="font-bold text-gray-800 mt-1">Ref {itemTotalUsd.toFixed(2)}</p>
+                                            <p className="text-xs text-gray-500">Bs {itemTotalVes.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
+                                        </div>
+                                    </div>
+                                );
+                          })}
+                      </div>
+
+                      <div className="p-5 bg-gray-50">
+                          <div className="text-sm space-y-1 mb-3">
+                              {selectedSaleDetail.taxBreakdown.subtotalExemptUSD > 0 && (
+                                <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Exenta</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalExemptUSD.toFixed(2)}</span></div>
+                              )}
+                              <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalTaxableUSD.toFixed(2)}</span></div>
+                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA ({selectedSaleDetail.taxBreakdown.ivaRate * 100}%)</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</span></div>
+                          </div>
+                          
+                          <div className="flex justify-between pt-3 border-t border-gray-200">
+                            <span className="font-bold text-gray-500">TOTAL FINAL VENTA:</span>
+                            <div>
+                                <span className="font-black text-lg text-higea-red block text-right">Ref {selectedSaleDetail.total_usd.toFixed(2)}</span>
+                                <span className="font-medium text-sm text-gray-700 block text-right">Bs {selectedSaleDetail.total_ves.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
+                            </div>
+                          </div>
+                          <p className="text-xs font-bold uppercase text-gray-400 mt-4 mb-2">Método de Pago:</p>
+                          <p className="text-sm font-medium text-gray-700 break-words">{selectedSaleDetail.payment_method}</p>
+                           <p className="text-xs text-gray-400 mt-2">Tasa BCV del momento: Bs {selectedSaleDetail.bcv_rate_snapshot.toFixed(2)}</p>
+                      </div>
                   </div>
               </div>
           </div>
