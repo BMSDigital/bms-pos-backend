@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
+import XLSX from 'xlsx-js-style';
 
 // --- NUEVAS FUNCIONES DE VALIDACIÓN Y FORMATO ---
 
@@ -1216,58 +1217,163 @@ function App() {
   
   // --- FUNCIÓN PARA EXPORTAR A EXCEL (CSV) ---
   const exportReportToCSV = () => {
-      // 1. Validar que existan datos
       if (!analyticsData || !analyticsData.salesOverTime || analyticsData.salesOverTime.length === 0) {
-          return Swal.fire('Sin datos', 'No hay información para exportar en este rango de fechas.', 'warning');
+          return Swal.fire('Sin datos', 'No hay información para exportar.', 'warning');
       }
 
       try {
-          // 2. Construir el contenido CSV
-          // \uFEFF es el BOM para que Excel reconozca acentos y emojis correctamente
-          let csvContent = "\uFEFF"; 
-          csvContent += `REPORTE GERENCIAL HIGEA\n`;
-          csvContent += `Generado el: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n`;
-          csvContent += `Rango: ${reportDateRange.start} al ${reportDateRange.end}\n\n`;
+          // 1. Crear el libro de trabajo
+          const wb = XLSX.utils.book_new();
+
+          // 2. Definir Estilos Corporativos (Higea)
+          const styles = {
+              title: {
+                  font: { bold: true, sz: 16, color: { rgb: "FFFFFF" } },
+                  fill: { fgColor: { rgb: "E11D2B" } }, // Rojo Higea
+                  alignment: { horizontal: "center", vertical: "center" }
+              },
+              header: {
+                  font: { bold: true, color: { rgb: "FFFFFF" } },
+                  fill: { fgColor: { rgb: "0056B3" } }, // Azul Higea
+                  alignment: { horizontal: "center" },
+                  border: { bottom: { style: "thin", color: { rgb: "000000" } } }
+              },
+              subHeader: {
+                  font: { bold: true, color: { rgb: "333333" } },
+                  fill: { fgColor: { rgb: "FFEB3B" } }, // Amarillo tenue
+                  border: { bottom: { style: "medium", color: { rgb: "E11D2B" } } }
+              },
+              cell: {
+                  border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }
+              },
+              currency: {
+                  numFmt: '"Ref" #,##0.00', // Formato moneda Excel
+                  border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }
+              },
+              bsCurrency: {
+                  numFmt: '"Bs" #,##0', 
+                  border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } }
+              }
+          };
+
+          // 3. Construir filas de datos
+          let rows = [];
+
+          // -- Título Principal --
+          rows.push([`REPORTE GERENCIAL HIGEA (${reportDateRange.start} al ${reportDateRange.end})`]);
+          rows.push([]); // Espacio
+
+          // -- SECCIÓN 1: HISTÓRICO DIARIO --
+          rows.push(["HISTÓRICO DE VENTAS DIARIAS"]); // Subtítulo
+          rows.push(["Fecha", "Transacciones", "Total Ref", "Total Bs", "Ticket Promedio"]); // Encabezados
+
+          let totalPeriodoRef = 0;
+
+          analyticsData.salesOverTime.forEach(day => {
+              const ticketAvg = day.tx_count > 0 ? (day.total_usd / day.tx_count) : 0;
+              totalPeriodoRef += parseFloat(day.total_usd);
+              
+              rows.push([
+                  { v: new Date(day.sale_date).toLocaleDateString(), s: styles.cell },
+                  { v: parseInt(day.tx_count), s: styles.cell },
+                  { v: parseFloat(day.total_usd), s: styles.currency },
+                  { v: parseFloat(day.total_ves), s: styles.bsCurrency },
+                  { v: ticketAvg, s: styles.currency }
+              ]);
+          });
+          rows.push([]); 
+
+          // -- SECCIÓN 2: PRODUCTOS TOP --
+          rows.push(["TOP PRODUCTOS ESTRELLA"]);
+          rows.push(["Producto", "", "Unidades", "Ingresos (Ref)"]); // La columna B vacía para fusión
+
+          analyticsData.topProducts.forEach(prod => {
+              rows.push([
+                  { v: prod.name, s: styles.cell },
+                  { v: "", s: styles.cell }, // Placeholder para merge
+                  { v: parseInt(prod.total_qty), s: styles.cell },
+                  { v: parseFloat(prod.total_revenue), s: styles.currency }
+              ]);
+          });
+          rows.push([]);
+
+          // -- SECCIÓN 3: VENTAS POR CATEGORÍA --
+          rows.push(["RENDIMIENTO POR CATEGORÍA"]);
+          rows.push(["Categoría", "Total Facturado (Ref)"]);
+
+          analyticsData.salesByCategory.forEach(cat => {
+              rows.push([
+                  { v: cat.category, s: styles.cell },
+                  { v: parseFloat(cat.total_usd), s: styles.currency }
+              ]);
+          });
+          rows.push([]);
+
+          // -- TOTAL FINAL --
+          rows.push(["TOTAL INGRESOS PERIODO:", { v: totalPeriodoRef, s: styles.currency }]);
+
+          // 4. Crear Hoja y Asignar Datos
+          const ws = XLSX.utils.aoa_to_sheet(rows);
+
+          // 5. Aplicar Estilos a Celdas Específicas (Títulos y Headers)
+          // Título Principal (A1)
+          ws["A1"].s = styles.title;
           
-          // SECCIÓN 1: RESUMEN DIARIO
-          csvContent += "HISTORICO DE VENTAS DIARIAS\n";
-          csvContent += "FECHA,CANT. TRANSACCIONES,TOTAL USD (REF),TOTAL BS\n";
-          analyticsData.salesOverTime.forEach(row => {
-              const date = new Date(row.sale_date).toLocaleDateString();
-              // Asegurar formato decimal con punto para evitar errores en Excel latino
-              csvContent += `${date},${row.tx_count},${row.total_usd},${row.total_ves}\n`;
+          // Subtítulos de Sección (Busca por índice de fila aproximado o lógica de inserción)
+          // Nota: Al usar aoa_to_sheet, el objeto ws guarda las celdas por ref (A1, B2, etc)
+          // Aquí iteramos para aplicar estilos a los headers que sabemos dónde están
+          
+          // Helper para encontrar fila de un texto
+          const findRow = (text) => rows.findIndex(r => r[0] === text || (r[0].v && r[0].v === text));
+          
+          // Estilizar Subtítulos
+          ["HISTÓRICO DE VENTAS DIARIAS", "TOP PRODUCTOS ESTRELLA", "RENDIMIENTO POR CATEGORÍA"].forEach(title => {
+              const rowIdx = findRow(title);
+              if (rowIdx > -1) {
+                  const cellRef = XLSX.utils.encode_cell({r: rowIdx, c: 0});
+                  ws[cellRef].s = styles.subHeader;
+              }
           });
 
-          csvContent += "\n\n"; // Espacio
-
-          // SECCIÓN 2: PRODUCTOS TOP
-          csvContent += "TOP PRODUCTOS VENDIDOS\n";
-          csvContent += "PRODUCTO,UNIDADES VENDIDAS,INGRESOS GENERADOS (REF)\n";
-          analyticsData.topProducts.forEach(row => {
-              csvContent += `${row.name.replace(/,/g, '')},${row.total_qty},${row.total_revenue}\n`;
+          // Estilizar Headers de Tablas (La fila siguiente al subtítulo)
+          ["HISTÓRICO DE VENTAS DIARIAS", "TOP PRODUCTOS ESTRELLA", "RENDIMIENTO POR CATEGORÍA"].forEach(title => {
+              const titleRow = findRow(title);
+              if (titleRow > -1) {
+                  const headerRow = titleRow + 1;
+                  // Asumimos ancho de 5 columnas máx
+                  for (let c = 0; c < 5; c++) {
+                      const cellRef = XLSX.utils.encode_cell({r: headerRow, c: c});
+                      if (ws[cellRef]) ws[cellRef].s = styles.header;
+                  }
+              }
           });
 
-          // SECCIÓN 3: VENTAS POR CATEGORÍA
-          csvContent += "\n\nVENTAS POR CATEGORIA\n";
-          csvContent += "CATEGORIA,TOTAL (REF)\n";
-          analyticsData.salesByCategory.forEach(row => {
-               csvContent += `${row.category},${row.total_usd}\n`;
-          });
+          // 6. Fusiones de Celdas (Merges)
+          // !merges espera un array de objetos {s: {r, c}, e: {r, c}} (Start/End)
+          ws['!merges'] = [
+              { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // Título Principal (A1:E1)
+              { s: { r: findRow("HISTÓRICO DE VENTAS DIARIAS"), c: 0 }, e: { r: findRow("HISTÓRICO DE VENTAS DIARIAS"), c: 4 } },
+              { s: { r: findRow("TOP PRODUCTOS ESTRELLA"), c: 0 }, e: { r: findRow("TOP PRODUCTOS ESTRELLA"), c: 3 } },
+              // Fusión para nombre de producto (ocupa A y B) en la sección productos
+              // (Lógica un poco más compleja para iterar, lo dejamos simple por ahora)
+          ];
 
-          // 3. Crear el Blob y descargar (Método compatible con todos los navegadores modernos)
-          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          
-          const link = document.createElement("a");
-          link.href = url;
-          link.setAttribute("download", `Reporte_Higea_${reportDateRange.start}.csv`);
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          
+          // 7. Ancho de Columnas
+          ws['!cols'] = [
+              { wch: 25 }, // A (Fecha / Nombre)
+              { wch: 15 }, // B (Cant / Transacciones)
+              { wch: 20 }, // C (Monto Ref)
+              { wch: 20 }, // D (Monto Bs)
+              { wch: 20 }  // E (Promedio)
+          ];
+
+          // 8. Escribir y Descargar
+          XLSX.utils.book_append_sheet(wb, ws, "Reporte Gerencial");
+          XLSX.writeFile(wb, `Reporte_Higea_Comercial_${reportDateRange.start}.xlsx`);
+
       } catch (error) {
           console.error(error);
-          Swal.fire('Error', 'Hubo un problema generando el archivo.', 'error');
+          Swal.fire('Error', 'No se pudo generar el Excel.', 'error');
       }
   };
 
