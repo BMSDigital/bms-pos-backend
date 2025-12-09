@@ -362,8 +362,9 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
 app.get('/api/sales/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        // AGREGADOS: payment_method, status al SELECT para evitar undefined en el frontend
         const saleInfoResult = await pool.query(`
-            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd
+            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, payment_method, status
             FROM sales WHERE id = $1
         `, [id]);
 

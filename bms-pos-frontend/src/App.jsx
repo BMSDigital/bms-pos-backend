@@ -74,37 +74,6 @@ const debounce = (func, delay) => {
     };
 };
 
-// Función para exportar datos a CSV (Excel)
-  const exportReportToCSV = () => {
-      if (!analyticsData || !analyticsData.salesOverTime) return;
-
-      // 1. Encabezados
-      let csvContent = "data:text/csv;charset=utf-8,";
-      csvContent += "Reporte de Ventas - Generado el " + new Date().toLocaleDateString() + "\n\n";
-      
-      // 2. Resumen Diario
-      csvContent += "FECHA,TRANSACCIONES,TOTAL REF,TOTAL BS\n";
-      analyticsData.salesOverTime.forEach(row => {
-          const date = new Date(row.sale_date).toLocaleDateString();
-          csvContent += `${date},${row.tx_count},${row.total_usd},${row.total_ves}\n`;
-      });
-
-      csvContent += "\nPRODUCTOS MAS VENDIDOS\n";
-      csvContent += "PRODUCTO,CANTIDAD,TOTAL INGRESOS (REF)\n";
-      analyticsData.topProducts.forEach(row => {
-          csvContent += `${row.name},${row.total_qty},${row.total_revenue}\n`;
-      });
-
-      // 3. Descargar
-      const encodedUri = encodeURI(csvContent);
-      const link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", `reporte_ventas_${reportDateRange.start}_${reportDateRange.end}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-  };
-
 // 💡 MEJORA ARQUITECTURA: Uso de variables de entorno de Vite
 // Necesitas un archivo .env en la raíz del frontend con VITE_API_URL
 const API_URL = import.meta.env.VITE_API_URL || 'https://bms-postventa-api.onrender.com/api';
@@ -866,29 +835,43 @@ function App() {
 
   const showSaleDetail = async (sale) => {
       try {
-          // 💡 MEJORA: La ruta ahora devuelve saleInfo y los items
+          Swal.fire({ title: 'Cargando detalle...', didOpen: () => Swal.showLoading() });
+          
           const res = await axios.get(`${API_URL}/sales/${sale.id}`);
           
+          // Validación de seguridad para datos nulos
+          const safeParse = (val) => {
+              const num = parseFloat(val);
+              return isNaN(num) ? 0 : num;
+          };
+
           setSelectedSaleDetail({ 
               id: sale.id, 
-              items: res.data.items, 
-              payment_method: sale.payment_method, 
-              // Usamos los campos específicos del desglose que ahora devuelve el backend
-              total_usd: parseFloat(res.data.total_usd),
-              total_ves: parseFloat(res.data.total_ves),
-              status: sale.status,
-              full_name: sale.full_name,
-              id_number: sale.id_number,
-              due_date: sale.due_date,
-              bcv_rate_snapshot: parseFloat(res.data.bcv_rate_snapshot), 
+              items: res.data.items || [], 
+              // Si viene de la lista, usa ese dato, si no intenta buscarlo en la respuesta o pone texto genérico
+              payment_method: sale.payment_method || res.data.payment_method || 'Desconocido', 
+              total_usd: safeParse(res.data.total_usd),
+              total_ves: safeParse(res.data.total_ves),
+              status: sale.status || res.data.status || 'PAGADO',
+              full_name: sale.full_name || res.data.full_name || 'Cliente Casual',
+              id_number: sale.id_number || res.data.id_number || '',
+              due_date: sale.due_date || res.data.due_date || null,
+              bcv_rate_snapshot: safeParse(res.data.bcv_rate_snapshot), 
+              
+              // PROTECCIÓN CONTRA CRASH: Usamos '|| 0' para evitar error en ventas viejas
               taxBreakdown: {
-                 subtotalTaxableUSD: parseFloat(res.data.subtotal_taxable_usd),
-                 subtotalExemptUSD: parseFloat(res.data.subtotal_exempt_usd),
-                 ivaUSD: parseFloat(res.data.iva_usd),
-                 ivaRate: parseFloat(res.data.iva_rate),
+                 subtotalTaxableUSD: safeParse(res.data.subtotal_taxable_usd || 0),
+                 subtotalExemptUSD: safeParse(res.data.subtotal_exempt_usd || 0),
+                 ivaUSD: safeParse(res.data.iva_usd || 0),
+                 ivaRate: safeParse(res.data.iva_rate || 0.16),
               }
           });
-      } catch (error) { console.error(error); }
+          
+          Swal.close(); // Cerrar el loading
+      } catch (error) { 
+          console.error(error); 
+          Swal.fire('Error', 'No se pudieron cargar los detalles de la venta.', 'error');
+      }
   };
   
   // Componente Reutilizable para la entrada de Pago (UX Táctil)
@@ -1215,6 +1198,63 @@ function App() {
           Swal.close();
       } catch (error) {
           Swal.close();
+      }
+  };
+  
+  // --- FUNCIÓN PARA EXPORTAR A EXCEL (CSV) ---
+  const exportReportToCSV = () => {
+      // 1. Validar que existan datos
+      if (!analyticsData || !analyticsData.salesOverTime || analyticsData.salesOverTime.length === 0) {
+          return Swal.fire('Sin datos', 'No hay información para exportar en este rango de fechas.', 'warning');
+      }
+
+      try {
+          // 2. Construir el contenido CSV
+          // \uFEFF es el BOM para que Excel reconozca acentos y emojis correctamente
+          let csvContent = "\uFEFF"; 
+          csvContent += `REPORTE GERENCIAL HIGEA\n`;
+          csvContent += `Generado el: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n`;
+          csvContent += `Rango: ${reportDateRange.start} al ${reportDateRange.end}\n\n`;
+          
+          // SECCIÓN 1: RESUMEN DIARIO
+          csvContent += "HISTORICO DE VENTAS DIARIAS\n";
+          csvContent += "FECHA,CANT. TRANSACCIONES,TOTAL USD (REF),TOTAL BS\n";
+          analyticsData.salesOverTime.forEach(row => {
+              const date = new Date(row.sale_date).toLocaleDateString();
+              // Asegurar formato decimal con punto para evitar errores en Excel latino
+              csvContent += `${date},${row.tx_count},${row.total_usd},${row.total_ves}\n`;
+          });
+
+          csvContent += "\n\n"; // Espacio
+
+          // SECCIÓN 2: PRODUCTOS TOP
+          csvContent += "TOP PRODUCTOS VENDIDOS\n";
+          csvContent += "PRODUCTO,UNIDADES VENDIDAS,INGRESOS GENERADOS (REF)\n";
+          analyticsData.topProducts.forEach(row => {
+              csvContent += `${row.name.replace(/,/g, '')},${row.total_qty},${row.total_revenue}\n`;
+          });
+
+          // SECCIÓN 3: VENTAS POR CATEGORÍA
+          csvContent += "\n\nVENTAS POR CATEGORIA\n";
+          csvContent += "CATEGORIA,TOTAL (REF)\n";
+          analyticsData.salesByCategory.forEach(row => {
+               csvContent += `${row.category},${row.total_usd}\n`;
+          });
+
+          // 3. Crear el Blob y descargar (Método compatible con todos los navegadores modernos)
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          
+          const link = document.createElement("a");
+          link.href = url;
+          link.setAttribute("download", `Reporte_Higea_${reportDateRange.start}.csv`);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+      } catch (error) {
+          console.error(error);
+          Swal.fire('Error', 'Hubo un problema generando el archivo.', 'error');
       }
   };
 
