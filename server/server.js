@@ -157,7 +157,8 @@ app.post('/api/sales', async (req, res) => {
         // Si es contado, el pagado es igual al total. Si es crédito, 0 (por ahora).
         let amountPaidUsd = finalTotalUsd; 
         
-        if (is_credit && customer_data) {
+        // Permitir guardar cliente si es crédito O si es factura fiscal
+			if ((is_credit || invoice_type === 'FISCAL') && customer_data) {
             customerId = await findOrCreateCustomer(client, customer_data); 
             saleStatus = 'PENDIENTE';
             amountPaidUsd = 0; // Crédito inicial = 0 pagado

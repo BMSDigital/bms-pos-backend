@@ -799,7 +799,29 @@ function App() {
       
       const isCreditSale = isCreditFlow && (parseFloat(paymentShares['Crédito']) || 0) > 0;
 
-      // 1. Validar datos mínimos del cliente para Crédito (si aplica)
+      // --- [NUEVO] 1. VALIDACIÓN PARA FACTURA FISCAL (UX) ---
+      // Si el switch está encendido, OBLIGAMOS a tener Nombre y RIF
+      if (isFiscalInvoice) {
+          if (!customerData.full_name || !customerData.id_number) {
+              return Swal.fire({
+                  icon: 'warning',
+                  title: 'Datos Fiscales Requeridos',
+                  text: 'Para emitir una Factura Fiscal, es obligatorio asignar un Cliente (Nombre y RIF).',
+                  confirmButtonText: 'Ingresar Datos del Cliente',
+                  confirmButtonColor: '#0056B3',
+                  showCancelButton: true,
+                  cancelButtonText: 'Cancelar'
+              }).then((result) => {
+                  if (result.isConfirmed) {
+                      // Cerramos el modal de pago y abrimos el de cliente para que llenen los datos
+                      setIsPaymentModalOpen(false);
+                      setIsCustomerModalOpen(true);
+                  }
+              });
+          }
+      }
+
+      // 2. Validar datos mínimos del cliente para Crédito (si aplica)
       if (isCreditSale && (!customerData.full_name || !customerData.id_number)) {
           return Swal.fire('Datos Incompletos', 'Nombre y Número de Identificador son obligatorios para ventas a crédito.', 'warning');
       }
@@ -825,17 +847,20 @@ function App() {
                   is_taxable: i.is_taxable // <-- CRUCIAL: Enviar el estatus fiscal
               })),
               is_credit: isCreditSale, 
-              customer_data: isCreditSale ? customerData : null, 
+              // --- [CORRECCIÓN CLAVE AQUÍ] ---
+              // Enviamos los datos del cliente si es Crédito O si es Factura Fiscal (Esto soluciona tu error)
+              customer_data: (isCreditSale || isFiscalInvoice) ? customerData : null, 
               due_days: isCreditSale ? dueDays : null, 
-			  
-			  // --- ASEGÚRATE DE QUE ESTO ESTÉ AQUÍ ---
-		      invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET'
+              
+              // --- ASEGÚRATE DE QUE ESTO ESTÉ AQUÍ ---
+              invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET'
           };
           
           Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
           
           const res = await axios.post(`${API_URL}/sales`, saleData);
-          const { finalTotalUsd } = res.data; // Usamos el total final calculado por el backend (con IVA)
+          // Recuperamos saleId también para poder imprimir el número correcto
+          const { finalTotalUsd, saleId } = res.data; 
 
           Swal.fire({ 
               icon: 'success', 
@@ -844,11 +869,21 @@ function App() {
               confirmButtonColor: '#0056B3' 
           });
 
+          // --- [NUEVO] IMPRIMIR FACTURA FISCAL AUTOMÁTICAMENTE ---
+          if (isFiscalInvoice) {
+             // Llamamos a la función de impresión (Paso 3) inmediatamente después del éxito
+             // Usamos un timeout pequeño para que no choque con el Swal
+             setTimeout(() => {
+                 printFiscalReceipt(saleId || '000', customerData, cart);
+             }, 500);
+          }
+
           // Resetear estados
           setCart([]);
           setIsCustomerModalOpen(false);
           setIsPaymentModalOpen(false); 
           setCustomerData({ full_name: '', id_number: '', phone: '', institution: '' });
+          setIsFiscalInvoice(false); // Resetear el switch para la próxima venta
           fetchData(); 
       } catch (error) {
           const message = error.response?.data?.message || error.message;
@@ -1333,8 +1368,9 @@ function App() {
           <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
                   <div className="bg-higea-blue p-5 text-white text-center">
-                      <h3 className="text-xl font-bold">Registro de Crédito</h3>
-                      <p className="text-sm mt-1">Total a Financiar: Ref {finalTotalUSD.toFixed(2)}</p>
+                      {/* REEMPLAZA ESTA LÍNEA: */}
+					  <h3 className="text-xl font-bold">{isFiscalInvoice ? 'Datos para Factura' : 'Registro de Crédito'}</h3>
+					  <p className="text-sm mt-1">Total a Financiar: Ref {finalTotalUSD.toFixed(2)}</p>
                   </div>
                   
                   <div className="p-5 space-y-4">
