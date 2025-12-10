@@ -168,13 +168,15 @@ app.post('/api/sales', async (req, res) => {
         const saleQuery = `
             INSERT INTO sales (
                 total_usd, total_ves, bcv_rate_snapshot, payment_method, status, customer_id, due_date,
-                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, amount_paid_usd
+                subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, amount_paid_usd,
+                invoice_type
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, ${dueDate || 'NULL'}, $7, $8, $9, $10, $11) RETURNING id
+            VALUES ($1, $2, $3, $4, $5, $6, ${dueDate || 'NULL'}, $7, $8, $9, $10, $11, $12) RETURNING id
         `;
         const saleValues = [
             finalTotalUsd.toFixed(2), totalVes.toFixed(2), globalBCVRate, payment_method, saleStatus, customerId,
-            subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2)
+            subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2),
+			invoice_type || 'TICKET'
         ];
         
         const saleResult = await client.query(saleQuery, saleValues);

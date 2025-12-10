@@ -112,6 +112,7 @@ function App() {
   const [fallbackRate, setFallbackRate] = useState(0); // 💡 NUEVO: Tasa de Fallback para el warning
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState([]);
+  const [isFiscalInvoice, setIsFiscalInvoice] = useState(false);
   
   // Modales
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
@@ -653,6 +654,144 @@ function App() {
           setIsSearchingCustomer(false);
       }
   };
+  
+  // --- PASO 3: FUNCIÓN DE IMPRESIÓN FISCAL (Estilo SENIAT) ---
+  const printFiscalReceipt = (saleId, customer, items, isCreditPayment = false, paymentAmount = 0) => {
+    // 1. Calcular totales en Bolívares (La factura fiscal en Vzla es en Bs)
+    const rate = bcvRate; 
+    
+    // Si es un abono de crédito, items puede venir vacío, usamos el monto pagado
+    let totalBs = 0;
+    let itemsHTML = '';
+
+    if (isCreditPayment) {
+        totalBs = paymentAmount * rate;
+        itemsHTML = `
+            <tr>
+                <td>1</td>
+                <td>ABONO A CUENTA (CRÉDITO)</td>
+                <td class="right">${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+            </tr>
+        `;
+    } else {
+        // Venta normal con items
+        itemsHTML = items.map(item => {
+            const priceBs = item.price_usd * rate;
+            const subtotalItemBs = priceBs * item.quantity;
+            totalBs += subtotalItemBs;
+            const exemptMark = item.is_taxable ? '' : ' (E)';
+            
+            return `
+            <tr>
+                <td>${item.quantity}</td>
+                <td>${item.name.substring(0, 20)}${exemptMark}</td>
+                <td class="right">${subtotalItemBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+            </tr>
+            `;
+        }).join('');
+    }
+
+    // Cálculos Fiscales (Asumiendo todo base imponible para simplificar o desglosando si tienes data)
+    // En Venezuela: Base Imponible = Total / 1.16
+    const baseImponibleBs = totalBs / 1.16;
+    const ivaBs = totalBs - baseImponibleBs;
+
+    const receiptHTML = `
+    <html>
+    <head>
+        <style>
+            body { font-family: 'Courier New', monospace; font-size: 12px; width: 76mm; margin: 0; padding: 5px; text-transform: uppercase; }
+            .header { text-align: center; margin-bottom: 10px; }
+            .bold { font-weight: bold; }
+            .row { display: flex; justify-content: space-between; }
+            .line { border-bottom: 1px dashed #000; margin: 5px 0; }
+            .right { text-align: right; }
+            .center { text-align: center; }
+            .text-xs { font-size: 10px; }
+            table { width: 100%; border-collapse: collapse; }
+            td { vertical-align: top; padding: 2px 0; }
+            .qty { width: 10%; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="bold">SENIAT</div>
+            <div class="bold">TU EMPRESA, C.A.</div>
+            <div>RIF: J-12345678-9</div>
+            <div>AV. PRINCIPAL, BARQUISIMETO, LARA</div>
+            <div>ZONA POSTAL 3001</div>
+        </div>
+
+        <div class="line"></div>
+
+        <div>
+            <div class="row"><span>RAZON SOCIAL:</span> <span class="right">${customer.full_name || 'CONTADO'}</span></div>
+            <div class="row"><span>RIF/C.I.:</span> <span class="right">${customer.id_number || 'V-00000000'}</span></div>
+            <div class="row"><span>DOMICILIO:</span> <span class="right">${customer.institution || 'BARQUISIMETO'}</span></div>
+        </div>
+
+        <div class="line"></div>
+        <div class="center bold">FACTURA</div>
+        <div class="row">
+            <span>FACTURA:</span>
+            <span>0000${saleId}</span>
+        </div>
+        <div class="row">
+            <span>FECHA: ${new Date().toLocaleDateString('es-VE')}</span>
+            <span>HORA: ${new Date().toLocaleTimeString('es-VE')}</span>
+        </div>
+        <div class="line"></div>
+
+        <table>
+            <tr>
+                <td class="bold">CANT</td>
+                <td class="bold">DESCRIPCION</td>
+                <td class="bold right">MONTO</td>
+            </tr>
+            ${itemsHTML}
+        </table>
+
+        <div class="line"></div>
+
+        <div class="right">
+            <div class="row">
+                <span>SUBTOTAL:</span>
+                <span>${baseImponibleBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            </div>
+            <div class="row">
+                <span>BI G (16,00%):</span>
+                <span>${baseImponibleBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            </div>
+            <div class="row">
+                <span>IVA G (16,00%):</span>
+                <span>${ivaBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            </div>
+            <div class="line"></div>
+            <div class="row bold" style="font-size: 16px; margin-top: 5px;">
+                <span>TOTAL:</span>
+                <span>${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            </div>
+        </div>
+        
+        <br/>
+        <div class="center text-xs">
+            MH-12345678 (Z7C0028562)<br/>
+            NO FISCAL / FORMATO DE PRUEBA
+        </div>
+    </body>
+    </html>
+    `;
+
+    // Abrir ventana oculta para imprimir
+    const printWindow = window.open('', '_blank', 'width=400,height=600');
+    printWindow.document.write(receiptHTML);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+    }, 500);
+  };
 
 
   // FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO
@@ -780,6 +919,7 @@ function App() {
                   <p class="text-sm text-gray-500">Abonado: <b>Ref ${currentPaid.toFixed(2)}</b></p>
                   <p class="text-lg text-higea-red font-bold">Restante: Ref ${remaining.toFixed(2)}</p>
               </div>
+
               <label class="block text-left text-xs font-bold text-gray-600">Monto a Abonar (Ref)</label>
               <input id="swal-amount" type="number" step="0.01" class="swal2-input" value="${remaining.toFixed(2)}" placeholder="Monto en USD">
               
@@ -791,6 +931,16 @@ function App() {
                   <option value="PUNTO_VENTA">Punto de Venta (Bs)</option>
               </select>
               <input id="swal-ref" class="swal2-input" placeholder="Referencia (Opcional)">
+
+              <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
+                  <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+                      📄 Generar Factura Fiscal
+                  </span>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" id="swal-is-fiscal" class="sr-only peer">
+                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-higea-blue"></div>
+                  </label>
+              </div>
           `,
           showCancelButton: true,
           confirmButtonText: 'Procesar Pago',
@@ -799,10 +949,25 @@ function App() {
               const amount = document.getElementById('swal-amount').value;
               const method = document.getElementById('swal-method').value;
               const ref = document.getElementById('swal-ref').value;
+              // Capturamos el estado del switch fiscal
+              const isFiscal = document.getElementById('swal-is-fiscal').checked;
               
+              // Validaciones originales
               if (!amount || parseFloat(amount) <= 0) return Swal.showValidationMessage('Ingrese un monto válido');
               if (parseFloat(amount) > remaining + 0.05) return Swal.showValidationMessage('El monto excede la deuda');
-              return { amount, method, ref };
+
+              // ADAPTACIÓN PUNTO 2.2: VALIDACIÓN UX DE CLIENTE
+              if (isFiscal) {
+                  // Verificamos que el cliente seleccionado tenga RIF (id_number)
+                  // Nota: selectedCreditCustomer debe estar disponible en el contexto
+                  if (!selectedCreditCustomer || !selectedCreditCustomer.id_number) {
+                      return Swal.showValidationMessage('❌ REQUISITO FISCAL: El cliente debe tener RIF/Cédula registrado.');
+                  }
+                  // Aquí puedes agregar validación de dirección si tu sistema ya maneja ese campo
+                  // if (!selectedCreditCustomer.address) return Swal.showValidationMessage('❌ REQUISITO FISCAL: Falta la dirección del cliente.');
+              }
+
+              return { amount, method, ref, isFiscal };
           }
       });
 
@@ -813,10 +978,20 @@ function App() {
               
               await axios.post(`${API_URL}/sales/${saleId}/pay-credit`, {
                   paymentDetails,
-                  amountUSD: formValues.amount
+                  amountUSD: formValues.amount,
+                  // Opcional: Si el backend soporta actualizar el tipo de factura en el abono, lo enviamos
+                  invoice_type: formValues.isFiscal ? 'FISCAL' : 'TICKET'
               });
 
               Swal.fire('Éxito', 'Abono registrado correctamente', 'success');
+              
+              // Si se solicitó factura fiscal, disparamos la impresión aquí (Paso 3)
+              if (formValues.isFiscal) {
+                   // Llamamos a la función de impresión fiscal (asegúrate de tener los datos de venta/items a mano o hacer un fetch rápido)
+                   // printFiscalReceipt(datosDeVenta, selectedCreditCustomer, itemsDeVenta);
+                   console.log("Imprimiendo comprobante fiscal..."); 
+              }
+
               // Recargar datos del cliente específico para ver cambios al instante
               const res = await axios.get(`${API_URL}/credits/customer/${selectedCreditCustomer.customer_id}`);
               setCustomerCreditsDetails(res.data);
@@ -2462,6 +2637,32 @@ function App() {
                   </div>
                   
                   <div className="p-5 space-y-3 max-h-[50vh] overflow-y-auto">
+                      
+                      {/* --- [INICIO] NUEVO SWITCH FISCAL (Punto 2.3) --- */}
+                      <div className="mb-4 bg-blue-50 p-3 rounded-xl border border-blue-100">
+                          <div className="flex items-center justify-between">
+                              <span className="text-sm font-bold text-blue-800 flex items-center gap-2">
+                                  📄 Factura Fiscal
+                              </span>
+                              
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                  <input 
+                                      type="checkbox" 
+                                      className="sr-only peer"
+                                      checked={isFiscalInvoice}
+                                      onChange={(e) => setIsFiscalInvoice(e.target.checked)}
+                                  />
+                                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-higea-blue"></div>
+                              </label>
+                          </div>
+                          {isFiscalInvoice && (
+                              <p className="text-[10px] text-blue-600 mt-1 font-medium">
+                                  * Se validarán datos del cliente (RIF/Dirección) al confirmar.
+                              </p>
+                          )}
+                      </div>
+                      {/* --- [FIN] NUEVO SWITCH FISCAL --- */}
+
                       <p className="text-xs font-bold text-gray-400 mb-2">SELECCIONE MÉTODO DE PAGO:</p>
                       
                       {paymentMethods.map(method => (
