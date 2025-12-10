@@ -158,12 +158,21 @@ app.post('/api/sales', async (req, res) => {
         let amountPaidUsd = finalTotalUsd; 
         
         // Permitir guardar cliente si es crédito O si es factura fiscal
-			if ((is_credit || invoice_type === 'FISCAL') && customer_data) {
-            customerId = await findOrCreateCustomer(client, customer_data); 
-            saleStatus = 'PENDIENTE';
-            amountPaidUsd = 0; // Crédito inicial = 0 pagado
-            const days = due_days === 30 ? 30 : 15;
-            dueDate = `CURRENT_TIMESTAMP + INTERVAL '${days} days'`;
+        if ((is_credit || invoice_type === 'FISCAL') && customer_data) {
+            customerId = await findOrCreateCustomer(client, customer_data);
+            
+            // CORRECCIÓN: Solo marcar PENDIENTE si es explícitamente crédito
+            if (is_credit) {
+                saleStatus = 'PENDIENTE';
+                amountPaidUsd = 0; 
+                const days = due_days === 30 ? 30 : 15;
+                dueDate = `CURRENT_TIMESTAMP + INTERVAL '${days} days'`;
+            } else {
+                // Si es Fiscal pero de Contado -> PAGADO
+                saleStatus = 'PAGADO';
+                amountPaidUsd = finalTotalUsd; // Se asume pagado completo
+                dueDate = null;
+            }
         }
 
         const saleQuery = `
@@ -367,7 +376,7 @@ app.get('/api/sales/:id', async (req, res) => {
         const { id } = req.params;
         // AGREGADOS: payment_method, status al SELECT para evitar undefined en el frontend
         const saleInfoResult = await pool.query(`
-            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, payment_method, status
+            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, payment_method, status,invoice_type
             FROM sales WHERE id = $1
         `, [id]);
 

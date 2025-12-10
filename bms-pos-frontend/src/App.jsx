@@ -655,142 +655,101 @@ function App() {
       }
   };
   
-  // --- PASO 3: FUNCIÓN DE IMPRESIÓN FISCAL (Estilo SENIAT) ---
   const printFiscalReceipt = (saleId, customer, items, isCreditPayment = false, paymentAmount = 0) => {
-    // 1. Calcular totales en Bolívares (La factura fiscal en Vzla es en Bs)
     const rate = bcvRate; 
-    
-    // Si es un abono de crédito, items puede venir vacío, usamos el monto pagado
     let totalBs = 0;
     let itemsHTML = '';
 
     if (isCreditPayment) {
         totalBs = paymentAmount * rate;
         itemsHTML = `
-            <tr>
-                <td>1</td>
-                <td>ABONO A CUENTA (CRÉDITO)</td>
-                <td class="right">${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-            </tr>
+            <tr><td style="padding:4px 0;">1</td><td style="padding:4px 0;">ABONO A CUENTA</td><td class="right" style="padding:4px 0;">${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</td></tr>
         `;
     } else {
-        // Venta normal con items
         itemsHTML = items.map(item => {
-            const priceBs = item.price_usd * rate;
+            const priceUsd = item.price_usd || item.price_at_moment_usd; 
+            const priceBs = priceUsd * rate;
             const subtotalItemBs = priceBs * item.quantity;
             totalBs += subtotalItemBs;
             const exemptMark = item.is_taxable ? '' : ' (E)';
-            
-            return `
-            <tr>
-                <td>${item.quantity}</td>
-                <td>${item.name.substring(0, 20)}${exemptMark}</td>
-                <td class="right">${subtotalItemBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-            </tr>
-            `;
+            return `<tr><td style="padding:4px 0;">${item.quantity}</td><td style="padding:4px 0;">${item.name.substring(0, 22)}${exemptMark}</td><td class="right" style="padding:4px 0;">${subtotalItemBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</td></tr>`;
         }).join('');
     }
 
-    // Cálculos Fiscales (Asumiendo todo base imponible para simplificar o desglosando si tienes data)
-    // En Venezuela: Base Imponible = Total / 1.16
     const baseImponibleBs = totalBs / 1.16;
     const ivaBs = totalBs - baseImponibleBs;
 
     const receiptHTML = `
     <html>
     <head>
+        <title>Factura #${saleId}</title>
         <style>
-            body { font-family: 'Courier New', monospace; font-size: 12px; width: 76mm; margin: 0; padding: 5px; text-transform: uppercase; }
+            body { font-family: 'Courier New', monospace; font-size: 12px; width: 76mm; margin: 0 auto; padding: 10px; text-transform: uppercase; color: #000; }
             .header { text-align: center; margin-bottom: 10px; }
             .bold { font-weight: bold; }
             .row { display: flex; justify-content: space-between; }
-            .line { border-bottom: 1px dashed #000; margin: 5px 0; }
+            .line { border-bottom: 1px dashed #000; margin: 8px 0; }
             .right { text-align: right; }
             .center { text-align: center; }
-            .text-xs { font-size: 10px; }
             table { width: 100%; border-collapse: collapse; }
-            td { vertical-align: top; padding: 2px 0; }
-            .qty { width: 10%; }
+            td { vertical-align: top; }
+            
+            /* ESTILOS PARA EL BOTÓN DE IMPRIMIR (Solo visible en pantalla) */
+            @media print {
+                .no-print { display: none !important; }
+                body { padding: 0; margin: 0; }
+            }
+            .no-print {
+                background: #f0f0f0; padding: 10px; text-align: center; margin-bottom: 15px; border-bottom: 1px solid #ccc;
+            }
+            .btn-print {
+                background: #000; color: #fff; border: none; padding: 8px 20px; font-family: sans-serif; font-weight: bold; cursor: pointer; border-radius: 5px; font-size: 14px;
+            }
+            .btn-print:hover { background: #333; }
         </style>
     </head>
     <body>
+        <div class="no-print">
+            <button onclick="window.print()" class="btn-print">🖨️ IMPRIMIR COMPROBANTE</button>
+            <div style="font-family: sans-serif; font-size: 10px; margin-top: 5px; color: #666;">Vista Previa - Pulse el botón para imprimir</div>
+        </div>
+
         <div class="header">
-            <div class="bold">SENIAT</div>
-            <div class="bold">TU EMPRESA, C.A.</div>
+            <div class="bold" style="font-size:14px">SENIAT</div>
+            <div class="bold" style="font-size:16px">TU EMPRESA, C.A.</div>
             <div>RIF: J-12345678-9</div>
-            <div>AV. PRINCIPAL, BARQUISIMETO, LARA</div>
-            <div>ZONA POSTAL 3001</div>
+            <div>BARQUISIMETO, LARA</div>
         </div>
-
         <div class="line"></div>
-
         <div>
-            <div class="row"><span>RAZON SOCIAL:</span> <span class="right">${customer.full_name || 'CONTADO'}</span></div>
-            <div class="row"><span>RIF/C.I.:</span> <span class="right">${customer.id_number || 'V-00000000'}</span></div>
-            <div class="row"><span>DOMICILIO:</span> <span class="right">${customer.institution || 'BARQUISIMETO'}</span></div>
-        </div>
-
-        <div class="line"></div>
-        <div class="center bold">FACTURA</div>
-        <div class="row">
-            <span>FACTURA:</span>
-            <span>0000${saleId}</span>
-        </div>
-        <div class="row">
-            <span>FECHA: ${new Date().toLocaleDateString('es-VE')}</span>
-            <span>HORA: ${new Date().toLocaleTimeString('es-VE')}</span>
+            <div class="row"><span>RAZON:</span> <span class="right bold">${customer.full_name || 'CONTADO'}</span></div>
+            <div class="row"><span>RIF/CI:</span> <span class="right bold">${customer.id_number || 'V-00000000'}</span></div>
         </div>
         <div class="line"></div>
-
+        <div class="center bold" style="font-size:14px">FACTURA: 0000${saleId}</div>
+        <div class="center">${new Date().toLocaleString('es-VE')}</div>
+        <div class="line"></div>
         <table>
-            <tr>
-                <td class="bold">CANT</td>
-                <td class="bold">DESCRIPCION</td>
-                <td class="bold right">MONTO</td>
-            </tr>
+            <tr><td class="bold">CANT</td><td class="bold">DESCRIPCION</td><td class="bold right">TOTAL</td></tr>
             ${itemsHTML}
         </table>
-
         <div class="line"></div>
-
         <div class="right">
-            <div class="row">
-                <span>SUBTOTAL:</span>
-                <span>${baseImponibleBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-            </div>
-            <div class="row">
-                <span>BI G (16,00%):</span>
-                <span>${baseImponibleBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-            </div>
-            <div class="row">
-                <span>IVA G (16,00%):</span>
-                <span>${ivaBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-            </div>
+            <div class="row"><span>BI (16%):</span> <span>${baseImponibleBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+            <div class="row"><span>IVA (16%):</span> <span>${ivaBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
             <div class="line"></div>
-            <div class="row bold" style="font-size: 16px; margin-top: 5px;">
-                <span>TOTAL:</span>
-                <span>${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-            </div>
+            <div class="row bold" style="font-size:16px; margin-top:5px"><span>TOTAL:</span> <span>${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
         </div>
-        
         <br/>
-        <div class="center text-xs">
-            MH-12345678 (Z7C0028562)<br/>
-            NO FISCAL / FORMATO DE PRUEBA
-        </div>
+        <div class="center" style="font-size:10px">MH-12345678 (Z7C0028562)<br/>NO FISCAL / PRUEBA</div>
     </body>
     </html>
     `;
 
-    // Abrir ventana oculta para imprimir
-    const printWindow = window.open('', '_blank', 'width=400,height=600');
+    // ABRIR VENTANA SIN IMPRIMIR AUTOMÁTICAMENTE
+    const printWindow = window.open('', '_blank', 'width=420,height=600');
     printWindow.document.write(receiptHTML);
     printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-        printWindow.print();
-        printWindow.close();
-    }, 500);
   };
 
 
@@ -1306,36 +1265,29 @@ function App() {
 
   // Componente Modal de Captura de Cliente 
   const CustomerModal = () => {
+      // Detectamos si estamos aquí por crédito o solo por factura fiscal
       const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
       
-      // Implementación de debounce para la búsqueda (Solo por ID)
       const debouncedSearch = useCallback(
           debounce((query) => searchCustomers(query), 300),
           []
       );
 
-      // Usamos la función de validación/capitalización en el input handler
       const handleIdChange = (e) => {
-          // Usa la validación de formato
           const value = validateIdNumber(e.target.value); 
           setCustomerData(prev => ({ 
              ...prev, 
              id_number: value,
-             // Limpia temporalmente nombre e institución si el ID cambia y no hay selección
              full_name: customerSearchResults.find(c => c.id_number === value)?.full_name || prev.full_name,
              institution: customerSearchResults.find(c => c.id_number === value)?.institution || prev.institution,
            }));
           
-          if (value.length > 3) {
-             debouncedSearch(value);
-          } else {
-             setCustomerSearchResults([]);
-          }
+          if (value.length > 3) debouncedSearch(value);
+          else setCustomerSearchResults([]);
       };
       
       const handleNameChange = (e) => {
-          const value = capitalizeWords(e.target.value); 
-          setCustomerData(prev => ({ ...prev, full_name: value }));
+          setCustomerData(prev => ({ ...prev, full_name: capitalizeWords(e.target.value) }));
       };
 
       const handleSelectCustomer = (customer) => {
@@ -1345,102 +1297,98 @@ function App() {
               phone: customer.phone || '',
               institution: customer.institution || '',
           });
-          setCustomerSearchResults([]); // Cerrar resultados
+          setCustomerSearchResults([]);
       };
 
       const handleChange = (e) => {
           const { name, value } = e.target;
           let newValue = value;
-          
-          if (name === 'phone') {
-              newValue = validatePhone(value);
-          } else if (name === 'institution') {
-              newValue = capitalizeWords(value);
-          }
-          
+          if (name === 'phone') newValue = validatePhone(value);
+          if (name === 'institution') newValue = capitalizeWords(value);
           setCustomerData(prev => ({ ...prev, [name]: newValue }));
       };
 
-      // Determinar si el formulario está listo para el envío (nombre y ID obligatorios)
+      // --- LOGICA DEL BOTÓN PRINCIPAL ---
+      const handleConfirm = () => {
+          if (isCreditUsed) {
+              // Si es crédito, procesamos la venta completa como PENDIENTE
+              processSale(true);
+          } else {
+              // Si es solo FISCAL CONTADO, guardamos datos y volvemos al pago
+              setIsCustomerModalOpen(false);
+              setIsPaymentModalOpen(true);
+              Swal.fire({
+                  icon: 'success',
+                  title: 'Datos Fiscales Asignados',
+                  text: 'Ahora puede procesar el pago.',
+                  timer: 1500,
+                  showConfirmButton: false
+              });
+          }
+      };
+
       const isFormReadyToSubmit = customerData.full_name.trim() && customerData.id_number.trim();
       
       return (
           <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
-                  <div className="bg-higea-blue p-5 text-white text-center">
-                      {/* REEMPLAZA ESTA LÍNEA: */}
-					  <h3 className="text-xl font-bold">{isFiscalInvoice ? 'Datos para Factura' : 'Registro de Crédito'}</h3>
-					  <p className="text-sm mt-1">Total a Financiar: Ref {finalTotalUSD.toFixed(2)}</p>
+                  {/* HEADER DIFERENCIADO POR COLOR */}
+                  <div className={`p-5 text-white text-center ${isCreditUsed ? 'bg-higea-red' : 'bg-higea-blue'}`}>
+                      <h3 className="text-xl font-bold">
+                          {isCreditUsed ? 'Registro de Crédito' : 'Datos para Factura Fiscal'}
+                      </h3>
+                      <p className="text-sm mt-1 opacity-90">
+                          {isCreditUsed ? 'Esta venta quedará PENDIENTE de pago' : 'Ingrese los datos del cliente para la factura'}
+                      </p>
                   </div>
                   
                   <div className="p-5 space-y-4">
-                      <div className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-200">
-                          <span className="font-bold text-yellow-800 text-sm">Plazo de Pago</span>
-                          <div className="flex gap-2">
-                            <button onClick={() => setDueDays(15)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 15 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>15 Días</button>
-                            <button onClick={() => setDueDays(30)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 30 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>30 Días</button>
+                      {/* Solo mostrar selector de días si es CRÉDITO */}
+                      {isCreditUsed && (
+                          <div className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-200">
+                              <span className="font-bold text-yellow-800 text-sm">Plazo de Pago</span>
+                              <div className="flex gap-2">
+                                <button onClick={() => setDueDays(15)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 15 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>15 Días</button>
+                                <button onClick={() => setDueDays(30)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 30 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>30 Días</button>
+                              </div>
                           </div>
-                      </div>
+                      )}
 
-                      {/* Campo de Número de Identificador (Clave para Búsqueda) */}
                       <div className="relative">
-                          {/* CAMBIO DE ETIQUETA/PLACEHOLDER */}
                           <input type="text" name="id_number" placeholder="Cédula/Rif (*)" onChange={handleIdChange} value={customerData.id_number} 
                               className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold" 
                               autoFocus={true} 
-                              style={{ paddingRight: isSearchingCustomer ? '40px' : '15px' }}
-                              /> 
+                          /> 
+                          {isSearchingCustomer && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>}
                           
-                          {isSearchingCustomer && (
-                            <div className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>
-                          )}
-
-                          {/* RESULTADOS DE BÚSQUEDA (Si hay) */}
                           {customerSearchResults.length > 0 && (
                               <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-lg z-10 max-h-40 overflow-y-auto">
                                   {customerSearchResults.map(customer => (
-                                      <div 
-                                          key={customer.id} 
-                                          onClick={() => handleSelectCustomer(customer)}
-                                          className="p-3 border-b border-gray-100 hover:bg-blue-50 cursor-pointer"
-                                      >
-                                          <p className="font-bold text-gray-800 leading-tight">{customer.full_name}</p>
-                                          <p className="text-xs text-gray-500">ID: {customer.id_number} - {customer.institution}</p>
+                                      <div key={customer.id} onClick={() => handleSelectCustomer(customer)} className="p-3 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
+                                          <p className="font-bold text-gray-800">{customer.full_name}</p>
+                                          <p className="text-xs text-gray-500">{customer.id_number}</p>
                                       </div>
                                   ))}
                               </div>
                           )}
-                           {/* Aviso si no hay resultados ACTIVO */}
-                           {(customerData.id_number.length >= 3 && customerSearchResults.length === 0 && !isSearchingCustomer) && (
-                                <p className="text-xs text-red-500 mt-1">No se encontró cliente **ACTIVO**. Los datos se usarán para crearlo o actualizarlo.</p>
-                          )}
                       </div>
                       
-                      <input type="text" name="full_name" placeholder="Nombre Completo (*)" onChange={handleNameChange} value={customerData.full_name} 
-                          className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                          onFocus={() => setCustomerSearchResults([])} 
-                          /> 
+                      <input type="text" name="full_name" placeholder="Razón Social / Nombre (*)" onChange={handleNameChange} value={customerData.full_name} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" /> 
                       
                       <div className="grid grid-cols-2 gap-4">
-                          <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onFocus={() => setCustomerSearchResults([])} />
-                          <input type="text" name="institution" placeholder="Institución/Referencia" onChange={handleChange} value={customerData.institution} 
-                              className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" 
-                              onFocus={() => setCustomerSearchResults([])} />
+                          <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                          <input type="text" name="institution" placeholder="Dirección Fiscal" onChange={handleChange} value={customerData.institution} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
                       </div>
-                          
-                      {isCreditUsed && <p className="text-xs text-gray-500 italic">* Esta venta será marcada como PENDIENTE de pago. Se requiere Nombre e Identificador.</p>}
                   </div>
 
                   <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
                       <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm">Volver</button>
                       <button 
-                          onClick={() => processSale(true)} 
+                          onClick={handleConfirm} 
                           disabled={!isFormReadyToSubmit}
-                          className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all ${!isFormReadyToSubmit ? 'bg-gray-300' : 'bg-higea-red hover:bg-red-700'}`}
+                          className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all ${!isFormReadyToSubmit ? 'bg-gray-300' : (isCreditUsed ? 'bg-higea-red hover:bg-red-700' : 'bg-higea-blue hover:bg-blue-700')}`}
                       >
-                          Confirmar Crédito
+                          {isCreditUsed ? 'Confirmar Crédito' : 'Guardar Datos Fiscales'}
                       </button>
                   </div>
               </div>
@@ -2766,46 +2714,60 @@ function App() {
           </div>
       )}
 
-      {/* --- MODAL DETALLE VENTA (MEJORADO PARA CRÉDITO Y FISCAL) --- */}
+      {/* --- MODAL DETALLE VENTA MEJORADO --- */}
       {selectedSaleDetail && (
-          <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative">
-                  <button onClick={() => setSelectedSaleDetail(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500">✕</button>
+          // 💡 Z-INDEX 90: Asegura que se vea por encima de todo
+          <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up">
+                  <button onClick={() => setSelectedSaleDetail(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
                   
-                  <div className="p-5 border-b">
-                     <h3 className="font-bold text-lg text-gray-800">Detalle de Venta #{selectedSaleDetail.id}</h3>
-                     {/* 🇻🇪 REQUISITO LEGAL: Aviso de no-factura fiscal */}
-                     <p className='text-xs text-red-500 font-bold mt-1'>TICKET PRO-FORMA (NO VÁLIDO PARA CRÉDITO FISCAL)</p>
+                  {/* --- CABECERA (DISTINCIÓN VISUAL) --- */}
+                  <div className="p-5 border-b bg-gray-50">
+                     <div className="flex items-center gap-2 mb-1">
+                         <h3 className="font-bold text-lg text-gray-800">Venta #{selectedSaleDetail.id}</h3>
+                         
+                         {/* BADGES: Lógica corregida para mostrar tipo real */}
+                         {selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL' ? (
+                             <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-black rounded border border-red-200">CRÉDITO</span>
+                         ) : selectedSaleDetail.invoice_type === 'FISCAL' ? (
+                             <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-[10px] font-black rounded border border-blue-200">FISCAL</span>
+                         ) : (
+                             <span className="px-2 py-0.5 bg-gray-200 text-gray-600 text-[10px] font-black rounded border border-gray-300">TICKET</span>
+                         )}
+                     </div>
+
+                     {/* MENSAJE LEGAL */}
+                     {selectedSaleDetail.invoice_type === 'FISCAL' ? (
+                        <p className='text-[10px] text-green-600 font-bold'>✓ DOCUMENTO FISCAL VÁLIDO</p>
+                     ) : (
+                        <p className='text-[10px] text-red-500 font-bold'>TICKET PRO-FORMA (NO VÁLIDO PARA CRÉDITO FISCAL)</p>
+                     )}
                   </div>
 
-                  <div className="max-h-[70vh] overflow-y-auto">
+                  <div className="max-h-[60vh] overflow-y-auto">
                       
-                      {/* DETALLES DEL CLIENTE (Si existen) */}
+                      {/* DETALLES DEL CLIENTE */}
                       {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.full_name) && (
-                          <div className="p-5 bg-yellow-50 border-b border-yellow-100">
-                               <p className="text-xs font-bold uppercase text-yellow-800 mb-2">Detalles de Crédito</p>
-                               <div className="text-sm space-y-1 text-yellow-900">
+                          <div className={`p-5 border-b ${selectedSaleDetail.status === 'PENDIENTE' ? 'bg-red-50 border-red-100' : 'bg-blue-50 border-blue-100'}`}>
+                               <p className={`text-xs font-bold uppercase mb-2 ${selectedSaleDetail.status === 'PENDIENTE' ? 'text-red-800' : 'text-blue-800'}`}>
+                                   {selectedSaleDetail.status === 'PENDIENTE' ? 'Detalles de Deuda' : 'Cliente Facturado'}
+                               </p>
+                               <div className="text-sm space-y-1 text-gray-700">
                                     <p><span className="font-bold">Cliente:</span> {selectedSaleDetail.full_name}</p>
                                     <p><span className="font-bold">Cédula/RIF:</span> {selectedSaleDetail.id_number}</p>
-                                    <p><span className="font-bold">Estado:</span> 
-                                       <span className={`ml-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                                         selectedSaleDetail.status === 'PENDIENTE' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
-                                       }`}>
-                                           {selectedSaleDetail.status}
-                                       </span>
-                                    </p>
-                                    {selectedSaleDetail.due_date && <p><span className="font-bold">Vencimiento:</span> {new Date(selectedSaleDetail.due_date).toLocaleDateString()}</p>}
+                                    {selectedSaleDetail.status === 'PENDIENTE' && (
+                                        <p><span className="font-bold">Estado:</span> <span className="bg-red-200 text-red-800 px-2 py-0.5 rounded text-[10px] font-bold">PENDIENTE</span></p>
+                                    )}
                                </div>
                           </div>
                       )}
                       
-                      {/* Lista de Productos (Incluyendo precio en Bolívares) */}
+                      {/* LISTA DE PRODUCTOS */}
                       <div className="p-5 space-y-3 border-b border-gray-100">
                           <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos</p>
                           {selectedSaleDetail.items.map((item, idx) => {
                                 const itemTotalUsd = parseFloat(item.price_at_moment_usd) * item.quantity;
                                 const itemTotalVes = itemTotalUsd * selectedSaleDetail.bcv_rate_snapshot;
-                                
                                 return (
                                     <div key={idx} className="flex justify-between pb-2 border-b border-gray-100 last:border-b-0">
                                         <div>
@@ -2815,7 +2777,6 @@ function App() {
                                         <div className="text-right">
                                             <span className="bg-blue-50 text-higea-blue text-xs font-bold px-2 py-1 rounded">x{item.quantity}</span>
                                             <p className="font-bold text-gray-800 mt-1">Ref {itemTotalUsd.toFixed(2)}</p>
-                                            {/* 💡 MEJORA: Precio en Bolívares */}
                                             <p className="text-xs text-gray-500">Bs {itemTotalVes.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
                                         </div>
                                     </div>
@@ -2823,15 +2784,14 @@ function App() {
                           })}
                       </div>
 
-                      {/* Resumen de Pago (Incluye desglose FISCAL) */}
+                      {/* RESUMEN DE PAGO */}
                       <div className="p-5 bg-gray-50">
                           <div className="text-sm space-y-1 mb-3">
-                              {/* 🇻🇪 REQUISITO LEGAL: Desglose de Base Exenta / Base Imponible / IVA */}
                               {selectedSaleDetail.taxBreakdown.subtotalExemptUSD > 0 && (
                                 <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Exenta</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalExemptUSD.toFixed(2)}</span></div>
                               )}
                               <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalTaxableUSD.toFixed(2)}</span></div>
-                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA ({selectedSaleDetail.taxBreakdown.ivaRate * 100}%)</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</span></div>
+                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA (16%)</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</span></div>
                           </div>
                           
                           <div className="flex justify-between pt-3 border-t border-gray-200">
@@ -2843,9 +2803,28 @@ function App() {
                           </div>
                           <p className="text-xs font-bold uppercase text-gray-400 mt-4 mb-2">Método de Pago:</p>
                           <p className="text-sm font-medium text-gray-700 break-words">{selectedSaleDetail.payment_method}</p>
-                           <p className="text-xs text-gray-400 mt-2">Tasa BCV del momento: Bs {selectedSaleDetail.bcv_rate_snapshot.toFixed(2)}</p>
                       </div>
                   </div>
+
+                  {/* --- BOTÓN DE VISUALIZAR / REIMPRIMIR --- */}
+                  <div className="p-4 border-t border-gray-200 bg-white flex justify-center">
+                      <button 
+                        onClick={() => {
+                            const tempCustomer = {
+                                full_name: selectedSaleDetail.full_name,
+                                id_number: selectedSaleDetail.id_number,
+                                institution: 'REIMPRESIÓN', 
+                                phone: ''
+                            };
+                            printFiscalReceipt(selectedSaleDetail.id, tempCustomer, selectedSaleDetail.items);
+                        }}
+                        className="flex items-center gap-2 bg-gray-800 text-white font-bold py-3 px-6 rounded-xl hover:bg-gray-900 shadow-lg active:scale-95 transition-all w-full justify-center"
+                      >
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                          Visualizar / Reimprimir {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Fiscal' : 'Ticket'}
+                      </button>
+                  </div>
+
               </div>
           </div>
       )}
