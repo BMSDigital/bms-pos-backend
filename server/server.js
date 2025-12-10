@@ -125,7 +125,7 @@ app.post('/api/products', async (req, res) => {
 
 // 4. PROCESAR VENTA
 app.post('/api/sales', async (req, res) => {
-    const { items, payment_method, customer_data, is_credit, due_days } = req.body; 
+    const { items, payment_method, customer_data, is_credit, due_days, invoice_type } = req.body;
     const client = await pool.connect();
     
     try {

@@ -827,6 +827,9 @@ function App() {
               is_credit: isCreditSale, 
               customer_data: isCreditSale ? customerData : null, 
               due_days: isCreditSale ? dueDays : null, 
+			  
+			  // --- ASEGÚRATE DE QUE ESTO ESTÉ AQUÍ ---
+		      invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET'
           };
           
           Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
