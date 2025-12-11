@@ -114,6 +114,9 @@ function App() {
   const [cart, setCart] = useState([]);
   const [isFiscalInvoice, setIsFiscalInvoice] = useState(false);
   
+  // Estado para el visor de recibos
+  const [receiptPreview, setReceiptPreview] = useState(null); // Guardará el HTML del recibo
+  
   // Modales
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -655,7 +658,8 @@ function App() {
       }
   };
   
-  const printFiscalReceipt = (saleId, customer, items, isCreditPayment = false, paymentAmount = 0) => {
+  // --- GENERADOR DE HTML DE RECIBO (NO IMPRIME DIRECTAMENTE) ---
+  const generateReceiptHTML = (saleId, customer, items, isCreditPayment = false, paymentAmount = 0) => {
     const rate = bcvRate; 
     let totalBs = 0;
     let itemsHTML = '';
@@ -679,12 +683,12 @@ function App() {
     const baseImponibleBs = totalBs / 1.16;
     const ivaBs = totalBs - baseImponibleBs;
 
-    const receiptHTML = `
+    // Retornamos el HTML como string
+    return `
     <html>
     <head>
-        <title>Factura #${saleId}</title>
         <style>
-            body { font-family: 'Courier New', monospace; font-size: 12px; width: 76mm; margin: 0 auto; padding: 10px; text-transform: uppercase; color: #000; }
+            body { font-family: 'Courier New', monospace; font-size: 12px; width: 100%; margin: 0; padding: 10px; text-transform: uppercase; color: #000; background: #fff; }
             .header { text-align: center; margin-bottom: 10px; }
             .bold { font-weight: bold; }
             .row { display: flex; justify-content: space-between; }
@@ -693,27 +697,9 @@ function App() {
             .center { text-align: center; }
             table { width: 100%; border-collapse: collapse; }
             td { vertical-align: top; }
-            
-            /* ESTILOS PARA EL BOTÓN DE IMPRIMIR (Solo visible en pantalla) */
-            @media print {
-                .no-print { display: none !important; }
-                body { padding: 0; margin: 0; }
-            }
-            .no-print {
-                background: #f0f0f0; padding: 10px; text-align: center; margin-bottom: 15px; border-bottom: 1px solid #ccc;
-            }
-            .btn-print {
-                background: #000; color: #fff; border: none; padding: 8px 20px; font-family: sans-serif; font-weight: bold; cursor: pointer; border-radius: 5px; font-size: 14px;
-            }
-            .btn-print:hover { background: #333; }
         </style>
     </head>
     <body>
-        <div class="no-print">
-            <button onclick="window.print()" class="btn-print">🖨️ IMPRIMIR COMPROBANTE</button>
-            <div style="font-family: sans-serif; font-size: 10px; margin-top: 5px; color: #666;">Vista Previa - Pulse el botón para imprimir</div>
-        </div>
-
         <div class="header">
             <div class="bold" style="font-size:14px">SENIAT</div>
             <div class="bold" style="font-size:16px">TU EMPRESA, C.A.</div>
@@ -745,11 +731,6 @@ function App() {
     </body>
     </html>
     `;
-
-    // ABRIR VENTANA SIN IMPRIMIR AUTOMÁTICAMENTE
-    const printWindow = window.open('', '_blank', 'width=420,height=600');
-    printWindow.document.write(receiptHTML);
-    printWindow.document.close();
   };
 
 
@@ -828,13 +809,10 @@ function App() {
               confirmButtonColor: '#0056B3' 
           });
 
-          // --- [NUEVO] IMPRIMIR FACTURA FISCAL AUTOMÁTICAMENTE ---
+          // --- NUEVO: MOSTRAR VISUALIZACIÓN PREVIA EN EL CENTRO ---
           if (isFiscalInvoice) {
-             // Llamamos a la función de impresión (Paso 3) inmediatamente después del éxito
-             // Usamos un timeout pequeño para que no choque con el Swal
-             setTimeout(() => {
-                 printFiscalReceipt(saleId || '000', customerData, cart);
-             }, 500);
+             const html = generateReceiptHTML(saleId || '000', customerData, cart);
+             setReceiptPreview(html); // Esto abrirá el nuevo modal
           }
 
           // Resetear estados
@@ -2714,100 +2692,105 @@ function App() {
           </div>
       )}
 
-      {/* --- MODAL DETALLE VENTA MEJORADO --- */}
+      {/* --- MODAL DETALLE VENTA (CORREGIDO Y PROFESIONAL) --- */}
       {selectedSaleDetail && (
-          // 💡 Z-INDEX 90: Asegura que se vea por encima de todo
           <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-              <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up">
-                  <button onClick={() => setSelectedSaleDetail(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
+              <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up border-4 border-white">
                   
-                  {/* --- CABECERA (DISTINCIÓN VISUAL) --- */}
-                  <div className="p-5 border-b bg-gray-50">
-                     <div className="flex items-center gap-2 mb-1">
-                         <h3 className="font-bold text-lg text-gray-800">Venta #{selectedSaleDetail.id}</h3>
-                         
-                         {/* BADGES: Lógica corregida para mostrar tipo real */}
-                         {selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL' ? (
-                             <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-black rounded border border-red-200">CRÉDITO</span>
-                         ) : selectedSaleDetail.invoice_type === 'FISCAL' ? (
-                             <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-[10px] font-black rounded border border-blue-200">FISCAL</span>
-                         ) : (
-                             <span className="px-2 py-0.5 bg-gray-200 text-gray-600 text-[10px] font-black rounded border border-gray-300">TICKET</span>
-                         )}
+                  {/* BOTÓN CERRAR */}
+                  <button 
+                      onClick={() => setSelectedSaleDetail(null)} 
+                      className="absolute top-3 right-3 text-gray-500 hover:text-red-600 bg-white rounded-full p-2 shadow-sm z-20 font-bold"
+                  >
+                      ✕
+                  </button>
+                  
+                  {/* --- CABECERA DINÁMICA (Aquí está la magia visual) --- */}
+                  <div className={`p-6 text-center border-b ${
+                      selectedSaleDetail.invoice_type === 'FISCAL' ? 'bg-blue-600 text-white' : 
+                      (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'bg-red-600 text-white' : 
+                      'bg-gray-100 text-gray-800'
+                  }`}>
+                     <h3 className="font-black text-2xl uppercase tracking-wide">
+                         {selectedSaleDetail.invoice_type === 'FISCAL' ? 'DOCUMENTO FISCAL' : 
+                          (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'CRÉDITO / DEUDA' : 
+                          'TICKET DE VENTA'}
+                     </h3>
+                     <p className="text-sm font-medium opacity-90 mt-1">
+                         Venta #{selectedSaleDetail.id} • {new Date(selectedSaleDetail.created_at || new Date()).toLocaleDateString()}
+                     </p>
+                     
+                     {/* ETIQUETA DE ESTATUS GRANDE */}
+                     <div className="mt-3">
+                         <span className={`px-4 py-1 rounded-full text-xs font-black uppercase tracking-wider shadow-sm ${
+                             selectedSaleDetail.status === 'PAGADO' ? 'bg-green-400 text-green-900' : 'bg-yellow-400 text-yellow-900'
+                         }`}>
+                             ESTADO: {selectedSaleDetail.status}
+                         </span>
                      </div>
-
-                     {/* MENSAJE LEGAL */}
-                     {selectedSaleDetail.invoice_type === 'FISCAL' ? (
-                        <p className='text-[10px] text-green-600 font-bold'>✓ DOCUMENTO FISCAL VÁLIDO</p>
-                     ) : (
-                        <p className='text-[10px] text-red-500 font-bold'>TICKET PRO-FORMA (NO VÁLIDO PARA CRÉDITO FISCAL)</p>
-                     )}
                   </div>
 
-                  <div className="max-h-[60vh] overflow-y-auto">
+                  <div className="max-h-[60vh] overflow-y-auto bg-gray-50">
                       
-                      {/* DETALLES DEL CLIENTE */}
-                      {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.full_name) && (
-                          <div className={`p-5 border-b ${selectedSaleDetail.status === 'PENDIENTE' ? 'bg-red-50 border-red-100' : 'bg-blue-50 border-blue-100'}`}>
-                               <p className={`text-xs font-bold uppercase mb-2 ${selectedSaleDetail.status === 'PENDIENTE' ? 'text-red-800' : 'text-blue-800'}`}>
-                                   {selectedSaleDetail.status === 'PENDIENTE' ? 'Detalles de Deuda' : 'Cliente Facturado'}
-                               </p>
-                               <div className="text-sm space-y-1 text-gray-700">
-                                    <p><span className="font-bold">Cliente:</span> {selectedSaleDetail.full_name}</p>
-                                    <p><span className="font-bold">Cédula/RIF:</span> {selectedSaleDetail.id_number}</p>
-                                    {selectedSaleDetail.status === 'PENDIENTE' && (
-                                        <p><span className="font-bold">Estado:</span> <span className="bg-red-200 text-red-800 px-2 py-0.5 rounded text-[10px] font-bold">PENDIENTE</span></p>
-                                    )}
+                      {/* --- SECCIÓN DATOS DEL CLIENTE --- */}
+                      <div className="p-5 bg-white border-b border-gray-200">
+                           <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Datos del Cliente</p>
+                           
+                           {selectedSaleDetail.full_name ? (
+                               <div className="space-y-1">
+                                   <p className="text-lg font-bold text-gray-800">{selectedSaleDetail.full_name}</p>
+                                   <p className="text-sm text-gray-500 font-mono">ID: {selectedSaleDetail.id_number || 'No registrado'}</p>
+                                   
+                                   {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') && selectedSaleDetail.due_date && (
+                                       <p className="text-xs font-bold text-red-600 mt-2 bg-red-50 p-2 rounded-lg inline-block">
+                                           ⚠️ Vence: {new Date(selectedSaleDetail.due_date).toLocaleDateString()}
+                                       </p>
+                                   )}
                                </div>
-                          </div>
-                      )}
+                           ) : (
+                               <p className="text-sm text-gray-400 italic">Cliente Consumidor Final (Anónimo)</p>
+                           )}
+                      </div>
                       
-                      {/* LISTA DE PRODUCTOS */}
-                      <div className="p-5 space-y-3 border-b border-gray-100">
-                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos</p>
-                          {selectedSaleDetail.items.map((item, idx) => {
-                                const itemTotalUsd = parseFloat(item.price_at_moment_usd) * item.quantity;
-                                const itemTotalVes = itemTotalUsd * selectedSaleDetail.bcv_rate_snapshot;
-                                return (
-                                    <div key={idx} className="flex justify-between pb-2 border-b border-gray-100 last:border-b-0">
+                      {/* --- LISTA DE PRODUCTOS --- */}
+                      <div className="p-5">
+                          <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Items Vendidos</p>
+                          <div className="space-y-3">
+                              {selectedSaleDetail.items.map((item, idx) => (
+                                    <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
                                         <div>
                                             <p className="font-bold text-sm text-gray-700">{item.name}</p>
-                                            <p className="text-xs text-gray-400">Ref {item.price_at_moment_usd} c/u</p>
+                                            <p className="text-xs text-gray-400">Ref {parseFloat(item.price_at_moment_usd).toFixed(2)} x {item.quantity}</p>
                                         </div>
                                         <div className="text-right">
-                                            <span className="bg-blue-50 text-higea-blue text-xs font-bold px-2 py-1 rounded">x{item.quantity}</span>
-                                            <p className="font-bold text-gray-800 mt-1">Ref {itemTotalUsd.toFixed(2)}</p>
-                                            <p className="text-xs text-gray-500">Bs {itemTotalVes.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
+                                            <p className="font-black text-gray-800">Ref {(parseFloat(item.price_at_moment_usd) * item.quantity).toFixed(2)}</p>
                                         </div>
                                     </div>
-                                );
-                          })}
+                              ))}
+                          </div>
                       </div>
 
-                      {/* RESUMEN DE PAGO */}
-                      <div className="p-5 bg-gray-50">
-                          <div className="text-sm space-y-1 mb-3">
-                              {selectedSaleDetail.taxBreakdown.subtotalExemptUSD > 0 && (
-                                <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Exenta</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalExemptUSD.toFixed(2)}</span></div>
-                              )}
-                              <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalTaxableUSD.toFixed(2)}</span></div>
-                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA (16%)</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</span></div>
-                          </div>
-                          
-                          <div className="flex justify-between pt-3 border-t border-gray-200">
-                            <span className="font-bold text-gray-500">TOTAL FINAL VENTA:</span>
-                            <div>
-                                <span className="font-black text-lg text-higea-red block text-right">Ref {selectedSaleDetail.total_usd.toFixed(2)}</span>
-                                <span className="font-medium text-sm text-gray-700 block text-right">Bs {selectedSaleDetail.total_ves.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
+                      {/* --- TOTALES Y PAGOS --- */}
+                      <div className="p-5 bg-white border-t border-gray-200">
+                          <div className="flex justify-between items-end mb-4">
+                            <span className="text-sm font-bold text-gray-500">Total Pagado</span>
+                            <div className="text-right">
+                                <span className="block text-2xl font-black text-gray-900">Ref {parseFloat(selectedSaleDetail.total_usd).toFixed(2)}</span>
+                                <span className="block text-xs text-gray-500 font-medium">Bs {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
                             </div>
                           </div>
-                          <p className="text-xs font-bold uppercase text-gray-400 mt-4 mb-2">Método de Pago:</p>
-                          <p className="text-sm font-medium text-gray-700 break-words">{selectedSaleDetail.payment_method}</p>
+                          
+                          <div className="bg-gray-50 p-3 rounded-xl text-xs text-gray-600 space-y-1">
+                              <p><span className="font-bold">Método:</span> {selectedSaleDetail.payment_method}</p>
+                              {selectedSaleDetail.taxBreakdown && selectedSaleDetail.taxBreakdown.ivaUSD > 0 && (
+                                  <p><span className="font-bold text-blue-600">Incluye IVA (16%):</span> Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</p>
+                              )}
+                          </div>
                       </div>
                   </div>
 
-                  {/* --- BOTÓN DE VISUALIZAR / REIMPRIMIR --- */}
-                  <div className="p-4 border-t border-gray-200 bg-white flex justify-center">
+                  {/* --- BOTÓN DE REIMPRESIÓN (Conectado al visor) --- */}
+                  <div className="p-4 bg-white border-t border-gray-200">
                       <button 
                         onClick={() => {
                             const tempCustomer = {
@@ -2816,12 +2799,14 @@ function App() {
                                 institution: 'REIMPRESIÓN', 
                                 phone: ''
                             };
-                            printFiscalReceipt(selectedSaleDetail.id, tempCustomer, selectedSaleDetail.items);
+                            // Generamos el HTML y abrimos el visor (receiptPreview)
+                            const html = generateReceiptHTML(selectedSaleDetail.id, tempCustomer, selectedSaleDetail.items);
+                            setReceiptPreview(html); 
                         }}
-                        className="flex items-center gap-2 bg-gray-800 text-white font-bold py-3 px-6 rounded-xl hover:bg-gray-900 shadow-lg active:scale-95 transition-all w-full justify-center"
+                        className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-all active:scale-95"
                       >
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                          Visualizar / Reimprimir {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Fiscal' : 'Ticket'}
+                          <span className="text-xl">🖨️</span>
+                          Visualizar / Reimprimir Comprobante
                       </button>
                   </div>
 
@@ -3016,6 +3001,56 @@ function App() {
                           <p className="text-sm font-medium text-gray-700 break-words">{selectedSaleDetail.payment_method}</p>
                            <p className="text-xs text-gray-400 mt-2">Tasa BCV del momento: Bs {selectedSaleDetail.bcv_rate_snapshot.toFixed(2)}</p>
                       </div>
+                  </div>
+              </div>
+          </div>
+      )}
+	  
+	  {/* --- MODAL DE VISUALIZACIÓN PREVIA DE FACTURA (CENTRADO) --- */}
+      {receiptPreview && (
+          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl w-full max-w-sm flex flex-col shadow-2xl relative animate-scale-up overflow-hidden border-4 border-higea-blue">
+                  
+                  {/* Cabecera del Visor */}
+                  <div className="bg-higea-blue p-4 text-white flex justify-between items-center">
+                      <h3 className="font-bold text-lg flex items-center gap-2">
+                          🖨️ Vista Previa Fiscal
+                      </h3>
+                      <button onClick={() => setReceiptPreview(null)} className="bg-white/20 hover:bg-white/30 rounded-full p-1 text-white transition-colors">✕</button>
+                  </div>
+
+                  {/* El Recibo (Renderizado en un Iframe para aislamiento perfecto) */}
+                  <div className="flex-1 bg-gray-100 p-4 flex justify-center overflow-y-auto max-h-[60vh]">
+                      <div className="bg-white shadow-lg w-full max-w-[80mm] min-h-[300px]">
+                          <iframe 
+                              srcDoc={receiptPreview} 
+                              className="w-full h-full min-h-[400px] border-none"
+                              title="Receipt Preview"
+                          />
+                      </div>
+                  </div>
+
+                  {/* Botones de Acción */}
+                  <div className="p-4 bg-white border-t border-gray-200 flex gap-3">
+                      <button 
+                          onClick={() => setReceiptPreview(null)} 
+                          className="flex-1 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors"
+                      >
+                          Cerrar
+                      </button>
+                      <button 
+                          onClick={() => {
+                              // Truco para imprimir el contenido del iframe
+                              const iframe = document.querySelector('iframe[title="Receipt Preview"]');
+                              if (iframe) {
+                                  iframe.contentWindow.print();
+                              }
+                          }}
+                          className="flex-1 bg-higea-blue text-white font-bold py-3 rounded-xl shadow-lg hover:bg-blue-700 transition-colors flex justify-center items-center gap-2"
+                      >
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                          IMPRIMIR
+                      </button>
                   </div>
               </div>
           </div>
