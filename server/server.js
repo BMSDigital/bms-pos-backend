@@ -582,6 +582,52 @@ app.get('/api/reports/sales-today', async (req, res) => {
     }
 });
 
+// M. REPORTE DETALLADO DE VENTAS (Rango de Fechas)
+app.get('/api/reports/sales-detail', async (req, res) => {
+    const { startDate, endDate } = req.query;
+    try {
+        // Traemos TODO el detalle para exportar/visualizar
+        const result = await pool.query(`
+            SELECT 
+                s.id, 
+                s.created_at, 
+                COALESCE(c.full_name, 'Consumidor Final') as client_name, 
+                COALESCE(c.id_number, 'N/A') as client_id,
+                s.payment_method, 
+                s.status, 
+                s.invoice_type, 
+                s.total_usd, 
+                s.total_ves,
+                (SELECT string_agg(p.name || ' (' || si.quantity || ')', ', ') 
+                 FROM sale_items si JOIN products p ON si.product_id = p.id 
+                 WHERE si.sale_id = s.id) as items_summary
+            FROM sales s
+            LEFT JOIN customers c ON s.customer_id = c.id
+            WHERE s.created_at BETWEEN $1 AND $2
+            ORDER BY s.id DESC
+        `, [startDate, endDate]);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// N. REPORTE DETALLADO DE INVENTARIO (Todo)
+app.get('/api/reports/inventory-detail', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                id, name, category, stock, price_usd, status, is_taxable, barcode,
+                (stock * price_usd) as total_value_usd
+            FROM products 
+            ORDER BY status, name ASC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // [NUEVO] Registrar Saldo Inicial (Deuda Antigua)
 app.post('/api/customers/:id/initial-balance', async (req, res) => {
     const { id } = req.params; // ID del cliente

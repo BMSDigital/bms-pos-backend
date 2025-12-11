@@ -1990,19 +1990,24 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                   </div>
 
                   {/* 4. TOP DEUDORES (Mini Lista) */}
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border border-orange-100 bg-orange-50/30">
-                       <p className="text-orange-400 text-xs font-bold uppercase mb-2">Top Deudores</p>
-                       <div className="space-y-2">
-                           {topDebtors.slice(0, 3).map((d, i) => (
-                               <div key={i} className="flex justify-between items-center text-xs">
-                                   <span className="truncate w-2/3 font-bold text-gray-600">{d.full_name.split(' ')[0]}...</span>
-                                   <span className="font-black text-orange-600">Ref {parseFloat(d.debt).toFixed(2)}</span>
-                               </div>
-                           ))}
-                           {topDebtors.length === 0 && <p className="text-xs text-gray-400">Sin deudas pendientes.</p>}
-                           {topDebtors.length > 0 && <button onClick={() => setView('CREDIT_REPORT')} className="w-full mt-2 text-[10px] font-bold text-orange-600 hover:underline">Ir a Cobranzas →</button>}
-                       </div>
-                  </div>
+<div className="bg-white p-5 rounded-3xl shadow-sm border border-orange-100 bg-orange-50/30">
+     <p className="text-orange-400 text-xs font-bold uppercase mb-2">Top Deudores</p>
+     <div className="space-y-3">
+         {topDebtors.slice(0, 3).map((d, i) => (
+             <div key={i} className="flex justify-between items-center text-xs border-b border-orange-100 last:border-0 pb-1 last:pb-0">
+                 {/* UX MEJORADA: flex-1 permite que el nombre ocupe todo el espacio libre antes de cortar */}
+                 <span className="truncate flex-1 font-bold text-gray-700 pr-2" title={d.full_name}>
+                     {d.full_name}
+                 </span>
+                 <span className="font-black text-orange-600 whitespace-nowrap">
+                     Ref {parseFloat(d.debt).toFixed(2)}
+                 </span>
+             </div>
+         ))}
+         {topDebtors.length === 0 && <p className="text-xs text-gray-400">Sin deudas pendientes.</p>}
+         {topDebtors.length > 0 && <button onClick={() => setView('CREDIT_REPORT')} className="w-full mt-2 text-[10px] font-bold text-orange-600 hover:underline">Ir a Cobranzas →</button>}
+     </div>
+</div>
               </div>
 
               {/* ÚLTIMAS TRANSACCIONES (Igual que antes pero con mejor estilo) */}
@@ -2231,40 +2236,55 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                                 </thead>
                                                 <tbody className="divide-y divide-gray-100">
                                                     {currentInvoices.map((sale) => (
-                                                        <tr key={sale.id} className={`hover:bg-blue-50 transition-colors ${sale.is_overdue ? 'bg-red-50/20' : ''}`}>
-                                                            <td className="px-6 py-4 font-bold text-higea-blue">#{sale.id}</td>
-                                                            <td className="px-6 py-4">
-                                                                <div className="text-xs text-gray-500">Emisión: {new Date(sale.created_at).toLocaleDateString()}</div>
-                                                                <div className={`text-xs font-bold ${sale.is_overdue ? 'text-red-600' : 'text-gray-400'}`}>
-                                                                    Vence: {new Date(sale.due_date).toLocaleDateString()}
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-6 py-4 text-right">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
-                                                            <td className="px-6 py-4 text-right text-green-600 font-medium">Ref {parseFloat(sale.amount_paid_usd || 0).toFixed(2)}</td>
-                                                            <td className="px-6 py-4 text-right">
-                                                                <span className="font-black text-gray-800 text-base">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</span>
-                                                            </td>
-                                                            <td className="px-6 py-4 text-center">
-                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-100 text-orange-600' : 'bg-yellow-100 text-yellow-600'}`}>
-                                                                    {sale.status}
-                                                                </span>
-                                                                {sale.is_overdue && <div className="text-[9px] text-red-600 font-black mt-1">VENCIDA</div>}
-                                                            </td>
-                                                            <td className="px-6 py-4 text-center">
-                                                                <div className="flex justify-center gap-2">
-                                                                    <button onClick={() => showSaleDetail(sale)} className="p-2 text-gray-400 hover:text-higea-blue bg-white border border-gray-200 rounded-lg shadow-sm" title="Ver Detalle">
-                                                                        👁️
-                                                                    </button>
-                                                                    <button 
-                                                                        onClick={() => handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0))} 
-                                                                        className="bg-green-500 text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-green-600 shadow-md active:scale-95 transition-all"
-                                                                    >
-                                                                        Abonar
-                                                                    </button>
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
+    <tr 
+        key={sale.id} 
+        // ACCIÓN PRINCIPAL: Clic en fila abre el detalle de la venta
+        onClick={() => showSaleDetail(sale)}
+        className={`hover:bg-blue-50 transition-colors cursor-pointer ${sale.is_overdue ? 'bg-red-50/20' : ''}`}
+    >
+        <td className="px-6 py-4 font-bold text-higea-blue">#{sale.id}</td>
+        <td className="px-6 py-4">
+            <div className="text-xs text-gray-500">Emisión: {new Date(sale.created_at).toLocaleDateString()}</div>
+            <div className={`text-xs font-bold ${sale.is_overdue ? 'text-red-600' : 'text-gray-400'}`}>
+                Vence: {new Date(sale.due_date).toLocaleDateString()}
+            </div>
+        </td>
+        <td className="px-6 py-4 text-right">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
+        <td className="px-6 py-4 text-right text-green-600 font-medium">Ref {parseFloat(sale.amount_paid_usd || 0).toFixed(2)}</td>
+        <td className="px-6 py-4 text-right">
+            <span className="font-black text-gray-800 text-base">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</span>
+        </td>
+        <td className="px-6 py-4 text-center">
+            <span className={`px-2 py-1 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-100 text-orange-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                {sale.status}
+            </span>
+            {sale.is_overdue && <div className="text-[9px] text-red-600 font-black mt-1">VENCIDA</div>}
+        </td>
+        <td className="px-6 py-4 text-center">
+            <div className="flex justify-center gap-2">
+                <button 
+                    onClick={(e) => {
+                        e.stopPropagation(); // <--- EVITA QUE SE ABRA EL DETALLE DOS VECES
+                        showSaleDetail(sale);
+                    }} 
+                    className="p-2 text-gray-400 hover:text-higea-blue bg-white border border-gray-200 rounded-lg shadow-sm z-10 relative" 
+                    title="Ver Detalle"
+                >
+                    👁️
+                </button>
+                <button 
+                    onClick={(e) => {
+                        e.stopPropagation(); // <--- EVITA QUE SE ABRA EL DETALLE AL QUERER ABONAR
+                        handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0));
+                    }} 
+                    className="bg-green-500 text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-green-600 shadow-md active:scale-95 transition-all z-10 relative"
+                >
+                    Abonar
+                </button>
+            </div>
+        </td>
+    </tr>
+))}
                                                 </tbody>
                                             </table>
                                         </div>
@@ -2347,8 +2367,8 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                )}
            </div>
         ) : view === 'CUSTOMERS' ? (
-            /* MÓDULO DE CLIENTES (UX MEJORADA: LISTADO + MODAL) */
-           <div className="p-4 md:p-8 overflow-y-auto h-full relative">
+            /* MÓDULO DE CLIENTES (UX MEJORADA: BOTONES FIJOS) */
+           <div className="p-4 md:p-8 overflow-y-auto h-full relative bg-slate-50">
                 
                 {/* CABECERA Y CONTROLES */}
                 <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
@@ -2383,7 +2403,7 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                     </div>
                 </div>
 
-                {/* TABLA DE CLIENTES (CARD STYLE EN MÓVIL, TABLE EN PC) */}
+                {/* TABLA DE CLIENTES */}
                 <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
                     {/* ENCABEZADO TABLA (SOLO PC) */}
                     <div className="hidden md:grid grid-cols-12 bg-gray-50 p-4 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
@@ -2398,7 +2418,7 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                     {/* LISTADO DE DATOS */}
                     <div className="divide-y divide-gray-100">
                         {(() => {
-                            // Lógica de paginación (Mantenida)
+                            // Lógica de paginación
                             const customersPerPage = 10;
                             const indexOfLastCustomer = customerCurrentPage * customersPerPage;
                             const indexOfFirstCustomer = indexOfLastCustomer - customersPerPage;
@@ -2416,72 +2436,107 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
 
                             return (
                                 <>
-                                    {currentCustomers.map((customer) => (
-                                        <div 
-                                            key={customer.id} 
-                                            onClick={() => {
-                                                editCustomer(customer);
-                                                setIsCustomerFormOpen(true); // Abrir modal al editar
-                                            }}
-                                            className="p-4 hover:bg-blue-50 transition-colors cursor-pointer group"
-                                        >
-                                            {/* VISTA DESKTOP (GRID) */}
-                                            <div className="hidden md:grid grid-cols-12 items-center gap-2">
-                                                <div className="col-span-1 font-bold text-higea-blue">#{customer.id}</div>
-                                                <div className="col-span-4 font-medium text-gray-800 truncate" title={customer.full_name}>{customer.full_name}</div>
-                                                <div className="col-span-2 text-gray-600 font-mono text-xs">{customer.id_number}</div>
-                                                <div className="col-span-2 text-gray-500 text-xs">{customer.phone || '-'}</div>
-                                                <div className="col-span-1 text-center">
-                                                    <span className={`px-2 py-1 rounded text-[10px] font-bold ${
-                                                        (customer.status || 'ACTIVO') === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
-                                                    }`}>
-                                                        {customer.status || 'ACTIVO'} 
-                                                    </span>
-                                                </div>
-                                                <div className="col-span-2 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); addInitialBalance(customer); }} 
-                                                        className="p-2 bg-green-100 text-green-600 rounded-lg hover:bg-green-200" title="Saldo Inicial"
-                                                    >
-                                                        💸
-                                                    </button>
-                                                    <button className="p-2 bg-blue-100 text-higea-blue rounded-lg hover:bg-blue-200" title="Editar">
-                                                        ✏️
-                                                    </button>
-                                                </div>
-                                            </div>
+                                    {/* ... dentro de view === 'CUSTOMERS' ... */}
+{currentCustomers.map((customer) => (
+    <div 
+        key={customer.id} 
+        // ACCIÓN PRINCIPAL: Clic en cualquier parte edita al cliente
+        onClick={() => {
+            editCustomer(customer);
+            setIsCustomerFormOpen(true);
+        }}
+        className="p-4 hover:bg-blue-50 transition-colors cursor-pointer group border-b border-gray-100 last:border-0"
+    >
+        {/* VISTA DESKTOP (GRID) */}
+        <div className="hidden md:grid grid-cols-12 items-center gap-2">
+            <div className="col-span-1 font-bold text-higea-blue">#{customer.id}</div>
+            <div className="col-span-4 font-medium text-gray-800 truncate" title={customer.full_name}>{customer.full_name}</div>
+            <div className="col-span-2 text-gray-600 font-mono text-xs">{customer.id_number}</div>
+            <div className="col-span-2 text-gray-500 text-xs">{customer.phone || '-'}</div>
+            <div className="col-span-1 text-center">
+                <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                    (customer.status || 'ACTIVO') === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                }`}>
+                    {customer.status || 'ACTIVO'} 
+                </span>
+            </div>
+            
+            {/* BOTONES DE ACCIÓN (Con stopPropagation para no chocar con la fila) */}
+            <div className="col-span-2 flex justify-end gap-2">
+                <button 
+                    onClick={(e) => { 
+                        e.stopPropagation(); // <--- EVITA QUE SE ABRA EL EDITOR AL PULSAR SALDO
+                        addInitialBalance(customer); 
+                    }} 
+                    className="px-3 py-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 border border-green-200 text-xs font-bold transition-colors flex items-center gap-1 z-10 relative"
+                    title="Cargar Saldo Inicial"
+                >
+                    <span>💸</span> Saldo
+                </button>
+                <button 
+                    onClick={(e) => {
+                        e.stopPropagation(); // <--- EVITA DOBLE CLIC
+                        editCustomer(customer);
+                        setIsCustomerFormOpen(true);
+                    }}
+                    className="px-3 py-1.5 bg-white text-higea-blue rounded-lg hover:bg-blue-50 border border-gray-200 text-xs font-bold transition-colors flex items-center gap-1 z-10 relative"
+                    title="Editar Cliente"
+                >
+                    <span>✏️</span> Editar
+                </button>
+            </div>
+        </div>
 
-                                            {/* VISTA MÓVIL (STACKED) */}
-                                            <div className="md:hidden flex justify-between items-center">
-                                                <div>
-                                                    <p className="font-bold text-gray-800 text-sm">{customer.full_name}</p>
-                                                    <p className="text-xs text-gray-500 font-mono">{customer.id_number}</p>
-                                                    <p className="text-[10px] text-gray-400 mt-1">{customer.phone}</p>
-                                                </div>
-                                                <div className="flex flex-col items-end gap-2">
-                                                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
-                                                        (customer.status || 'ACTIVO') === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
-                                                    }`}>
-                                                        {customer.status || 'ACTIVO'} 
-                                                    </span>
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); addInitialBalance(customer); }} 
-                                                        className="text-[10px] bg-green-50 text-green-700 px-2 py-1 rounded border border-green-200"
-                                                    >
-                                                        + Deuda
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
+        {/* VISTA MÓVIL (STACKED) */}
+        <div className="md:hidden flex justify-between items-center">
+            <div className="flex-1">
+                <p className="font-bold text-gray-800 text-sm">{customer.full_name}</p>
+                <p className="text-xs text-gray-500 font-mono">{customer.id_number}</p>
+                <p className="text-[10px] text-gray-400 mt-1">{customer.phone}</p>
+            </div>
+            
+            <div className="flex flex-col items-end gap-2">
+                <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                    (customer.status || 'ACTIVO') === 'ACTIVO' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                }`}>
+                    {customer.status || 'ACTIVO'} 
+                </span>
+                
+                <div className="flex gap-2 mt-1">
+                    <button 
+                        onClick={(e) => { 
+                            e.stopPropagation(); 
+                            addInitialBalance(customer); 
+                        }} 
+                        className="text-[10px] bg-green-50 text-green-700 px-3 py-2 rounded-lg border border-green-200 font-bold active:scale-95"
+                    >
+                        + Deuda
+                    </button>
+                    {/* El botón Editar es visualmente redundante en móvil porque tocar la tarjeta ya edita, 
+                        pero lo mantenemos si el usuario quiere un botón explícito */}
+                    <button 
+                        onClick={(e) => { 
+                            e.stopPropagation(); 
+                            editCustomer(customer); 
+                            setIsCustomerFormOpen(true); 
+                        }} 
+                        className="text-[10px] bg-white text-higea-blue px-3 py-2 rounded-lg border border-gray-200 font-bold active:scale-95"
+                    >
+                        Editar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+))}
 
                                     {/* CONTROLES PAGINACIÓN */}
                                     {customerTotalPages > 1 && (
-                                        <div className="p-4 border-t border-gray-100 flex justify-center items-center gap-4">
+                                        <div className="p-4 border-t border-gray-100 flex justify-center items-center gap-4 bg-white">
                                             <button 
                                                 onClick={() => setCustomerCurrentPage(prev => Math.max(1, prev - 1))}
                                                 disabled={customerCurrentPage === 1} 
-                                                className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50"
+                                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200"
                                             >
                                                 Anterior
                                             </button>
@@ -2489,7 +2544,7 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                             <button 
                                                 onClick={() => setCustomerCurrentPage(prev => Math.min(customerTotalPages, prev + 1))}
                                                 disabled={customerCurrentPage === customerTotalPages} 
-                                                className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50"
+                                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200"
                                             >
                                                 Siguiente
                                             </button>
@@ -2512,7 +2567,7 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                     +
                 </button>
 
-                {/* --- MODAL FORMULARIO DE CLIENTE --- */}
+                {/* --- MODAL FORMULARIO DE CLIENTE (MANTENIDO IGUAL) --- */}
                 {isCustomerFormOpen && (
                     <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
                         <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden">
@@ -2526,8 +2581,6 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                             <div className="p-6 max-h-[70vh] overflow-y-auto">
                                 <form onSubmit={(e) => { 
                                     saveCustomer(e).then(() => {
-                                        // Si guardó con éxito (puedes ajustar saveCustomer para que retorne true/false), cerramos
-                                        // Por ahora cerramos al enviar si no hubo error crítico atrapado
                                         setIsCustomerFormOpen(false); 
                                     }); 
                                 }}>
@@ -2670,86 +2723,93 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                             return (
                                 <>
                                     {currentInventory.map((p) => (
-                                        <div 
-                                            key={p.id} 
-                                            className={`p-4 transition-colors group ${p.status === 'INACTIVE' ? 'bg-gray-50 opacity-75' : 'hover:bg-blue-50 bg-white'}`}
-                                        >
-                                            <div className="hidden md:grid grid-cols-12 items-center gap-2">
-                                                <div className="col-span-1 font-bold text-gray-400">#{p.id}</div>
-                                                <div className="col-span-4 font-medium text-gray-800 flex items-center gap-3">
-                                                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center text-xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>
-                                                        {p.icon_emoji}
-                                                    </div>
-                                                    <div>
-                                                        <p className="leading-tight font-bold">{p.name}</p>
-                                                        <div className="flex gap-2 mt-1">
-                                                            {/* Código de Barras (Si existe) */}
-                                                            {p.barcode && <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 font-mono">||| {p.barcode}</span>}
-                                                            {/* Etiquetas Fiscales */}
-                                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.is_taxable ? 'text-blue-600 bg-blue-50' : 'text-green-600 bg-green-50'}`}>
-                                                                {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
-                                                            </span>
-                                                            {/* Etiqueta Inactivo */}
-                                                            {p.status === 'INACTIVE' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">INACTIVO</span>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div className="col-span-2 text-gray-500 text-xs font-medium">{p.category}</div>
-                                                <div className="col-span-2 text-right font-bold text-gray-700">Ref {parseFloat(p.price_usd).toFixed(2)}</div>
-                                                <div className="col-span-1 text-center">
-                                                    <span className={`font-bold px-2 py-1 rounded-lg text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-50 text-green-700'}`}>
-                                                        {p.stock}
-                                                    </span>
-                                                </div>
-                                                <div className="col-span-2 text-center">
-                                                    {/* BOTÓN EDITAR SIEMPRE VISIBLE */}
-                                                    <button 
-                                                        onClick={() => {
-                                                            setProductForm({
-                                                                id: p.id, name: p.name, category: p.category, 
-                                                                price_usd: parseFloat(p.price_usd), stock: p.stock, 
-                                                                icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
-                                                                barcode: p.barcode || '', status: p.status || 'ACTIVE'
-                                                            });
-                                                            setIsProductFormOpen(true);
-                                                        }}
-                                                        className="bg-white border border-gray-200 text-higea-blue hover:bg-higea-blue hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2 mx-auto"
-                                                    >
-                                                        <span>✏️</span> Editar
-                                                    </button>
-                                                </div>
-                                            </div>
+    <div 
+        key={p.id} 
+        // ACCIÓN PRINCIPAL: Clic en la fila abre edición
+        onClick={() => {
+            setProductForm({
+                id: p.id, name: p.name, category: p.category, 
+                price_usd: parseFloat(p.price_usd), stock: p.stock, 
+                icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
+                barcode: p.barcode || '', status: p.status || 'ACTIVE'
+            });
+            setIsProductFormOpen(true);
+        }}
+        className={`p-4 transition-colors group cursor-pointer border-b border-gray-100 last:border-0 ${p.status === 'INACTIVE' ? 'bg-gray-50 opacity-75' : 'hover:bg-blue-50 bg-white'}`}
+    >
+        <div className="hidden md:grid grid-cols-12 items-center gap-2">
+            <div className="col-span-1 font-bold text-gray-400">#{p.id}</div>
+            <div className="col-span-4 font-medium text-gray-800 flex items-center gap-3">
+                <div className={`h-10 w-10 rounded-lg flex items-center justify-center text-xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>
+                    {p.icon_emoji}
+                </div>
+                <div>
+                    <p className="leading-tight font-bold">{p.name}</p>
+                    <div className="flex gap-2 mt-1">
+                        {p.barcode && <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 font-mono">||| {p.barcode}</span>}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.is_taxable ? 'text-blue-600 bg-blue-50' : 'text-green-600 bg-green-50'}`}>
+                            {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
+                        </span>
+                        {p.status === 'INACTIVE' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">INACTIVO</span>}
+                    </div>
+                </div>
+            </div>
+            <div className="col-span-2 text-gray-500 text-xs font-medium">{p.category}</div>
+            <div className="col-span-2 text-right font-bold text-gray-700">Ref {parseFloat(p.price_usd).toFixed(2)}</div>
+            <div className="col-span-1 text-center">
+                <span className={`font-bold px-2 py-1 rounded-lg text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                    {p.stock}
+                </span>
+            </div>
+            <div className="col-span-2 text-center">
+                <button 
+                    onClick={(e) => {
+                        e.stopPropagation(); // <--- IMPORTANTE
+                        setProductForm({
+                            id: p.id, name: p.name, category: p.category, 
+                            price_usd: parseFloat(p.price_usd), stock: p.stock, 
+                            icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
+                            barcode: p.barcode || '', status: p.status || 'ACTIVE'
+                        });
+                        setIsProductFormOpen(true);
+                    }}
+                    className="bg-white border border-gray-200 text-higea-blue hover:bg-higea-blue hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2 mx-auto z-10 relative"
+                >
+                    <span>✏️</span> Editar
+                </button>
+            </div>
+        </div>
 
-                                            {/* VISTA MÓVIL */}
-                                            <div className="md:hidden flex justify-between items-center">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`h-12 w-12 rounded-xl flex items-center justify-center text-2xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>{p.icon_emoji}</div>
-                                                    <div>
-                                                        <p className="font-bold text-gray-800 text-sm line-clamp-1">{p.name}</p>
-                                                        <div className="flex flex-wrap gap-1 mt-1">
-                                                            {p.barcode && <span className="text-[9px] bg-gray-100 px-1 rounded border">||| {p.barcode}</span>}
-                                                            {p.status === 'INACTIVE' && <span className="text-[9px] bg-gray-200 px-1 rounded font-bold">INACTIVO</span>}
-                                                        </div>
-                                                        <p className="font-black text-higea-red text-xs mt-1">Ref {parseFloat(p.price_usd).toFixed(2)}</p>
-                                                    </div>
-                                                </div>
-                                                <button 
-                                                    onClick={() => {
-                                                        setProductForm({
-                                                            id: p.id, name: p.name, category: p.category, 
-                                                            price_usd: parseFloat(p.price_usd), stock: p.stock, 
-                                                            icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
-                                                            barcode: p.barcode || '', status: p.status || 'ACTIVE'
-                                                        });
-                                                        setIsProductFormOpen(true);
-                                                    }}
-                                                    className="bg-gray-50 text-higea-blue border border-gray-200 p-2 rounded-lg"
-                                                >
-                                                    ✏️
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
+        {/* VISTA MÓVIL */}
+        <div className="md:hidden flex justify-between items-center">
+            <div className="flex items-center gap-3">
+                <div className={`h-12 w-12 rounded-xl flex items-center justify-center text-2xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>{p.icon_emoji}</div>
+                <div>
+                    <p className="font-bold text-gray-800 text-sm line-clamp-1">{p.name}</p>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                        {p.barcode && <span className="text-[9px] bg-gray-100 px-1 rounded border">||| {p.barcode}</span>}
+                    </div>
+                    <p className="font-black text-higea-red text-xs mt-1">Ref {parseFloat(p.price_usd).toFixed(2)}</p>
+                </div>
+            </div>
+            <button 
+                onClick={(e) => {
+                    e.stopPropagation(); // <--- IMPORTANTE
+                    setProductForm({
+                        id: p.id, name: p.name, category: p.category, 
+                        price_usd: parseFloat(p.price_usd), stock: p.stock, 
+                        icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
+                        barcode: p.barcode || '', status: p.status || 'ACTIVE'
+                    });
+                    setIsProductFormOpen(true);
+                }}
+                className="bg-gray-50 text-higea-blue border border-gray-200 p-2 rounded-lg active:scale-95"
+            >
+                ✏️
+            </button>
+        </div>
+    </div>
+))}
 
                                     {/* PAGINACIÓN */}
                                     {inventoryTotalPages > 1 && (
@@ -3434,47 +3494,87 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                   
                   <div className="flex-1 overflow-y-auto p-0 bg-gray-50/50">
                       <table className="w-full text-sm text-left border-collapse">
-                          <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10">
-                              <tr>
-                                  <th className="px-5 py-3">Hora</th>
-                                  <th className="px-5 py-3">Cliente</th>
-                                  <th className="px-5 py-3">Método Pago</th>
-                                  <th className="px-5 py-3 text-right">Total Ref</th>
-                                  <th className="px-5 py-3 text-center">Acción</th>
-                              </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100 bg-white">
-                              {dailySalesList.map(sale => (
-                                  <tr key={sale.id} className="hover:bg-blue-50 transition-colors group">
-                                      <td className="px-5 py-4 text-gray-500 font-mono text-xs">
-                                          {new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                      </td>
-                                      <td className="px-5 py-4">
-                                          <div className="font-bold text-gray-700">{sale.full_name || 'Consumidor Final'}</div>
-                                          <div className="text-[10px] text-gray-400">ID: #{sale.id}</div>
-                                      </td>
-                                      <td className="px-5 py-4">
-                                          <span className="px-2 py-1 bg-gray-100 rounded-lg text-xs font-medium text-gray-600 border border-gray-200">
-                                              {sale.payment_method.split('[')[0].slice(0, 15)}...
-                                          </span>
-                                      </td>
-                                      <td className="px-5 py-4 text-right">
-                                          <span className="font-black text-higea-blue text-base">Ref {parseFloat(sale.total_usd).toFixed(2)}</span>
-                                      </td>
-                                      <td className="px-5 py-4 text-center">
-                                          <button 
-                                              onClick={() => showSaleDetail(sale)} 
-                                              className="bg-blue-50 text-higea-blue p-2 rounded-lg hover:bg-higea-blue hover:text-white transition-colors shadow-sm"
-                                              title="Ver Detalles Completos"
-                                          >
-                                              👁️
-                                          </button>
-                                      </td>
-                                  </tr>
-                              ))}
-                              {dailySalesList.length === 0 && <tr><td colSpan="5" className="p-12 text-center text-gray-400 italic">No hay movimientos registrados hoy.</td></tr>}
-                          </tbody>
-                      </table>
+    <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10 border-b border-gray-100">
+        <tr>
+            <th className="px-6 py-4 text-left">Hora</th>
+            <th className="px-6 py-4 text-left">Cliente</th>
+            <th className="px-6 py-4 text-left">Método Pago</th>
+            <th className="px-6 py-4 text-right">Total Ref</th>
+            <th className="px-6 py-4 text-center">Acción</th>
+        </tr>
+    </thead>
+    <tbody className="divide-y divide-gray-50 bg-white">
+        {dailySalesList.map(sale => (
+            <tr 
+                key={sale.id} 
+                // ACCIÓN 1: Click en toda la fila abre el detalle
+                onClick={() => showSaleDetail(sale)}
+                className="hover:bg-blue-50/60 transition-colors group cursor-pointer"
+            >
+                {/* HORA (Fuente Mono para alineación perfecta) */}
+                <td className="px-6 py-4 text-gray-500 font-mono text-xs whitespace-nowrap align-middle">
+                    {new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                </td>
+                
+                {/* CLIENTE */}
+                <td className="px-6 py-4 align-middle">
+                    <div className="flex flex-col">
+                        <span className="font-bold text-gray-700 text-sm">{sale.full_name || 'Consumidor Final'}</span>
+                        <span className="text-[10px] text-gray-400 font-medium">ID Venta: #{sale.id}</span>
+                    </div>
+                </td>
+                
+                {/* MÉTODO DE PAGO (Estilo Badge/Etiqueta Elegante) */}
+                <td className="px-6 py-4 align-middle">
+                    <div className="flex items-center">
+                        <div className="max-w-[160px]" title={sale.payment_method}>
+                            <p className="bg-gray-100 text-gray-600 border border-gray-200 px-3 py-1 rounded-full text-xs font-medium truncate w-full text-center">
+                                {sale.payment_method}
+                            </p>
+                        </div>
+                    </div>
+                </td>
+                
+                {/* TOTAL REF (Alineado a la derecha, tipografía fuerte) */}
+                <td className="px-6 py-4 text-right align-middle">
+                    <span className="font-black text-higea-blue text-base tracking-tight">
+                        Ref {parseFloat(sale.total_usd).toFixed(2)}
+                    </span>
+                </td>
+                
+                {/* ACCIÓN (Botón Visual) */}
+                <td className="px-6 py-4 text-center align-middle">
+                    <button 
+                        // ACCIÓN 2: El botón también funciona (stopPropagation previene doble evento)
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            showSaleDetail(sale);
+                        }} 
+                        className="p-2 text-gray-400 hover:text-higea-blue hover:bg-white bg-transparent rounded-full transition-all active:scale-95"
+                        title="Ver Detalles Completos"
+                    >
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        ))}
+        
+        {/* ESTADO VACÍO */}
+        {dailySalesList.length === 0 && (
+            <tr>
+                <td colSpan="5" className="p-12 text-center text-gray-400 italic bg-gray-50/30">
+                    <div className="flex flex-col items-center gap-2">
+                        <span className="text-2xl">💤</span>
+                        <span>No hay movimientos registrados hoy.</span>
+                    </div>
+                </td>
+            </tr>
+        )}
+    </tbody>
+</table>
                   </div>
                   
                   {/* Footer con Totales */}
