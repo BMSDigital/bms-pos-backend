@@ -161,7 +161,7 @@ function App() {
   
   // ESTADOS para el módulo de Productos (Esqueleto CRUD)
   const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
-  const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' });
+  const [productForm, setProductForm] = useState({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔', barcode: '', status: 'ACTIVE' });
 
   // NUEVOS ESTADOS para búsqueda de inventario
   const [productSearchQuery, setProductSearchQuery] = useState('');
@@ -238,11 +238,11 @@ function App() {
       setInventoryCurrentPage(1); // <-- RESET DE PÁGINA
   }, [productSearchQuery, products]);
 
-  // 💡 MODIFICADO: Lógica de filtro para productos (Ahora incluye categoría, búsqueda en POS y resetea la página)
+  // 💡 MODIFICADO: Lógica de filtro para productos (POS)
   useEffect(() => {
-    let results = products;
+    // 1. Filtrar por Categoría y por STATUS ACTIVO (Solo mostramos activos en el POS)
+    let results = products.filter(p => p.status === 'ACTIVE'); // <--- FILTRO IMPORTANTE
     
-    // 1. Filtrar por Categoría
     if (selectedCategory !== 'Todos') {
         results = results.filter(p => p.category === selectedCategory);
     }
@@ -250,14 +250,16 @@ function App() {
     // 2. Filtrar por Búsqueda en POS (Nuevo)
     if (posSearchQuery) {
         const lowerQuery = posSearchQuery.toLowerCase();
+        // Ahora permitimos buscar también por código de barras en el POS
         results = results.filter(p => 
             p.name.toLowerCase().includes(lowerQuery) || 
-            p.category.toLowerCase().includes(lowerQuery)
+            p.category.toLowerCase().includes(lowerQuery) ||
+            (p.barcode && p.barcode.includes(lowerQuery)) // <--- BÚSQUEDA POR BARCODE
         );
     }
     
     setFilteredProducts(results);
-    setCurrentPage(1); // Resetear página a 1 al cambiar filtro/búsqueda
+    setCurrentPage(1); 
   }, [selectedCategory, products, posSearchQuery]);
   
   // Efecto para resetear a la página 1 cada vez que abres un cliente nuevo
@@ -2587,33 +2589,31 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                 )}
            </div>
 			) : view === 'PRODUCTS' ? (
-            /* MÓDULO DE PRODUCTOS (UX MEJORADA: LISTADO + MODAL) */
-            <div className="p-4 md:p-8 overflow-y-auto h-full relative">
+            /* MÓDULO DE PRODUCTOS (UX ACTUALIZADA: BARCODE + STATUS + ACCIONES) */
+            <div className="p-4 md:p-8 overflow-y-auto h-full relative bg-slate-50">
                 
                 {/* CABECERA Y CONTROLES */}
                 <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                     <div>
-                        <h2 className="text-2xl font-black text-gray-800">Inventario de Productos</h2>
-                        <p className="text-sm text-gray-500">Gestione precios, stock y exenciones fiscales</p>
+                        <h2 className="text-2xl font-black text-gray-800">Inventario Maestro</h2>
+                        <p className="text-sm text-gray-500">Control total de productos, precios y disponibilidad</p>
                     </div>
                     
                     <div className="flex w-full md:w-auto gap-2">
-                        {/* BARRA DE BÚSQUEDA */}
                         <div className="relative w-full md:w-64">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
                             <input 
                                 type="text" 
-                                placeholder="Buscar producto..." 
+                                placeholder="Buscar nombre, código..." 
                                 value={productSearchQuery}
                                 onChange={(e) => setProductSearchQuery(e.target.value)}
                                 className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-higea-blue outline-none shadow-sm text-sm" 
                             />
                         </div>
                         
-                        {/* BOTÓN NUEVO PRODUCTO (DESKTOP) */}
                         <button 
                             onClick={() => {
-                                setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' });
+                                setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE' });
                                 setIsProductFormOpen(true);
                             }}
                             className="hidden md:flex bg-higea-blue text-white px-5 py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 transition-all items-center gap-2 whitespace-nowrap"
@@ -2625,17 +2625,15 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
 
                 {/* TABLA DE INVENTARIO */}
                 <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                    {/* ENCABEZADO TABLA (SOLO PC) */}
                     <div className="hidden md:grid grid-cols-12 bg-gray-50 p-4 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
                         <div className="col-span-1">ID</div>
-                        <div className="col-span-4">Producto</div>
+                        <div className="col-span-4">Producto / Código</div>
                         <div className="col-span-2">Categoría</div>
                         <div className="col-span-2 text-right">Precio Ref</div>
                         <div className="col-span-1 text-center">Stock</div>
-                        <div className="col-span-2 text-right">Acción</div>
+                        <div className="col-span-2 text-center">Acción</div>
                     </div>
 
-                    {/* LISTADO DE DATOS */}
                     <div className="divide-y divide-gray-100">
                         {(() => {
                             const inventoryPerPage = 10;
@@ -2644,94 +2642,98 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                             const currentInventory = filteredInventory.slice(indexOfFirstInventory, indexOfLastInventory);
                             const inventoryTotalPages = Math.ceil(filteredInventory.length / inventoryPerPage);
                             
-                            if (filteredInventory.length === 0) {
-                                return (
-                                    <div className="p-10 text-center flex flex-col items-center justify-center text-gray-400">
-                                        <div className="text-4xl mb-2">📦</div>
-                                        <p>No se encontraron productos.</p>
-                                    </div>
-                                );
-                            }
+                            if (filteredInventory.length === 0) return <div className="p-10 text-center text-gray-400"><div className="text-4xl mb-2">📦</div><p>No se encontraron productos.</p></div>;
 
                             return (
                                 <>
                                     {currentInventory.map((p) => (
                                         <div 
                                             key={p.id} 
-                                            onClick={() => {
-                                                setProductForm({
-                                                    id: p.id, name: p.name, category: p.category, 
-                                                    price_usd: parseFloat(p.price_usd), stock: p.stock, 
-                                                    icon_emoji: p.icon_emoji, is_taxable: p.is_taxable
-                                                });
-                                                setIsProductFormOpen(true);
-                                            }}
-                                            className="p-4 hover:bg-blue-50 transition-colors cursor-pointer group"
+                                            className={`p-4 transition-colors group ${p.status === 'INACTIVE' ? 'bg-gray-50 opacity-75' : 'hover:bg-blue-50 bg-white'}`}
                                         >
-                                            {/* VISTA DESKTOP (GRID) */}
                                             <div className="hidden md:grid grid-cols-12 items-center gap-2">
-                                                <div className="col-span-1 font-bold text-higea-blue">#{p.id}</div>
-                                                <div className="col-span-4 font-medium text-gray-800 flex items-center gap-2">
-                                                    <span className="text-xl">{p.icon_emoji}</span>
-                                                    <div>
-                                                        <p className="leading-tight">{p.name}</p>
-                                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.is_taxable ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
-                                                            {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
-                                                        </span>
+                                                <div className="col-span-1 font-bold text-gray-400">#{p.id}</div>
+                                                <div className="col-span-4 font-medium text-gray-800 flex items-center gap-3">
+                                                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center text-xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>
+                                                        {p.icon_emoji}
                                                     </div>
-                                                </div>
-                                                <div className="col-span-2 text-gray-500 text-xs">{p.category}</div>
-                                                <div className="col-span-2 text-right font-bold text-gray-700">Ref {parseFloat(p.price_usd).toFixed(2)}</div>
-                                                <div className="col-span-1 text-center">
-                                                    <span className={`font-bold px-2 py-1 rounded-lg text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
-                                                        {p.stock}
-                                                    </span>
-                                                </div>
-                                                <div className="col-span-2 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button className="text-xs font-bold text-higea-blue hover:underline">Editar</button>
-                                                </div>
-                                            </div>
-
-                                            {/* VISTA MÓVIL (TARJETA) */}
-                                            <div className="md:hidden flex justify-between items-center">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{p.icon_emoji}</div>
                                                     <div>
-                                                        <p className="font-bold text-gray-800 text-sm line-clamp-1">{p.name}</p>
-                                                        <div className="flex gap-2 mt-0.5">
-                                                            <span className="text-xs text-gray-500">{p.category}</span>
-                                                            <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${p.is_taxable ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-                                                                {p.is_taxable ? 'IVA' : 'EXE'}
+                                                        <p className="leading-tight font-bold">{p.name}</p>
+                                                        <div className="flex gap-2 mt-1">
+                                                            {/* Código de Barras (Si existe) */}
+                                                            {p.barcode && <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 font-mono">||| {p.barcode}</span>}
+                                                            {/* Etiquetas Fiscales */}
+                                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.is_taxable ? 'text-blue-600 bg-blue-50' : 'text-green-600 bg-green-50'}`}>
+                                                                {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
                                                             </span>
+                                                            {/* Etiqueta Inactivo */}
+                                                            {p.status === 'INACTIVE' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">INACTIVO</span>}
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="text-right">
-                                                    <p className="font-black text-higea-red text-sm">Ref {parseFloat(p.price_usd).toFixed(2)}</p>
-                                                    <p className={`text-[10px] font-bold ${p.stock <= 5 ? 'text-red-500' : 'text-gray-400'}`}>Stock: {p.stock}</p>
+                                                <div className="col-span-2 text-gray-500 text-xs font-medium">{p.category}</div>
+                                                <div className="col-span-2 text-right font-bold text-gray-700">Ref {parseFloat(p.price_usd).toFixed(2)}</div>
+                                                <div className="col-span-1 text-center">
+                                                    <span className={`font-bold px-2 py-1 rounded-lg text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                                                        {p.stock}
+                                                    </span>
                                                 </div>
+                                                <div className="col-span-2 text-center">
+                                                    {/* BOTÓN EDITAR SIEMPRE VISIBLE */}
+                                                    <button 
+                                                        onClick={() => {
+                                                            setProductForm({
+                                                                id: p.id, name: p.name, category: p.category, 
+                                                                price_usd: parseFloat(p.price_usd), stock: p.stock, 
+                                                                icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
+                                                                barcode: p.barcode || '', status: p.status || 'ACTIVE'
+                                                            });
+                                                            setIsProductFormOpen(true);
+                                                        }}
+                                                        className="bg-white border border-gray-200 text-higea-blue hover:bg-higea-blue hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2 mx-auto"
+                                                    >
+                                                        <span>✏️</span> Editar
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* VISTA MÓVIL */}
+                                            <div className="md:hidden flex justify-between items-center">
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`h-12 w-12 rounded-xl flex items-center justify-center text-2xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>{p.icon_emoji}</div>
+                                                    <div>
+                                                        <p className="font-bold text-gray-800 text-sm line-clamp-1">{p.name}</p>
+                                                        <div className="flex flex-wrap gap-1 mt-1">
+                                                            {p.barcode && <span className="text-[9px] bg-gray-100 px-1 rounded border">||| {p.barcode}</span>}
+                                                            {p.status === 'INACTIVE' && <span className="text-[9px] bg-gray-200 px-1 rounded font-bold">INACTIVO</span>}
+                                                        </div>
+                                                        <p className="font-black text-higea-red text-xs mt-1">Ref {parseFloat(p.price_usd).toFixed(2)}</p>
+                                                    </div>
+                                                </div>
+                                                <button 
+                                                    onClick={() => {
+                                                        setProductForm({
+                                                            id: p.id, name: p.name, category: p.category, 
+                                                            price_usd: parseFloat(p.price_usd), stock: p.stock, 
+                                                            icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
+                                                            barcode: p.barcode || '', status: p.status || 'ACTIVE'
+                                                        });
+                                                        setIsProductFormOpen(true);
+                                                    }}
+                                                    className="bg-gray-50 text-higea-blue border border-gray-200 p-2 rounded-lg"
+                                                >
+                                                    ✏️
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
 
-                                    {/* CONTROLES PAGINACIÓN */}
+                                    {/* PAGINACIÓN */}
                                     {inventoryTotalPages > 1 && (
                                         <div className="p-4 border-t border-gray-100 flex justify-center items-center gap-4">
-                                            <button 
-                                                onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))}
-                                                disabled={inventoryCurrentPage === 1} 
-                                                className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50"
-                                            >
-                                                Anterior
-                                            </button>
+                                            <button onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))} disabled={inventoryCurrentPage === 1} className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50">Anterior</button>
                                             <span className="text-xs font-bold text-gray-500">Pág {inventoryCurrentPage} de {inventoryTotalPages}</span>
-                                            <button 
-                                                onClick={() => setInventoryCurrentPage(prev => Math.min(inventoryTotalPages, prev + 1))}
-                                                disabled={inventoryCurrentPage === inventoryTotalPages} 
-                                                className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50"
-                                            >
-                                                Siguiente
-                                            </button>
+                                            <button onClick={() => setInventoryCurrentPage(prev => Math.min(inventoryTotalPages, prev + 1))} disabled={inventoryCurrentPage === inventoryTotalPages} className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50">Siguiente</button>
                                         </div>
                                     )}
                                 </>
@@ -2740,94 +2742,88 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                     </div>
                 </div>
 
-                {/* BOTÓN FLOTANTE (FAB) MÓVIL */}
-                <button 
-                    onClick={() => {
-                        setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔' });
-                        setIsProductFormOpen(true);
-                    }}
-                    className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-higea-blue text-white rounded-full shadow-2xl flex items-center justify-center text-3xl font-light z-40 active:scale-90 transition-transform"
-                >
-                    +
-                </button>
+                <button onClick={() => { setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE' }); setIsProductFormOpen(true); }} className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-higea-blue text-white rounded-full shadow-2xl flex items-center justify-center text-3xl font-light z-40 active:scale-90 transition-transform">+</button>
 
-                {/* --- MODAL FORMULARIO DE PRODUCTO --- */}
+                {/* --- MODAL FORMULARIO --- */}
                 {isProductFormOpen && (
                     <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                        <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden max-h-[90vh] flex flex-col">
+                        <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden max-h-[95vh] flex flex-col">
                             <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
-                                <h3 className="text-lg font-black text-gray-800">
-                                    {productForm.id ? 'Editar Producto' : 'Nuevo Producto'}
-                                </h3>
+                                <h3 className="text-lg font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
                                 <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold">✕</button>
                             </div>
                             
-                            <div className="p-6 overflow-y-auto">
-                                <form onSubmit={(e) => {
-                                    saveProduct(e).then(() => setIsProductFormOpen(false));
-                                }}>
-                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Nombre del Producto (*)</label>
+                            <div className="p-6 overflow-y-auto custom-scrollbar">
+                                <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
+                                    
+                                    {/* NOMBRE */}
+                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Nombre (*)</label>
                                     <input type="text" name="name" placeholder="Ej: Pizza Margarita" value={productForm.name} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl mb-4 focus:border-higea-blue outline-none font-medium" required autoFocus />
                                     
+                                    {/* PRECIO Y CATEGORÍA */}
                                     <div className="grid grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio Ref (*)</label>
+                                            <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
+                                        </div>
                                         <div>
                                             <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Categoría</label>
                                             <input type="text" name="category" placeholder="Ej: Comida" value={productForm.category} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none" />
                                         </div>
-                                        <div>
-                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio (Ref) (*)</label>
-                                            <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
+                                    </div>
+
+                                    {/* CÓDIGO DE BARRAS (NUEVO) */}
+                                    <div className="mb-4">
+                                        <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Código de Barras (Opcional)</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">|||</span>
+                                            <input type="text" name="barcode" placeholder="Escanear o escribir..." value={productForm.barcode} onChange={handleProductFormChange} className="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm" />
                                         </div>
                                     </div>
 
+                                    {/* STOCK E ICONO */}
                                     <div className="grid grid-cols-2 gap-4 mb-4">
                                         <div>
-                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Stock Actual</label>
-                                            <input type="number" name="stock" placeholder="0" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none" required />
+                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Stock</label>
+                                            <input type="number" name="stock" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none" required />
                                         </div>
                                         <div>
-                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Icono (Emoji)</label>
-                                            <input type="text" name="icon_emoji" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none text-center text-xl" maxLength="2" />
+                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Emoji</label>
+                                            <input type="text" name="icon_emoji" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none text-center text-xl" />
                                         </div>
                                     </div>
 
-                                    {/* Selector Rápido de Emojis */}
-                                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
-                                        <p className='text-xs font-bold text-gray-400 mb-2 uppercase'>Selección Rápida</p>
-                                        <div className="grid grid-cols-6 sm:grid-cols-8 gap-2 max-h-24 overflow-y-auto custom-scrollbar p-1"> 
+                                    {/* SELECTOR EMOJI */}
+                                    <div className="bg-gray-50 p-2 rounded-xl border border-gray-200 mb-4">
+                                        <div className="grid grid-cols-8 gap-1 max-h-20 overflow-y-auto custom-scrollbar"> 
                                             {EMOJI_OPTIONS.map((emoji, index) => (
-                                                <button
-                                                    type="button"
-                                                    key={index}
-                                                    onClick={() => handleEmojiSelect(emoji)}
-                                                    className={`text-xl p-1 rounded-lg hover:bg-white hover:shadow-sm transition-all ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white shadow-md' : ''}`}
-                                                >
-                                                    {emoji}
-                                                </button>
+                                                <button type="button" key={index} onClick={() => handleEmojiSelect(emoji)} className={`text-lg p-1 rounded hover:bg-white ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white' : ''}`}>{emoji}</button>
                                             ))}
                                         </div>
                                     </div>
 
-                                    {/* Switch Fiscal */}
-                                    <div className="flex gap-4 items-center bg-blue-50 p-3 rounded-xl border border-blue-100 mb-6">
-                                        <div className="bg-white p-2 rounded-full shadow-sm text-lg">⚖️</div>
-                                        <div className="flex-1">
-                                            <label className="text-xs font-bold text-blue-800 block">Estatus Fiscal (IVA 16%)</label>
-                                            <select 
-                                                name="is_taxable"
-                                                value={productForm.is_taxable.toString()} 
-                                                onChange={handleProductFormChange}
-                                                className="bg-transparent text-sm font-medium text-gray-700 w-full outline-none mt-1"
-                                            >
-                                                <option value="true">GRAVADO (Aplica IVA)</option>
-                                                <option value="false">EXENTO (No aplica)</option>
+                                    {/* ESTATUS Y FISCAL (SWITCHES) */}
+                                    <div className="grid grid-cols-2 gap-4 mb-6">
+                                        {/* Estatus */}
+                                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-2 uppercase">Disponibilidad</label>
+                                            <div className="flex bg-white rounded-lg p-1 border border-gray-200">
+                                                <button type="button" onClick={() => setProductForm(p => ({...p, status: 'ACTIVE'}))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'ACTIVE' ? 'bg-green-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>ACTIVO</button>
+                                                <button type="button" onClick={() => setProductForm(p => ({...p, status: 'INACTIVE'}))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'INACTIVE' ? 'bg-gray-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>INACTIVO</button>
+                                            </div>
+                                        </div>
+
+                                        {/* Fiscal */}
+                                        <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                                            <label className="text-[10px] font-bold text-blue-400 block mb-2 uppercase">Impuesto (IVA)</label>
+                                            <select name="is_taxable" value={productForm.is_taxable.toString()} onChange={handleProductFormChange} className="w-full bg-white border border-blue-200 text-blue-800 text-xs font-bold rounded-lg p-2 outline-none">
+                                                <option value="true">SÍ (Gravado)</option>
+                                                <option value="false">NO (Exento)</option>
                                             </select>
                                         </div>
                                     </div>
                                     
-                                    <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">
-                                        {productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}
-                                    </button>
+                                    <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</button>
                                 </form>
                             </div>
                         </div>
@@ -3345,7 +3341,7 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
               selectedSaleDetail.items,
               selectedSaleDetail.invoice_type, // 'FISCAL' o 'TICKET'
               selectedSaleDetail.status,       // 'PAGADO', 'PENDIENTE', etc.
-              selectedSaleDetail.created_at    // Fecha real de la venta,
+              selectedSaleDetail.created_at,    // Fecha real de la venta
 			  parseFloat(selectedSaleDetail.total_usd)
           );
           

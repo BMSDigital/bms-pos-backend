@@ -85,14 +85,19 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-// 2. Obtener Productos
+// 2. Obtener Productos (CORREGIDO: AHORA INCLUYE STATUS Y BARCODE)
 app.get('/api/products', async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable FROM products ORDER BY id ASC');
+        // AGREGAMOS 'barcode' y 'status' A LA LISTA DE CAMPOS SELECCIONADOS
+        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status FROM products ORDER BY id ASC');
+        
         const productsWithVes = result.rows.map(product => ({
             ...product,
-            price_ves: (parseFloat(product.price_usd) * globalBCVRate).toFixed(2)
+            price_ves: (parseFloat(product.price_usd) * globalBCVRate).toFixed(2),
+            // Aseguramos que si el status viene nulo (productos viejos), se trate como ACTIVE
+            status: product.status || 'ACTIVE' 
         }));
+        
         res.json(productsWithVes);
     } catch (err) {
         console.error(err);
