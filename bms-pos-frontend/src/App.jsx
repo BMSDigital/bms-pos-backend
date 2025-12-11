@@ -441,19 +441,42 @@ function App() {
           Swal.fire({ title: `Guardando Producto...`, didOpen: () => Swal.showLoading() });
           
           const productToSend = {
-              ...productForm,
+              ...productForm, // Hereda id, name, category, icon_emoji, etc.
+              
               // Convertir valores numéricos y booleanos al formato correcto
               price_usd: parseFloat(productForm.price_usd),
               stock: parseInt(productForm.stock),
-              is_taxable: productForm.is_taxable // Ya es un booleano por handleProductFormChange
+              
+              // Aseguramos que is_taxable sea un booleano real (por si viene como string "true")
+              is_taxable: (productForm.is_taxable === true || productForm.is_taxable === 'true'),
+              
+              // IMPORTANTE: Aseguramos explícitamente que status y barcode se envíen
+              status: productForm.status, 
+              barcode: productForm.barcode
           };
+          
+          // Opcional: ver en consola qué se está enviando para depurar
+          console.log("Enviando al servidor:", productToSend); 
           
           await axios.post(`${API_URL}/products`, productToSend);
           
           Swal.fire('¡Éxito!', `Producto ${productForm.id ? 'actualizado' : 'registrado'} correctamente.`, 'success');
           
-          setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: EMOJI_OPTIONS[0] || '🍔' });
-          fetchData(); 
+          // Resetear formulario incluyendo los nuevos campos
+          setProductForm({ 
+              id: null, 
+              name: '', 
+              category: '', 
+              price_usd: 0.00, 
+              stock: 0, 
+              is_taxable: true, 
+              icon_emoji: EMOJI_OPTIONS[0] || '🍔',
+              barcode: '', 
+              status: 'ACTIVE' 
+          });
+          
+          setIsProductFormOpen(false); // Cierra el modal al terminar
+          fetchData(); // Recarga la lista
       } catch (error) {
           const message = error.response?.data?.error || error.message;
           Swal.fire('Error', `Fallo al guardar producto: ${message}`, 'error');
