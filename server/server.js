@@ -374,16 +374,19 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
 app.get('/api/sales/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        // AGREGADOS: payment_method, status al SELECT para evitar undefined en el frontend
         const saleInfoResult = await pool.query(`
-            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, payment_method, status,invoice_type
+            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, payment_method, status, invoice_type
             FROM sales WHERE id = $1
         `, [id]);
 
         if (saleInfoResult.rows.length === 0) return res.status(404).json({ error: 'Venta no encontrada.' });
         
+        // --- AQUÍ ESTÁ LA CORRECCIÓN: Agregamos p.is_taxable ---
         const itemsResult = await pool.query(`
-            SELECT p.name, si.quantity, si.price_at_moment_usd FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = $1
+            SELECT p.name, p.is_taxable, si.quantity, si.price_at_moment_usd 
+            FROM sale_items si 
+            JOIN products p ON si.product_id = p.id 
+            WHERE si.sale_id = $1
         `, [id]);
 
         res.json({ ...saleInfoResult.rows[0], items: itemsResult.rows });

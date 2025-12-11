@@ -658,32 +658,67 @@ function App() {
       }
   };
   
-  // --- GENERADOR DE HTML DE RECIBO (NO IMPRIME DIRECTAMENTE) ---
-  const generateReceiptHTML = (saleId, customer, items, isCreditPayment = false, paymentAmount = 0) => {
+// --- GENERADOR DE HTML DE RECIBO (CORREGIDO: CÁLCULO MIXTO EXACTO) ---
+const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date()) => {
     const rate = bcvRate; 
-    let totalBs = 0;
-    let itemsHTML = '';
+    
+    // 1. Acumuladores separados para BOLÍVARES (Moneda oficial del recibo)
+    let totalBsExento = 0;      // Suma de productos (E)
+    let totalBsBase = 0;        // Suma de productos gravables (Base Imponible)
+    let totalRef = 0;           // Referencial en dólares
 
-    if (isCreditPayment) {
-        totalBs = paymentAmount * rate;
-        itemsHTML = `
-            <tr><td style="padding:4px 0;">1</td><td style="padding:4px 0;">ABONO A CUENTA</td><td class="right" style="padding:4px 0;">${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</td></tr>
-        `;
-    } else {
-        itemsHTML = items.map(item => {
-            const priceUsd = item.price_usd || item.price_at_moment_usd; 
-            const priceBs = priceUsd * rate;
-            const subtotalItemBs = priceBs * item.quantity;
-            totalBs += subtotalItemBs;
-            const exemptMark = item.is_taxable ? '' : ' (E)';
-            return `<tr><td style="padding:4px 0;">${item.quantity}</td><td style="padding:4px 0;">${item.name.substring(0, 22)}${exemptMark}</td><td class="right" style="padding:4px 0;">${subtotalItemBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</td></tr>`;
-        }).join('');
-    }
+    // 2. Recorremos items para clasificar y sumar
+    const itemsHTML = items.map(item => {
+        // Precios
+        const priceUsd = item.price_at_moment_usd || item.price_usd; 
+        const qty = item.quantity;
+        
+        // Totales por ítem
+        const subtotalItemUsd = priceUsd * qty;
+        const subtotalItemBs = subtotalItemUsd * rate;
+        
+        totalRef += subtotalItemUsd;
 
-    const baseImponibleBs = totalBs / 1.16;
-    const ivaBs = totalBs - baseImponibleBs;
+        // LÓGICA CLAVE: Separar Exento de Gravado
+        let exemptMark = '';
+        
+        // IMPORTANTE: Aseguramos que is_taxable sea booleano real
+        const isTaxable = (item.is_taxable === true || item.is_taxable === 'true' || item.is_taxable === 1);
 
-    // Retornamos el HTML como string
+        if (isTaxable) {
+            totalBsBase += subtotalItemBs; // Si paga IVA, va a la Base Imponible
+        } else {
+            totalBsExento += subtotalItemBs; // Si NO paga IVA, va al acumulado Exento
+            exemptMark = ' (E)'; 
+        }
+        
+        return `
+        <tr>
+            <td style="padding:4px 0;">${qty}</td>
+            <td style="padding:4px 0;">${item.name.substring(0, 20)}${exemptMark}</td>
+            <td class="right" style="padding:4px 0;">${subtotalItemBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</td>
+        </tr>`;
+    }).join('');
+
+    // 3. Calculamos el IVA (16%) solo sobre la Base Imponible acumulada
+    const ivaBs = totalBsBase * 0.16; 
+    
+    // 4. Total Final en Bs = Exento + Base + IVA
+    const totalGeneralBs = totalBsExento + totalBsBase + ivaBs;
+
+    // --- LÓGICA DE TEXTOS Y FORMATO ---
+    const isFiscal = invoiceType === 'FISCAL';
+    const isCredit = saleStatus === 'PENDIENTE' || saleStatus === 'PARCIAL';
+    
+    let docTitle = 'NOTA DE ENTREGA';
+    if (isFiscal) docTitle = 'FACTURA (SENIAT)';
+    if (isCredit && !isFiscal) docTitle = 'CONTROL DE CRÉDITO';
+
+    const clientName = customer.full_name || 'CONSUMIDOR FINAL';
+    const clientId = customer.id_number || 'V-00000000';
+    const clientDir = customer.institution || '';
+    const dateStr = new Date(createdAt).toLocaleString('es-VE');
+
     return `
     <html>
     <head>
@@ -695,44 +730,73 @@ function App() {
             .line { border-bottom: 1px dashed #000; margin: 8px 0; }
             .right { text-align: right; }
             .center { text-align: center; }
+            .box { border: 1px solid #000; padding: 5px; text-align: center; margin: 10px 0; font-weight:bold;}
             table { width: 100%; border-collapse: collapse; }
             td { vertical-align: top; }
         </style>
     </head>
     <body>
         <div class="header">
-            <div class="bold" style="font-size:14px">SENIAT</div>
+            ${isFiscal ? '<div class="bold" style="font-size:14px">SENIAT</div>' : ''}
             <div class="bold" style="font-size:16px">TU EMPRESA, C.A.</div>
             <div>RIF: J-12345678-9</div>
-            <div>BARQUISIMETO, LARA</div>
+            <div style="margin-top:5px; font-weight:bold;">${docTitle}</div>
         </div>
+        
         <div class="line"></div>
+        
         <div>
-            <div class="row"><span>RAZON:</span> <span class="right bold">${customer.full_name || 'CONTADO'}</span></div>
-            <div class="row"><span>RIF/CI:</span> <span class="right bold">${customer.id_number || 'V-00000000'}</span></div>
+            <div class="row"><span>CLIENTE:</span> <span class="right bold">${clientName.substring(0,25)}</span></div>
+            <div class="row"><span>RIF/CI:</span> <span class="right bold">${clientId}</span></div>
+            ${(isFiscal && clientDir) ? `<div class="row"><span>DIR:</span> <span class="right" style="font-size:10px">${clientDir.substring(0,25)}</span></div>` : ''}
         </div>
+
         <div class="line"></div>
-        <div class="center bold" style="font-size:14px">FACTURA: 0000${saleId}</div>
-        <div class="center">${new Date().toLocaleString('es-VE')}</div>
+        <div class="row"><span>FACTURA: 0000${saleId}</span><span>${dateStr}</span></div>
         <div class="line"></div>
+        
         <table>
-            <tr><td class="bold">CANT</td><td class="bold">DESCRIPCION</td><td class="bold right">TOTAL</td></tr>
+            <tr><td class="bold">CANT</td><td class="bold">DESCRIPCION</td><td class="bold right">TOTAL BS</td></tr>
             ${itemsHTML}
         </table>
+        
         <div class="line"></div>
+        
         <div class="right">
-            <div class="row"><span>BI (16%):</span> <span>${baseImponibleBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+            ${/* Sección de Totales: Siempre mostramos desglose si hay mezcla */ ''}
+            
+            ${totalBsExento > 0.01 ? `
+            <div class="row"><span>MONTO EXENTO:</span> <span>${totalBsExento.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+            ` : ''}
+
+            ${totalBsBase > 0.01 ? `
+            <div class="row"><span>BASE IMP (16%):</span> <span>${totalBsBase.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
             <div class="row"><span>IVA (16%):</span> <span>${ivaBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+            ` : ''}
+            
             <div class="line"></div>
-            <div class="row bold" style="font-size:16px; margin-top:5px"><span>TOTAL:</span> <span>${totalBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+
+            <div class="row bold" style="font-size:16px; margin-top:5px">
+                <span>TOTAL A PAGAR:</span> 
+                <span>${totalGeneralBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
+            </div>
+            
+            <div class="row bold" style="font-size:12px; color:#555; margin-top:2px;">
+                <span>(REF $${totalRef.toFixed(2)})</span>
+            </div>
         </div>
+
+        ${isCredit ? '<div class="box">VENTA A CRÉDITO<br/>PENDIENTE DE PAGO</div>' : ''}
+        
         <br/>
-        <div class="center" style="font-size:10px">MH-12345678 (Z7C0028562)<br/>NO FISCAL / PRUEBA</div>
+        <div class="center" style="font-size:10px">
+            COPIA DIGITAL / REIMPRESIÓN<br/>
+            ${isFiscal ? 'NO FISCAL - REFERENCIAL' : 'CONTROL INTERNO'}
+        </div>
     </body>
     </html>
     `;
-  };
-
+};
 
   // FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO
   const processSale = async (isCreditFlow = false) => {
@@ -2789,26 +2853,38 @@ function App() {
                       </div>
                   </div>
 
-                  {/* --- BOTÓN DE REIMPRESIÓN (Conectado al visor) --- */}
-                  <div className="p-4 bg-white border-t border-gray-200">
-                      <button 
-                        onClick={() => {
-                            const tempCustomer = {
-                                full_name: selectedSaleDetail.full_name,
-                                id_number: selectedSaleDetail.id_number,
-                                institution: 'REIMPRESIÓN', 
-                                phone: ''
-                            };
-                            // Generamos el HTML y abrimos el visor (receiptPreview)
-                            const html = generateReceiptHTML(selectedSaleDetail.id, tempCustomer, selectedSaleDetail.items);
-                            setReceiptPreview(html); 
-                        }}
-                        className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-all active:scale-95"
-                      >
-                          <span className="text-xl">🖨️</span>
-                          Visualizar / Reimprimir Comprobante
-                      </button>
-                  </div>
+                  {/* --- BOTÓN DE REIMPRESIÓN MEJORADO --- */}
+<div className="p-4 bg-white border-t border-gray-200">
+    <button 
+      onClick={() => {
+          // Preparamos los datos del cliente. Si no hay datos (cliente casual), enviamos vacíos
+          // para que la función generateReceiptHTML use los valores por defecto ("CONSUMIDOR FINAL")
+          const tempCustomer = {
+              full_name: selectedSaleDetail.full_name || '', // Si es null, pasa string vacío
+              id_number: selectedSaleDetail.id_number || '',
+              institution: selectedSaleDetail.institution || '', 
+              phone: selectedSaleDetail.phone || ''
+          };
+
+          // Llamamos a la nueva función con todos los parámetros
+          const html = generateReceiptHTML(
+              selectedSaleDetail.id, 
+              tempCustomer, 
+              selectedSaleDetail.items,
+              selectedSaleDetail.invoice_type, // 'FISCAL' o 'TICKET'
+              selectedSaleDetail.status,       // 'PAGADO', 'PENDIENTE', etc.
+              selectedSaleDetail.created_at    // Fecha real de la venta
+          );
+          
+          setReceiptPreview(html); 
+      }}
+      className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-all active:scale-95"
+    >
+        <span className="text-xl">🖨️</span>
+        {/* Cambiamos el texto dinámicamente para mejor UX */}
+        {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Reimprimir Copia Fiscal' : 'Imprimir Ticket / Nota'}
+    </button>
+</div>
 
               </div>
           </div>
@@ -2919,87 +2995,6 @@ function App() {
                           <p className="text-3xl font-black text-higea-blue leading-none">
                               Ref {dailySalesList.reduce((acc, curr) => acc + parseFloat(curr.total_usd), 0).toFixed(2)}
                           </p>
-                      </div>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {/* --- MODAL DETALLE VENTA (CORRECCIÓN Z-INDEX) --- */}
-      {selectedSaleDetail && (
-          // 💡 SOLUCIÓN Z-INDEX: z-[90] asegura que esté por encima de Ventas Hoy (z-[80])
-          <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-              <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up">
-                  <button onClick={() => setSelectedSaleDetail(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
-                  
-                  <div className="p-5 border-b bg-gray-50">
-                     <h3 className="font-bold text-lg text-gray-800">Detalle de Venta #{selectedSaleDetail.id}</h3>
-                     <p className='text-[10px] text-red-500 font-bold mt-1 bg-red-50 inline-block px-2 py-0.5 rounded border border-red-100'>NO VÁLIDO PARA CRÉDITO FISCAL</p>
-                  </div>
-
-                  {/* ... (Mismo contenido interno del modal que ya tenías) ... */}
-                  {/* Solo asegúrate de copiar el contenido interno del modal que ya tenías o usar el bloque completo que envié antes si lo necesitas */}
-                  <div className="max-h-[70vh] overflow-y-auto">
-                      
-                      {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.full_name) && (
-                          <div className="p-5 bg-yellow-50 border-b border-yellow-100">
-                               <p className="text-xs font-bold uppercase text-yellow-800 mb-2">Detalles de Crédito</p>
-                               <div className="text-sm space-y-1 text-yellow-900">
-                                    <p><span className="font-bold">Cliente:</span> {selectedSaleDetail.full_name}</p>
-                                    <p><span className="font-bold">Cédula/RIF:</span> {selectedSaleDetail.id_number}</p>
-                                    <p><span className="font-bold">Estado:</span> 
-                                       <span className={`ml-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                                         selectedSaleDetail.status === 'PENDIENTE' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
-                                       }`}>
-                                           {selectedSaleDetail.status}
-                                       </span>
-                                    </p>
-                                    {selectedSaleDetail.due_date && <p><span className="font-bold">Vencimiento:</span> {new Date(selectedSaleDetail.due_date).toLocaleDateString()}</p>}
-                               </div>
-                          </div>
-                      )}
-                      
-                      <div className="p-5 space-y-3 border-b border-gray-100">
-                          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Productos Vendidos</p>
-                          {selectedSaleDetail.items.map((item, idx) => {
-                                const itemTotalUsd = parseFloat(item.price_at_moment_usd) * item.quantity;
-                                const itemTotalVes = itemTotalUsd * selectedSaleDetail.bcv_rate_snapshot;
-                                
-                                return (
-                                    <div key={idx} className="flex justify-between pb-2 border-b border-gray-100 last:border-b-0">
-                                        <div>
-                                            <p className="font-bold text-sm text-gray-700">{item.name}</p>
-                                            <p className="text-xs text-gray-400">Ref {item.price_at_moment_usd} c/u</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <span className="bg-blue-50 text-higea-blue text-xs font-bold px-2 py-1 rounded">x{item.quantity}</span>
-                                            <p className="font-bold text-gray-800 mt-1">Ref {itemTotalUsd.toFixed(2)}</p>
-                                            <p className="text-xs text-gray-500">Bs {itemTotalVes.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
-                                        </div>
-                                    </div>
-                                );
-                          })}
-                      </div>
-
-                      <div className="p-5 bg-gray-50">
-                          <div className="text-sm space-y-1 mb-3">
-                              {selectedSaleDetail.taxBreakdown.subtotalExemptUSD > 0 && (
-                                <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Exenta</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalExemptUSD.toFixed(2)}</span></div>
-                              )}
-                              <div className="flex justify-between text-gray-600"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.subtotalTaxableUSD.toFixed(2)}</span></div>
-                              <div className="flex justify-between text-red-600"><span className='font-medium'>Monto IVA ({selectedSaleDetail.taxBreakdown.ivaRate * 100}%)</span><span className='font-bold'>Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</span></div>
-                          </div>
-                          
-                          <div className="flex justify-between pt-3 border-t border-gray-200">
-                            <span className="font-bold text-gray-500">TOTAL FINAL VENTA:</span>
-                            <div>
-                                <span className="font-black text-lg text-higea-red block text-right">Ref {selectedSaleDetail.total_usd.toFixed(2)}</span>
-                                <span className="font-medium text-sm text-gray-700 block text-right">Bs {selectedSaleDetail.total_ves.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
-                            </div>
-                          </div>
-                          <p className="text-xs font-bold uppercase text-gray-400 mt-4 mb-2">Método de Pago:</p>
-                          <p className="text-sm font-medium text-gray-700 break-words">{selectedSaleDetail.payment_method}</p>
-                           <p className="text-xs text-gray-400 mt-2">Tasa BCV del momento: Bs {selectedSaleDetail.bcv_rate_snapshot.toFixed(2)}</p>
                       </div>
                   </div>
               </div>
