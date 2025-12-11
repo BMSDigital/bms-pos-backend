@@ -175,6 +175,14 @@ function App() {
   const productsPerPage = 12; // Límite por página (puedes ajustarlo)
   // ------------------------------------------
   
+  // --- ESTADOS PARA MÓDULO CRÉDITO (NUEVOS) ---
+  const [creditSearchQuery, setCreditSearchQuery] = useState('');
+  const [filteredCredits, setFilteredCredits] = useState([]);
+  const [creditCurrentPage, setCreditCurrentPage] = useState(1);
+  
+  // --- ESTADO PARA PAGINACIÓN DE DETALLE DE DEUDOR ---
+  const [detailsCurrentPage, setDetailsCurrentPage] = useState(1);
+  
   // --- NUEVOS ESTADOS DASHBOARD MEJORADO ---
   const [showStockModal, setShowStockModal] = useState(false); // Modal Alerta Stock
   const [showDailySalesModal, setShowDailySalesModal] = useState(false); // Modal Detalle Ventas Hoy
@@ -251,6 +259,28 @@ function App() {
     setFilteredProducts(results);
     setCurrentPage(1); // Resetear página a 1 al cambiar filtro/búsqueda
   }, [selectedCategory, products, posSearchQuery]);
+  
+  // Efecto para resetear a la página 1 cada vez que abres un cliente nuevo
+  useEffect(() => {
+      if (selectedCreditCustomer) {
+          setDetailsCurrentPage(1);
+      }
+  }, [selectedCreditCustomer]);
+  
+  // 💡 LÓGICA DE FILTRO PARA CRÉDITOS
+  useEffect(() => {
+      if (creditSearchQuery) {
+          const lower = creditSearchQuery.toLowerCase();
+          const results = groupedCredits.filter(c => 
+              c.full_name.toLowerCase().includes(lower) || 
+              c.id_number.toLowerCase().includes(lower)
+          );
+          setFilteredCredits(results);
+      } else {
+          setFilteredCredits(groupedCredits);
+      }
+      setCreditCurrentPage(1); // Resetear a página 1 al buscar
+  }, [creditSearchQuery, groupedCredits]);
 
 
   // Función de carga de clientes (usada en el useEffect anterior)
@@ -661,19 +691,33 @@ function App() {
       }
   };
   
-// --- GENERADOR DE HTML DE RECIBO (FORMATO TICKET 80MM) ---
-const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date()) => {
+// --- GENERADOR DE HTML DE RECIBO (CORREGIDO PARA DEUDORES Y SALDOS INICIALES) ---
+const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0) => {
     const rate = bcvRate; 
     
+    // VALIDACIÓN IMPORTANTE: Si es un Saldo Inicial, 'items' vendrá vacío.
+    // Creamos un item "falso" para que aparezca en el recibo.
+    let itemsToPrint = items;
+    if (!items || items.length === 0) {
+        itemsToPrint = [{
+            name: 'SALDO INICIAL / DEUDA ANTIGUA',
+            quantity: 1,
+            price_usd: totalSaleUsd, // Usamos el total de la venta
+            is_taxable: false
+        }];
+    }
+
     // Acumuladores
     let totalBsExento = 0;      
     let totalBsBase = 0;        
     let totalRefBase = 0;       
     let totalUsdGravable = 0;   
 
-    const itemsHTML = items.map(item => {
-        const priceUsd = item.price_at_moment_usd || item.price_usd; 
+    const itemsHTML = itemsToPrint.map(item => {
+        // En saldos iniciales usamos price_usd directo, en ventas normales price_at_moment
+        const priceUsd = item.price_at_moment_usd || item.price_usd || 0; 
         const qty = item.quantity;
+        
         const subtotalItemUsd = priceUsd * qty;
         const subtotalItemBs = subtotalItemUsd * rate;
         
@@ -704,17 +748,18 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
     const ivaUsd = totalUsdGravable * 0.16; 
     const totalGeneralRef = totalRefBase + ivaUsd; 
 
-    // Textos
+    // Datos del Cliente (Ahora sí llegarán desde el backend)
+    const clientName = customer.full_name || 'CONSUMIDOR FINAL';
+    const clientId = customer.id_number || 'V-00000000';
+    const clientDir = customer.institution || '';
+    
+    // Títulos
     const isFiscal = invoiceType === 'FISCAL';
     const isCredit = saleStatus === 'PENDIENTE' || saleStatus === 'PARCIAL';
-    
     let docTitle = 'NOTA DE ENTREGA';
     if (isFiscal) docTitle = 'FACTURA (SENIAT)';
     if (isCredit && !isFiscal) docTitle = 'CONTROL DE CRÉDITO';
 
-    const clientName = customer.full_name || 'CONSUMIDOR FINAL';
-    const clientId = customer.id_number || 'V-00000000';
-    const clientDir = customer.institution || '';
     const dateStr = new Date(createdAt).toLocaleString('es-VE');
 
     return `
@@ -723,22 +768,8 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
     <head>
         <meta charset="UTF-8">
         <style>
-            /* CONFIGURACIÓN CRÍTICA PARA TICKET 80MM */
-            @page {
-                size: 80mm auto; /* Ancho 80mm, Alto automático */
-                margin: 0;       /* Sin márgenes de hoja */
-            }
-            
-            body {
-                width: 72mm; /* Un poco menos de 80mm para margen de seguridad */
-                margin: 2mm auto;
-                font-family: 'Courier New', Courier, monospace; 
-                font-size: 11px; 
-                text-transform: uppercase; 
-                color: #000; 
-                background: #fff;
-            }
-
+            @page { size: 80mm auto; margin: 0; }
+            body { width: 72mm; margin: 2mm auto; font-family: 'Courier New', Courier, monospace; font-size: 11px; text-transform: uppercase; color: #000; background: #fff; }
             .header { text-align: center; margin-bottom: 5px; }
             .bold { font-weight: bold; }
             .row { display: flex; justify-content: space-between; }
@@ -746,41 +777,35 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
             .right { text-align: right; }
             .center { text-align: center; }
             .box { border: 1px solid #000; padding: 5px; text-align: center; margin: 10px 0; font-weight:bold;}
-            
-            /* Ajuste de tabla para que no se salga */
             table { width: 100%; border-collapse: collapse; table-layout: fixed; }
             td { vertical-align: top; word-wrap: break-word; }
-            
-            /* Columnas de la tabla */
-            td:nth-child(1) { width: 15%; } /* Cant */
-            td:nth-child(2) { width: 55%; } /* Desc */
-            td:nth-child(3) { width: 30%; } /* Total */
+            td:nth-child(1) { width: 15%; } 
+            td:nth-child(2) { width: 55%; } 
+            td:nth-child(3) { width: 30%; } 
         </style>
     </head>
     <body>
         <div class="header">
             ${isFiscal ? '<div class="bold" style="font-size:12px">SENIAT</div>' : ''}
-            
             <div class="bold" style="font-size:14px">VOLUNTARIADO HIGEA</div>
             <div style="font-size:10px; margin-bottom: 2px;">RIF: J-30521322-4</div>
             <div style="font-size:9px; line-height: 1.1;">
                 Av. Vargas, Carrera 31, Edif. Sede de la Fundación Higea<br/>
                 Barquisimeto, Estado Lara
             </div>
-
             <div style="margin-top:5px; font-weight:bold; border-top:1px solid #000; padding-top:2px; font-size:12px;">${docTitle}</div>
         </div>
         
         <div style="font-size:10px;">
             <div class="row"><span>CLIENTE:</span> <span class="right bold">${clientName.substring(0,20)}</span></div>
             <div class="row"><span>RIF/CI:</span> <span class="right bold">${clientId}</span></div>
-            ${(isFiscal && clientDir) ? `<div class="row"><span>DIR:</span> <span class="right" style="font-size:9px">${clientDir.substring(0,20)}</span></div>` : ''}
+            ${(clientDir) ? `<div class="row"><span>DIR:</span> <span class="right" style="font-size:9px">${clientDir.substring(0,20)}</span></div>` : ''}
         </div>
 
         <div class="line"></div>
         <div class="row" style="font-size:10px;">
             <span>FACT: 0000${saleId}</span>
-            <span>${dateStr.split(',')[0]} ${dateStr.split(',')[1].substring(0,6)}</span>
+            <span>${dateStr.split(',')[0]}</span>
         </div>
         <div class="line"></div>
         
@@ -792,10 +817,6 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
         <div class="line"></div>
         
         <div class="right">
-            ${totalBsExento > 0.01 ? `
-            <div class="row"><span>EXENTO:</span> <span>${totalBsExento.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
-            ` : ''}
-
             ${totalBsBase > 0.01 ? `
             <div class="row"><span>BI (16%):</span> <span>${totalBsBase.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
             <div class="row"><span>IVA (16%):</span> <span>${ivaBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
@@ -1645,37 +1666,50 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
       }
   };
 
-  // COMPONENTE VISUAL: Barra de Progreso Simple (Para gráficas sin librerías)
-  const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney }) => {
-      if (!data || data.length === 0) return <p className="text-gray-400 text-sm">Sin datos disponibles.</p>;
-      
-      const maxValue = Math.max(...data.map(d => parseFloat(d[valueKey])));
-      
-      return (
-          <div className="space-y-3">
-              {data.map((item, idx) => {
-                  const val = parseFloat(item[valueKey]);
-                  const percent = maxValue > 0 ? (val / maxValue) * 100 : 0;
-                  return (
-                      <div key={idx} className="w-full">
-                          <div className="flex justify-between text-xs mb-1">
-                              <span className="font-bold text-gray-700 truncate w-2/3">{item[labelKey]}</span>
-                              <span className="font-medium text-gray-600">
-                                  {formatMoney ? `Ref ${val.toFixed(2)}` : val}
-                              </span>
-                          </div>
-                          <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
-                              <div 
-                                  className={`h-2.5 rounded-full ${colorClass}`} 
-                                  style={{ width: `${percent}%`, transition: 'width 1s ease-in-out' }}
-                              ></div>
-                          </div>
-                      </div>
-                  )
-              })}
-          </div>
-      )
-  };
+  // --- COMPONENTE DE GRÁFICA MEJORADO (UX PRO) ---
+const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, icon }) => {
+    if (!data || data.length === 0) return (
+        <div className="flex flex-col items-center justify-center h-40 text-gray-300">
+            <span className="text-4xl mb-2">📊</span>
+            <p className="text-xs font-medium">Sin datos para mostrar</p>
+        </div>
+    );
+    
+    const maxValue = Math.max(...data.map(d => parseFloat(d[valueKey])));
+    
+    return (
+        <div className="space-y-4">
+            {data.map((item, idx) => {
+                const val = parseFloat(item[valueKey]);
+                const percent = maxValue > 0 ? (val / maxValue) * 100 : 0;
+                return (
+                    <div key={idx} className="group">
+                        <div className="flex justify-between items-end mb-1">
+                            <span className="text-xs font-bold text-gray-700 flex items-center gap-2">
+                                <span className="text-gray-400 font-normal w-4">{idx + 1}.</span> 
+                                {item[labelKey]}
+                            </span>
+                            <span className="text-xs font-black text-gray-800">
+                                {formatMoney ? `Ref ${val.toLocaleString('es-VE', {minimumFractionDigits: 2})}` : val}
+                            </span>
+                        </div>
+                        
+                        {/* Barra con fondo y animación */}
+                        <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden relative">
+                            <div 
+                                className={`h-full rounded-full ${colorClass} transition-all duration-1000 ease-out relative group-hover:opacity-90`} 
+                                style={{ width: `${percent}%` }}
+                            >
+                                {/* Brillo sutil en la barra */}
+                                <div className="absolute top-0 right-0 bottom-0 left-0 bg-gradient-to-b from-white/20 to-transparent"></div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            })}
+        </div>
+    )
+};
 
   // --- RESTO DE COMPONENTES Y LÓGICA DE UI ---
   const CartItem = ({ item }) => (
@@ -1980,101 +2014,309 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
               </div>
            </div>
         ) : view === 'CREDIT_REPORT' ? (
-             /* NUEVO PANEL DE REPORTES DE CRÉDITO AGRUPADO */
-           <div className="p-4 md:p-8 overflow-y-auto h-full">
-               <h2 className="text-2xl font-black text-gray-800 mb-6">Cuentas por Cobrar (Consolidado)</h2>
+             /* --- MÓDULO DE CRÉDITO (REDISEÑO CON BÚSQUEDA Y PAGINACIÓN) --- */
+           <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50">
                
-               {/* Si no hay cliente seleccionado, mostramos la LISTA GENERAL AGRUPADA */}
+               {/* Si NO hay cliente seleccionado, mostramos la LISTA GENERAL */}
                {!selectedCreditCustomer ? (
-                   <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                       <div className="p-5 border-b border-gray-100 bg-gray-50"><h3 className="font-bold text-gray-800">Clientes con Deuda ({groupedCredits.length})</h3></div>
-                       <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs md:text-sm text-gray-600">
-                                <thead className="bg-gray-100 text-gray-500 uppercase font-bold">
-                                    <tr>
-                                        <th className="px-4 py-3">Cliente</th>
-                                        <th className="px-4 py-3">Identificador</th>
-                                        <th className="px-4 py-3 text-center">Facturas</th>
-                                        <th className="px-4 py-3 text-right">Deuda Total</th>
-                                        <th className="px-4 py-3 text-right">Restante</th>
-                                        <th className="px-4 py-3 text-center">Acción</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                    {groupedCredits.map((client) => (
-                                        <tr key={client.customer_id} className="hover:bg-blue-50 cursor-pointer" onClick={() => openCustomerCredits(client)}>
-                                            <td className="px-4 py-3 font-bold text-higea-blue">{client.full_name}</td>
-                                            <td className="px-4 py-3">{client.id_number}</td>
-                                            <td className="px-4 py-3 text-center"><span className="bg-gray-200 px-2 py-1 rounded-full text-xs font-bold">{client.total_bills}</span></td>
-                                            <td className="px-4 py-3 text-right text-gray-400">Ref {parseFloat(client.total_debt).toFixed(2)}</td>
-                                            <td className="px-4 py-3 text-right font-black text-higea-red text-base">Ref {parseFloat(client.remaining_balance).toFixed(2)}</td>
-                                            <td className="px-4 py-3 text-center">
-                                                <button className="bg-blue-100 text-higea-blue text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-blue-200">
-                                                    Ver Detalles
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {groupedCredits.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-gray-400">¡Al día! No hay deudas pendientes.</td></tr>}
-                                </tbody>
-                            </table>
+                   <>
+                       {/* CABECERA Y CONTROLES */}
+                       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+                           <div>
+                               <h2 className="text-2xl font-black text-gray-800">Cartera de Crédito</h2>
+                               <p className="text-sm text-gray-500">Gestión de cuentas por cobrar consolidadas</p>
+                           </div>
+                           
+                           {/* BARRA DE BÚSQUEDA */}
+                           <div className="relative w-full md:w-72">
+                               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                               <input 
+                                   type="text" 
+                                   placeholder="Buscar cliente o ID..." 
+                                   value={creditSearchQuery}
+                                   onChange={(e) => setCreditSearchQuery(e.target.value)}
+                                   className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-higea-blue outline-none shadow-sm text-sm" 
+                               />
+                           </div>
                        </div>
-                   </div>
+
+                       {/* CONTENEDOR DE LA LISTA */}
+                       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                           
+                           {/* ENCABEZADO TABLA (SOLO PC) */}
+                           <div className="hidden md:grid grid-cols-12 bg-gray-50 p-4 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                               <div className="col-span-4">Cliente / Deudor</div>
+                               <div className="col-span-2">Identificación</div>
+                               <div className="col-span-1 text-center">Facturas</div>
+                               <div className="col-span-2 text-right">Deuda Total</div>
+                               <div className="col-span-2 text-right text-higea-red">Restante</div>
+                               <div className="col-span-1 text-center">Acción</div>
+                           </div>
+
+                           {/* LISTADO DE DATOS */}
+                           <div className="divide-y divide-gray-100">
+                               {(() => {
+                                   const creditsPerPage = 10;
+                                   const indexOfLastCredit = creditCurrentPage * creditsPerPage;
+                                   const indexOfFirstCredit = indexOfLastCredit - creditsPerPage;
+                                   const currentCredits = filteredCredits.slice(indexOfFirstCredit, indexOfLastCredit);
+                                   const totalCreditPages = Math.ceil(filteredCredits.length / creditsPerPage);
+
+                                   if (filteredCredits.length === 0) {
+                                       return (
+                                           <div className="p-12 text-center flex flex-col items-center justify-center text-gray-400">
+                                               <div className="text-4xl mb-2">🎉</div>
+                                               <p>No se encontraron deudas pendientes.</p>
+                                           </div>
+                                       );
+                                   }
+
+                                   return (
+                                       <>
+                                           {currentCredits.map((client) => (
+                                               <div 
+                                                   key={client.customer_id} 
+                                                   onClick={() => openCustomerCredits(client)}
+                                                   className="p-4 hover:bg-blue-50 transition-colors cursor-pointer group"
+                                               >
+                                                   {/* VISTA DESKTOP */}
+                                                   <div className="hidden md:grid grid-cols-12 items-center gap-2">
+                                                       <div className="col-span-4 font-bold text-gray-800 flex items-center gap-3">
+                                                           <div className="h-8 w-8 rounded-full bg-blue-100 text-higea-blue flex items-center justify-center text-xs font-bold">
+                                                               {client.full_name.charAt(0)}
+                                                           </div>
+                                                           {client.full_name}
+                                                       </div>
+                                                       <div className="col-span-2 text-xs text-gray-500 font-mono">{client.id_number}</div>
+                                                       <div className="col-span-1 text-center">
+                                                           <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded-lg text-xs font-bold">{client.total_bills}</span>
+                                                       </div>
+                                                       <div className="col-span-2 text-right text-gray-400 text-xs font-medium">Ref {parseFloat(client.total_debt).toFixed(2)}</div>
+                                                       <div className="col-span-2 text-right font-black text-higea-red text-sm">Ref {parseFloat(client.remaining_balance).toFixed(2)}</div>
+                                                       <div className="col-span-1 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                                                           <span className="text-xs font-bold text-higea-blue hover:underline">Ver →</span>
+                                                       </div>
+                                                   </div>
+
+                                                   {/* VISTA MÓVIL */}
+                                                   <div className="md:hidden flex justify-between items-center">
+                                                       <div className="flex items-center gap-3">
+                                                           <div className="h-10 w-10 rounded-full bg-blue-50 text-higea-blue flex items-center justify-center font-bold">
+                                                               {client.full_name.charAt(0)}
+                                                           </div>
+                                                           <div>
+                                                               <p className="font-bold text-gray-800 text-sm line-clamp-1">{client.full_name}</p>
+                                                               <p className="text-xs text-gray-400">{client.total_bills} facturas pendientes</p>
+                                                           </div>
+                                                       </div>
+                                                       <div className="text-right">
+                                                           <p className="text-[10px] text-gray-400 uppercase">Por Pagar</p>
+                                                           <p className="font-black text-higea-red text-lg">Ref {parseFloat(client.remaining_balance).toFixed(2)}</p>
+                                                       </div>
+                                                   </div>
+                                               </div>
+                                           ))}
+
+                                           {/* PAGINACIÓN */}
+                                           {totalCreditPages > 1 && (
+                                               <div className="p-4 border-t border-gray-100 flex justify-center items-center gap-4 bg-white">
+                                                   <button 
+                                                       onClick={() => setCreditCurrentPage(prev => Math.max(1, prev - 1))}
+                                                       disabled={creditCurrentPage === 1} 
+                                                       className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                                                   >
+                                                       Anterior
+                                                   </button>
+                                                   <span className="text-xs font-bold text-gray-500">Pág {creditCurrentPage} de {totalCreditPages}</span>
+                                                   <button 
+                                                       onClick={() => setCreditCurrentPage(prev => Math.min(totalCreditPages, prev + 1))}
+                                                       disabled={creditCurrentPage === totalCreditPages} 
+                                                       className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
+                                                   >
+                                                       Siguiente
+                                                   </button>
+                                               </div>
+                                           )}
+                                       </>
+                                   );
+                               })()}
+                           </div>
+                       </div>
+                   </>
                ) : (
-                   /* Si hay cliente seleccionado, mostramos SUS FACTURAS */
-                   <div className="bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden animate-slide-up">
-                        <div className="p-5 border-b border-gray-100 bg-blue-50 flex justify-between items-center">
+                   /* VISTA DE DETALLE (FACTURAS DEL CLIENTE) - MEJORADA CON PAGINACIÓN Y UX MÓVIL */
+                   <div className="bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden animate-slide-up h-full flex flex-col">
+                        
+                        {/* CABECERA FIJA DEL CLIENTE */}
+                        <div className="p-5 border-b border-gray-100 bg-blue-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
                             <div>
-                                <button onClick={() => setSelectedCreditCustomer(null)} className="text-gray-500 hover:text-higea-blue font-bold text-sm mb-1 flex items-center gap-1">← Volver al listado</button>
-                                <h3 className="text-xl font-black text-higea-blue">{selectedCreditCustomer.full_name}</h3>
-                                <p className="text-sm text-gray-600">ID: {selectedCreditCustomer.id_number}</p>
+                                <button 
+                                    onClick={() => setSelectedCreditCustomer(null)} 
+                                    className="text-gray-500 hover:text-higea-blue font-bold text-xs mb-2 flex items-center gap-1 transition-colors px-2 py-1 hover:bg-white rounded-lg"
+                                >
+                                    <span>←</span> Volver al listado
+                                </button>
+                                <h3 className="text-xl md:text-2xl font-black text-higea-blue leading-tight">
+                                    {selectedCreditCustomer.full_name}
+                                </h3>
+                                <div className="flex flex-wrap gap-3 mt-1">
+                                    <span className="text-xs font-mono bg-white border border-gray-200 px-2 py-0.5 rounded text-gray-500">
+                                        🆔 {selectedCreditCustomer.id_number}
+                                    </span>
+                                    {selectedCreditCustomer.phone && (
+                                        <span className="text-xs bg-white border border-gray-200 px-2 py-0.5 rounded text-gray-500">
+                                            📞 {selectedCreditCustomer.phone}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
-                            <div className="text-right bg-white p-3 rounded-xl border border-blue-100 shadow-sm">
-                                <p className="text-xs text-gray-500 uppercase font-bold">Total a Pagar</p>
-                                <p className="text-2xl font-black text-higea-red">Ref {parseFloat(selectedCreditCustomer.remaining_balance).toFixed(2)}</p>
+                            
+                            <div className="w-full md:w-auto bg-white p-4 rounded-2xl border border-blue-100 shadow-sm flex justify-between md:block items-center">
+                                <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-0 md:mb-1">Deuda Total</p>
+                                <p className="text-2xl md:text-3xl font-black text-higea-red">Ref {parseFloat(selectedCreditCustomer.remaining_balance).toFixed(2)}</p>
                             </div>
                         </div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs md:text-sm text-gray-600">
-                                <thead className="bg-gray-100 text-gray-500 uppercase font-bold">
-                                    <tr>
-                                        <th className="px-4 py-3"># Venta</th>
-                                        <th className="px-4 py-3">Fecha</th>
-                                        <th className="px-4 py-3">Vence</th>
-                                        <th className="px-4 py-3 text-right">Total</th>
-                                        <th className="px-4 py-3 text-right">Abonado</th>
-                                        <th className="px-4 py-3 text-right">Pendiente</th>
-                                        <th className="px-4 py-3 text-center">Estado</th>
-                                        <th className="px-4 py-3 text-right">Acción</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                    {customerCreditsDetails.map((sale) => (
-                                        <tr key={sale.id} className={sale.is_overdue ? 'bg-red-50' : ''}>
-                                            <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
-                                            <td className="px-4 py-3">{new Date(sale.created_at).toLocaleDateString()}</td>
-                                            <td className={`px-4 py-3 font-bold ${sale.is_overdue ? 'text-red-600' : ''}`}>
-                                                {new Date(sale.due_date).toLocaleDateString()}
-                                                {sale.is_overdue && <span className="ml-1 text-[9px] bg-red-600 text-white px-1 rounded">VENCIDA</span>}
-                                            </td>
-                                            <td className="px-4 py-3 text-right">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
-                                            <td className="px-4 py-3 text-right text-green-600">Ref {parseFloat(sale.amount_paid_usd || 0).toFixed(2)}</td>
-                                            <td className="px-4 py-3 text-right font-black text-gray-800">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</td>
-                                            <td className="px-4 py-3 text-center">
-                                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-100 text-orange-600' : 'bg-yellow-100 text-yellow-600'}`}>
-                                                    {sale.status}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-right flex gap-2 justify-end">
-                                                <button onClick={() => showSaleDetail(sale)} className="bg-gray-100 text-gray-600 p-2 rounded-lg hover:bg-gray-200" title="Ver Items">👁️</button>
-                                                <button onClick={() => handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0))} className="bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-green-600 shadow-md active:scale-95 transition-transform">
-                                                    Abonar
+                        
+                        {/* CONTENEDOR DE LISTA CON SCROLL */}
+                        <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
+                            
+                            {/* LÓGICA DE PAGINACIÓN */}
+                            {(() => {
+                                const itemsPerPage = 5; // Menos ítems por página para que se vea bien en móviles
+                                const indexOfLastItem = detailsCurrentPage * itemsPerPage;
+                                const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+                                const currentInvoices = customerCreditsDetails.slice(indexOfFirstItem, indexOfLastItem);
+                                const totalPages = Math.ceil(customerCreditsDetails.length / itemsPerPage);
+
+                                return (
+                                    <>
+                                        {/* --- VERSIÓN ESCRITORIO (TABLA) --- */}
+                                        <div className="hidden md:block bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                                            <table className="w-full text-left text-sm text-gray-600">
+                                                <thead className="bg-gray-50 text-gray-400 uppercase font-bold tracking-wider text-xs border-b border-gray-100">
+                                                    <tr>
+                                                        <th className="px-6 py-4"># Venta</th>
+                                                        <th className="px-6 py-4">Fechas</th>
+                                                        <th className="px-6 py-4 text-right">Total</th>
+                                                        <th className="px-6 py-4 text-right">Abonado</th>
+                                                        <th className="px-6 py-4 text-right">Restante</th>
+                                                        <th className="px-6 py-4 text-center">Estado</th>
+                                                        <th className="px-6 py-4 text-center">Acción</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100">
+                                                    {currentInvoices.map((sale) => (
+                                                        <tr key={sale.id} className={`hover:bg-blue-50 transition-colors ${sale.is_overdue ? 'bg-red-50/20' : ''}`}>
+                                                            <td className="px-6 py-4 font-bold text-higea-blue">#{sale.id}</td>
+                                                            <td className="px-6 py-4">
+                                                                <div className="text-xs text-gray-500">Emisión: {new Date(sale.created_at).toLocaleDateString()}</div>
+                                                                <div className={`text-xs font-bold ${sale.is_overdue ? 'text-red-600' : 'text-gray-400'}`}>
+                                                                    Vence: {new Date(sale.due_date).toLocaleDateString()}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-right">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
+                                                            <td className="px-6 py-4 text-right text-green-600 font-medium">Ref {parseFloat(sale.amount_paid_usd || 0).toFixed(2)}</td>
+                                                            <td className="px-6 py-4 text-right">
+                                                                <span className="font-black text-gray-800 text-base">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</span>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-center">
+                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-100 text-orange-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                                                                    {sale.status}
+                                                                </span>
+                                                                {sale.is_overdue && <div className="text-[9px] text-red-600 font-black mt-1">VENCIDA</div>}
+                                                            </td>
+                                                            <td className="px-6 py-4 text-center">
+                                                                <div className="flex justify-center gap-2">
+                                                                    <button onClick={() => showSaleDetail(sale)} className="p-2 text-gray-400 hover:text-higea-blue bg-white border border-gray-200 rounded-lg shadow-sm" title="Ver Detalle">
+                                                                        👁️
+                                                                    </button>
+                                                                    <button 
+                                                                        onClick={() => handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0))} 
+                                                                        className="bg-green-500 text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-green-600 shadow-md active:scale-95 transition-all"
+                                                                    >
+                                                                        Abonar
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        {/* --- VERSIÓN MÓVIL (TARJETAS) --- */}
+                                        <div className="md:hidden space-y-3">
+                                            {currentInvoices.map((sale) => (
+                                                <div key={sale.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
+                                                    {/* Indicador lateral de estado */}
+                                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${sale.is_overdue ? 'bg-red-500' : (sale.status === 'PARCIAL' ? 'bg-orange-400' : 'bg-yellow-400')}`}></div>
+                                                    
+                                                    <div className="pl-3">
+                                                        <div className="flex justify-between items-start mb-2">
+                                                            <div>
+                                                                <span className="font-black text-lg text-gray-800">#{sale.id}</span>
+                                                                <p className="text-[10px] text-gray-400">Emisión: {new Date(sale.created_at).toLocaleDateString()}</p>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-50 text-orange-600' : 'bg-yellow-50 text-yellow-600'}`}>
+                                                                    {sale.status}
+                                                                </span>
+                                                                {sale.is_overdue && <p className="text-[10px] font-bold text-red-500 mt-1">¡VENCIDA!</p>}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex justify-between items-end bg-gray-50 p-2 rounded-lg mb-3">
+                                                            <div>
+                                                                <p className="text-[10px] text-gray-400">Total Original</p>
+                                                                <p className="text-xs font-medium text-gray-600">Ref {parseFloat(sale.total_usd).toFixed(2)}</p>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <p className="text-[10px] text-higea-red font-bold uppercase">Deuda Restante</p>
+                                                                <p className="text-xl font-black text-higea-red">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => showSaleDetail(sale)} className="flex-1 py-2 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                                                                Ver Detalle
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0))}
+                                                                className="flex-1 py-2 text-xs font-bold text-white bg-green-500 rounded-lg shadow-md active:scale-95 transition-all"
+                                                            >
+                                                                Abonar
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {/* --- CONTROLES DE PAGINACIÓN (COMUNES) --- */}
+                                        {totalPages > 1 && (
+                                            <div className="mt-4 flex justify-center items-center gap-4 py-2">
+                                                <button 
+                                                    onClick={() => setDetailsCurrentPage(prev => Math.max(1, prev - 1))}
+                                                    disabled={detailsCurrentPage === 1} 
+                                                    className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-gray-200 disabled:opacity-50 disabled:bg-gray-50 shadow-sm"
+                                                >
+                                                    Anterior
                                                 </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                                <span className="text-xs font-bold text-gray-500 bg-white px-3 py-2 rounded-lg border border-gray-100 shadow-sm">
+                                                    Página {detailsCurrentPage} de {totalPages}
+                                                </span>
+                                                <button 
+                                                    onClick={() => setDetailsCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                                                    disabled={detailsCurrentPage === totalPages} 
+                                                    className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-gray-200 disabled:opacity-50 disabled:bg-gray-50 shadow-sm"
+                                                >
+                                                    Siguiente
+                                                </button>
+                                            </div>
+                                        )}
+                                    </>
+                                );
+                            })()}
                         </div>
                    </div>
                )}
@@ -2593,99 +2835,140 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
                 )}
             </div>
         ) : view === 'ADVANCED_REPORTS' ? (
-            /* --- VISTA: REPORTES GERENCIALES AVANZADOS (MEJORADO UX) --- */
-            <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-[#F8FAFC]">
+            /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO) --- */
+            <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50">
                 
-                {/* Cabecera y Controles */}
-                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-4">
+                {/* CABECERA */}
+                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-6">
                     <div>
-                        <h2 className="text-3xl font-black text-gray-800 tracking-tight">Inteligencia de Negocios</h2>
-                        <p className="text-sm text-gray-500 mt-1">Análisis detallado del rendimiento</p>
+                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Inteligencia de Negocios</h2>
+                        <p className="text-slate-500 mt-1 font-medium">Análisis de rendimiento y toma de decisiones</p>
                     </div>
                     
-                    <div className="flex flex-wrap gap-3 bg-white p-2 rounded-2xl shadow-sm border border-gray-200">
-                        <div className="flex items-center gap-2 px-2 bg-gray-50 rounded-xl border border-gray-100">
-                            <span className="text-xs font-bold text-gray-400">Rango:</span>
+                    {/* CONTROL DE FECHAS MEJORADO */}
+                    <div className="flex flex-wrap items-center gap-3 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200">
+                        <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
+                            <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Desde</span>
                             <input 
                                 type="date" 
                                 value={reportDateRange.start}
                                 onChange={(e) => setReportDateRange(prev => ({...prev, start: e.target.value}))}
-                                className="text-sm font-bold text-gray-700 bg-transparent outline-none py-2"
+                                className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer"
                             />
-                            <span className="text-gray-300">|</span>
+                        </div>
+                        <div className="text-slate-300 font-bold">→</div>
+                        <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
+                            <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Hasta</span>
                             <input 
                                 type="date" 
                                 value={reportDateRange.end}
                                 onChange={(e) => setReportDateRange(prev => ({...prev, end: e.target.value}))}
-                                className="text-sm font-bold text-gray-700 bg-transparent outline-none py-2"
+                                className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer"
                             />
                         </div>
-                        <button onClick={fetchAdvancedReport} className="bg-higea-blue text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 shadow-md transition-all active:scale-95 flex items-center gap-2">
-                            <span>🔍</span> Actualizar
+                        
+                        <div className="h-8 w-px bg-slate-200 mx-1"></div>
+
+                        <button onClick={fetchAdvancedReport} className="bg-higea-blue hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-blue-200 transition-all active:scale-95 flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            Actualizar
                         </button>
-                        <button onClick={exportReportToCSV} className="bg-green-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-green-700 shadow-md transition-all active:scale-95 flex items-center gap-2">
-                            <span>📊</span> Exportar Excel
+                        <button onClick={exportReportToCSV} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-green-200 transition-all active:scale-95 flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            Excel
                         </button>
                     </div>
                 </div>
 
                 {analyticsData ? (
-                    <div className="space-y-6 pb-20">
+                    <div className="space-y-8 pb-20">
                         
-                        {/* 1. CARDS KPI (Indicadores Clave) */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="bg-white p-5 rounded-3xl shadow-sm border border-blue-100 relative overflow-hidden group hover:shadow-md transition-all">
-                                <div className="absolute right-0 top-0 h-20 w-20 bg-blue-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-                                <p className="text-gray-400 text-xs font-bold uppercase tracking-wider relative z-10">Ingresos Totales (Ref)</p>
-                                <p className="text-4xl font-black text-higea-blue mt-2 relative z-10">
-                                    ${analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toFixed(2)}
-                                </p>
+                        {/* 1. SECCIÓN KPI (TARJETAS GRANDES) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {/* KPI 1: Ingresos */}
+                            <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-200 relative overflow-hidden group">
+                                <div className="absolute right-0 top-0 h-32 w-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+                                <div className="relative z-10">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm">
+                                            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                        </div>
+                                        <span className="text-blue-200 text-xs font-bold bg-blue-900/30 px-2 py-1 rounded-lg">Total Facturado</span>
+                                    </div>
+                                    <p className="text-4xl font-black tracking-tight mb-1">
+                                        Ref {analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                                    </p>
+                                    <p className="text-blue-200 text-sm font-medium">Ingresos brutos en el periodo</p>
+                                </div>
                             </div>
-                            <div className="bg-white p-5 rounded-3xl shadow-sm border border-purple-100 relative overflow-hidden group hover:shadow-md transition-all">
-                                <div className="absolute right-0 top-0 h-20 w-20 bg-purple-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-                                <p className="text-gray-400 text-xs font-bold uppercase tracking-wider relative z-10">Transacciones</p>
-                                <p className="text-4xl font-black text-purple-600 mt-2 relative z-10">
-                                    {analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0)}
-                                </p>
+
+                            {/* KPI 2: Transacciones */}
+                            <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group">
+                                <div className="absolute right-0 bottom-0 h-24 w-24 bg-purple-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
+                                <div className="relative z-10">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="bg-purple-100 p-3 rounded-2xl">
+                                            <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                                        </div>
+                                        <span className="text-purple-600 text-xs font-bold bg-purple-50 px-2 py-1 rounded-lg">Volumen</span>
+                                    </div>
+                                    <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">
+                                        {analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0)}
+                                    </p>
+                                    <p className="text-slate-400 text-sm font-medium">Operaciones realizadas</p>
+                                </div>
                             </div>
-                            <div className="bg-white p-5 rounded-3xl shadow-sm border border-orange-100 relative overflow-hidden group hover:shadow-md transition-all">
-                                <div className="absolute right-0 top-0 h-20 w-20 bg-orange-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-                                <p className="text-gray-400 text-xs font-bold uppercase tracking-wider relative z-10">Ticket Promedio</p>
-                                <p className="text-4xl font-black text-orange-500 mt-2 relative z-10">
-                                    ${(() => {
-                                        const total = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
-                                        const count = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0);
-                                        return count > 0 ? (total / count).toFixed(2) : '0.00';
-                                    })()}
-                                </p>
+
+                            {/* KPI 3: Promedio por Venta (Ticket Promedio Renombrado) */}
+                            <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group">
+                                <div className="absolute right-0 bottom-0 h-24 w-24 bg-emerald-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
+                                <div className="relative z-10">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="bg-emerald-100 p-3 rounded-2xl">
+                                            <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                                        </div>
+                                        <span className="text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">KPI Clave</span>
+                                    </div>
+                                    <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">
+                                        Ref {(() => {
+                                            const total = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
+                                            const count = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0);
+                                            return count > 0 ? (total / count).toLocaleString('es-VE', {minimumFractionDigits: 2}) : '0.00';
+                                        })()}
+                                    </p>
+                                    <p className="text-slate-400 text-sm font-medium">Promedio por Venta</p>
+                                </div>
                             </div>
                         </div>
 
-                        {/* 2. GRÁFICAS DE BARRAS */}
+                        {/* 2. GRÁFICAS COMPARATIVAS (GRID 2 COLUMNAS) */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            {/* Productos Más Vendidos */}
-                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                                        <span className="bg-yellow-100 text-yellow-600 p-1.5 rounded-lg text-lg">🏆</span> 
-                                        Productos Estrella
-                                    </h3>
+                            {/* TOP PRODUCTOS */}
+                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
+                                    <div className="bg-yellow-100 p-2 rounded-xl text-yellow-600 text-xl">🏆</div>
+                                    <div>
+                                        <h3 className="font-bold text-slate-800 text-lg">Productos Estrella</h3>
+                                        <p className="text-xs text-slate-400">Los 5 más vendidos en el periodo</p>
+                                    </div>
                                 </div>
                                 <SimpleBarChart 
                                     data={analyticsData.topProducts} 
                                     labelKey="name" 
                                     valueKey="total_qty" 
                                     colorClass="bg-yellow-400"
+                                    formatMoney={false}
                                 />
                             </div>
 
-                            {/* Ventas por Categoría (NUEVO) */}
-                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                                        <span className="bg-indigo-100 text-indigo-600 p-1.5 rounded-lg text-lg">🏷️</span> 
-                                        Ventas por Categoría (USD)
-                                    </h3>
+                            {/* VENTAS POR CATEGORÍA */}
+                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
+                                    <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600 text-xl">🏷️</div>
+                                    <div>
+                                        <h3 className="font-bold text-slate-800 text-lg">Rendimiento por Categoría</h3>
+                                        <p className="text-xs text-slate-400">Ingresos generados (USD/Ref)</p>
+                                    </div>
                                 </div>
                                 <SimpleBarChart 
                                     data={analyticsData.salesByCategory} 
@@ -2697,69 +2980,93 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
                             </div>
                         </div>
 
-                        {/* 3. TABLA DE EVOLUCIÓN DETALLADA */}
-                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                            <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
-                                <span className="bg-gray-100 text-gray-600 p-1.5 rounded-lg text-lg">📅</span> 
-                                Histórico Diario
-                            </h3>
-                            <div className="overflow-x-auto rounded-xl border border-gray-100">
-                                <table className="w-full text-left text-sm text-gray-600">
-                                    <thead className="bg-gray-50 text-gray-500 uppercase text-xs font-bold">
-                                        <tr>
-                                            <th className="px-6 py-4">Fecha</th>
-                                            <th className="px-6 py-4 text-center">N° Ventas</th>
-                                            <th className="px-6 py-4 text-right">Total Ref</th>
-                                            <th className="px-6 py-4 text-right">Total Bs</th>
-                                            <th className="px-6 py-4 text-center">Desempeño</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {analyticsData.salesOverTime.map((day, idx) => {
-                                            const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
-                                            const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
-                                            
-                                            return (
-                                                <tr key={idx} className="hover:bg-blue-50 transition-colors">
-                                                    <td className="px-6 py-4 font-medium text-gray-800">
-                                                        {new Date(day.sale_date).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric', month: 'long' })}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-center">
-                                                        <span className="bg-gray-100 px-2 py-1 rounded-lg text-xs font-bold text-gray-600">{day.tx_count || 0}</span>
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right font-black text-higea-blue text-base">
-                                                        Ref {parseFloat(day.total_usd).toFixed(2)}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-right text-gray-500 font-medium">
-                                                        Bs {parseFloat(day.total_ves).toLocaleString('es-VE', {maximumFractionDigits: 2})}
-                                                    </td>
-                                                    <td className="px-6 py-4 align-middle">
-                                                        <div className="w-24 mx-auto h-2 bg-gray-100 rounded-full overflow-hidden">
-                                                            <div 
-                                                                className={`h-full rounded-full ${percent > 80 ? 'bg-green-500' : percent > 40 ? 'bg-higea-blue' : 'bg-orange-400'}`} 
-                                                                style={{ width: `${percent}%` }}
-                                                            ></div>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )
-                                        })}
-                                        {analyticsData.salesOverTime.length === 0 && (
-                                            <tr>
-                                                <td colSpan="5" className="p-12 text-center text-gray-400 italic">
-                                                    No se encontraron registros en este periodo.
-                                                </td>
+                        {/* 3. RESUMEN DE COBRANZA Y DEUDORES (NUEVO) */}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-1">
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="bg-red-100 p-2 rounded-xl text-red-600 text-lg">📉</div>
+                                    <h3 className="font-bold text-slate-800">Top Deudores</h3>
+                                </div>
+                                <div className="space-y-4">
+                                    {topDebtors.slice(0, 5).map((debtor, idx) => (
+                                        <div key={idx} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-500">
+                                                    {debtor.full_name.charAt(0)}
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-bold text-slate-700 truncate w-24">{debtor.full_name.split(' ')[0]}</p>
+                                                    <p className="text-[10px] text-slate-400">Pendiente</p>
+                                                </div>
+                                            </div>
+                                            <span className="font-black text-red-500 text-sm">
+                                                Ref {parseFloat(debtor.debt).toFixed(2)}
+                                            </span>
+                                        </div>
+                                    ))}
+                                    {topDebtors.length === 0 && <p className="text-center text-slate-400 text-sm py-4">Sin deudas pendientes 🎉</p>}
+                                </div>
+                             </div>
+
+                             {/* 4. TABLA DETALLADA (2/3 DEL ANCHO) */}
+                             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-2 overflow-hidden flex flex-col">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="bg-slate-100 p-2 rounded-xl text-slate-600 text-lg">📅</div>
+                                    <h3 className="font-bold text-slate-800 text-lg">Evolución Diaria Detallada</h3>
+                                </div>
+                                
+                                <div className="overflow-x-auto custom-scrollbar flex-1">
+                                    <table className="w-full text-left text-sm text-slate-600">
+                                        <thead>
+                                            <tr className="border-b-2 border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                                <th className="px-4 py-3">Fecha</th>
+                                                <th className="px-4 py-3 text-center">Ops</th>
+                                                <th className="px-4 py-3 text-right">Total Ref</th>
+                                                <th className="px-4 py-3 text-right">Total Bs</th>
+                                                <th className="px-4 py-3 text-center hidden sm:table-cell">Volumen</th>
                                             </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {analyticsData.salesOverTime.map((day, idx) => {
+                                                const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
+                                                const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
+                                                
+                                                return (
+                                                    <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
+                                                        <td className="px-4 py-3 font-medium text-slate-800">
+                                                            {new Date(day.sale_date).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-xs font-bold">{day.tx_count}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right font-black text-higea-blue">
+                                                            Ref {parseFloat(day.total_usd).toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">
+                                                            Bs {parseFloat(day.total_ves).toLocaleString('es-VE', {maximumFractionDigits: 0})}
+                                                        </td>
+                                                        <td className="px-4 py-3 align-middle hidden sm:table-cell w-32">
+                                                            <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                                                <div 
+                                                                    className={`h-full rounded-full ${percent > 80 ? 'bg-green-500' : percent > 40 ? 'bg-blue-500' : 'bg-slate-400'}`} 
+                                                                    style={{ width: `${percent}%` }}
+                                                                ></div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                             </div>
                         </div>
                     </div>
                 ) : (
-                    <div className="flex flex-col items-center justify-center h-96 text-gray-400">
-                        <div className="w-12 h-12 border-4 border-gray-200 border-t-higea-blue rounded-full animate-spin mb-4"></div>
-                        <p className="font-medium animate-pulse">Analizando datos...</p>
+                    <div className="flex flex-col items-center justify-center h-96 text-slate-400">
+                        <div className="w-16 h-16 border-4 border-slate-200 border-t-higea-blue rounded-full animate-spin mb-6"></div>
+                        <p className="font-bold text-lg text-slate-500 animate-pulse">Procesando Inteligencia de Negocios...</p>
+                        <p className="text-sm">Analizando transacciones, productos y categorías</p>
                     </div>
                 )}
             </div>
@@ -3038,7 +3345,8 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
               selectedSaleDetail.items,
               selectedSaleDetail.invoice_type, // 'FISCAL' o 'TICKET'
               selectedSaleDetail.status,       // 'PAGADO', 'PENDIENTE', etc.
-              selectedSaleDetail.created_at    // Fecha real de la venta
+              selectedSaleDetail.created_at    // Fecha real de la venta,
+			  parseFloat(selectedSaleDetail.total_usd)
           );
           
           setReceiptPreview(html); 

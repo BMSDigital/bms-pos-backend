@@ -370,18 +370,26 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
     }
 });
 
-// H. Detalle de Venta
+// H. Detalle de Venta (CORREGIDO: AHORA TRAE DATOS DEL CLIENTE)
 app.get('/api/sales/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        
+        // 1. Buscamos la venta Y los datos del cliente usando LEFT JOIN
         const saleInfoResult = await pool.query(`
-            SELECT total_usd, total_ves, bcv_rate_snapshot, subtotal_taxable_usd, subtotal_exempt_usd, iva_rate, iva_usd, payment_method, status, invoice_type
-            FROM sales WHERE id = $1
+            SELECT 
+                s.total_usd, s.total_ves, s.bcv_rate_snapshot, 
+                s.subtotal_taxable_usd, s.subtotal_exempt_usd, s.iva_rate, s.iva_usd, 
+                s.payment_method, s.status, s.invoice_type, s.created_at, s.due_date,
+                c.full_name, c.id_number, c.phone, c.institution
+            FROM sales s
+            LEFT JOIN customers c ON s.customer_id = c.id
+            WHERE s.id = $1
         `, [id]);
 
         if (saleInfoResult.rows.length === 0) return res.status(404).json({ error: 'Venta no encontrada.' });
         
-        // --- AQUÍ ESTÁ LA CORRECCIÓN: Agregamos p.is_taxable ---
+        // 2. Buscamos los items
         const itemsResult = await pool.query(`
             SELECT p.name, p.is_taxable, si.quantity, si.price_at_moment_usd 
             FROM sale_items si 
