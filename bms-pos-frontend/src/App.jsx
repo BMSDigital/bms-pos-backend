@@ -120,6 +120,15 @@ function App() {
   // Estado para el visor de recibos
   const [receiptPreview, setReceiptPreview] = useState(null); // Guardará el HTML del recibo
   
+  // Estado para paginación de reportes de ventas
+  const [salesReportPage, setSalesReportPage] = useState(1);
+  
+  // --- ESTADOS PARA REPORTES AVANZADOS (NUEVO SISTEMA DE PESTAÑAS) ---
+  const [reportTab, setReportTab] = useState('DASHBOARD'); // 'DASHBOARD', 'SALES', 'INVENTORY'
+  const [detailedSales, setDetailedSales] = useState([]);
+  const [detailedInventory, setDetailedInventory] = useState([]);
+  const [reportSearch, setReportSearch] = useState(''); // Buscador universal para tablas de reporte
+  
   // Modales
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -283,6 +292,52 @@ function App() {
       }
       setCreditCurrentPage(1); // Resetear a página 1 al buscar
   }, [creditSearchQuery, groupedCredits]);
+  
+  // Función para descargar CSV (Excel genérico)
+  const downloadCSV = (data, fileName) => {
+      if (!data || data.length === 0) return Swal.fire('Vacío', 'No hay datos para exportar', 'info');
+      const replacer = (key, value) => value === null ? '' : value; 
+      const header = Object.keys(data[0]);
+      const csv = [
+          header.join(','), 
+          ...data.map(row => header.map(fieldName => JSON.stringify(row[fieldName], replacer)).join(','))
+      ].join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `${fileName}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  // Cargar Ventas Detalladas
+  const fetchSalesDetail = async () => {
+      try {
+          Swal.fire({title: 'Cargando registros...', didOpen: () => Swal.showLoading()});
+          const res = await axios.get(`${API_URL}/reports/sales-detail?startDate=${reportDateRange.start}&endDate=${reportDateRange.end}`);
+          setDetailedSales(res.data);
+          setReportTab('SALES'); 
+          setSalesReportPage(1); // <--- REINICIAR PAGINACIÓN
+          Swal.close();
+      } catch (error) {
+          Swal.fire('Error', 'Error cargando reporte.', 'error');
+      }
+  };
+
+  // Cargar Inventario Detallado
+  const fetchInventoryDetail = async () => {
+      try {
+          Swal.fire({title: 'Analizando inventario...', didOpen: () => Swal.showLoading()});
+          const res = await axios.get(`${API_URL}/reports/inventory-detail`);
+          setDetailedInventory(res.data);
+          setReportTab('INVENTORY'); // Cambiar a pestaña inventario
+          Swal.close();
+      } catch (error) {
+          Swal.fire('Error', 'Revisa que hayas agregado los endpoints en server.js', 'error');
+      }
+  };
 
 
   // Función de carga de clientes (usada en el useEffect anterior)
@@ -2914,238 +2969,384 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                 )}
             </div>
         ) : view === 'ADVANCED_REPORTS' ? (
-            /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO) --- */
+            /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO + DRILL DOWN) --- */
             <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50">
                 
-                {/* CABECERA */}
+                {/* CABECERA Y NAVEGACIÓN */}
                 <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-6">
                     <div>
                         <h2 className="text-3xl font-black text-slate-800 tracking-tight">Inteligencia de Negocios</h2>
-                        <p className="text-slate-500 mt-1 font-medium">Análisis de rendimiento y toma de decisiones</p>
+                        <p className="text-slate-500 mt-1 font-medium">
+                            {reportTab === 'DASHBOARD' ? 'Análisis de rendimiento y KPIs' : 
+                             reportTab === 'SALES' ? 'Explorador Detallado de Transacciones' : 'Auditoría Completa de Inventario'}
+                        </p>
                     </div>
                     
-                    {/* CONTROL DE FECHAS MEJORADO */}
-                    <div className="flex flex-wrap items-center gap-3 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200">
-                        <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
-                            <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Desde</span>
-                            <input 
-                                type="date" 
-                                value={reportDateRange.start}
-                                onChange={(e) => setReportDateRange(prev => ({...prev, start: e.target.value}))}
-                                className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer"
-                            />
-                        </div>
-                        <div className="text-slate-300 font-bold">→</div>
-                        <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
-                            <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Hasta</span>
-                            <input 
-                                type="date" 
-                                value={reportDateRange.end}
-                                onChange={(e) => setReportDateRange(prev => ({...prev, end: e.target.value}))}
-                                className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer"
-                            />
-                        </div>
-                        
-                        <div className="h-8 w-px bg-slate-200 mx-1"></div>
-
-                        <button onClick={fetchAdvancedReport} className="bg-higea-blue hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-blue-200 transition-all active:scale-95 flex items-center gap-2">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                            Actualizar
+                    {/* BARRA DE PESTAÑAS (TABS) */}
+                    <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200">
+                        <button 
+                            onClick={() => setReportTab('DASHBOARD')}
+                            className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'DASHBOARD' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <span>📊</span> Dashboard
                         </button>
-                        <button onClick={exportReportToCSV} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-green-200 transition-all active:scale-95 flex items-center gap-2">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                            Excel
+                        <button 
+                            onClick={fetchSalesDetail}
+                            className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'SALES' ? 'bg-higea-blue text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <span>📑</span> Ventas
+                        </button>
+                        <button 
+                            onClick={fetchInventoryDetail}
+                            className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'INVENTORY' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <span>📦</span> Inventario
                         </button>
                     </div>
                 </div>
 
-                {analyticsData ? (
-                    <div className="space-y-8 pb-20">
-                        
-                        {/* 1. SECCIÓN KPI (TARJETAS GRANDES) */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            {/* KPI 1: Ingresos */}
-                            <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-200 relative overflow-hidden group">
-                                <div className="absolute right-0 top-0 h-32 w-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
-                                <div className="relative z-10">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm">
-                                            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                        </div>
-                                        <span className="text-blue-200 text-xs font-bold bg-blue-900/30 px-2 py-1 rounded-lg">Total Facturado</span>
-                                    </div>
-                                    <p className="text-4xl font-black tracking-tight mb-1">
-                                        Ref {analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toLocaleString('es-VE', {minimumFractionDigits: 2})}
-                                    </p>
-                                    <p className="text-blue-200 text-sm font-medium">Ingresos brutos en el periodo</p>
-                                </div>
-                            </div>
+                {/* --- CONTENIDO DINÁMICO (PESTAÑAS) --- */}
 
-                            {/* KPI 2: Transacciones */}
-                            <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group">
-                                <div className="absolute right-0 bottom-0 h-24 w-24 bg-purple-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
-                                <div className="relative z-10">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="bg-purple-100 p-3 rounded-2xl">
-                                            <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
-                                        </div>
-                                        <span className="text-purple-600 text-xs font-bold bg-purple-50 px-2 py-1 rounded-lg">Volumen</span>
-                                    </div>
-                                    <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">
-                                        {analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0)}
-                                    </p>
-                                    <p className="text-slate-400 text-sm font-medium">Operaciones realizadas</p>
-                                </div>
+                {/* PESTAÑA 1: DASHBOARD (TU DISEÑO PRO) */}
+                {reportTab === 'DASHBOARD' && (
+                    <>
+                        {/* CONTROL DE FECHAS */}
+                        <div className="flex flex-wrap items-center gap-3 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 mb-8 w-fit ml-auto">
+                            <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
+                                <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Desde</span>
+                                <input type="date" value={reportDateRange.start} onChange={(e) => setReportDateRange(prev => ({...prev, start: e.target.value}))} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer"/>
                             </div>
-
-                            {/* KPI 3: Promedio por Venta (Ticket Promedio Renombrado) */}
-                            <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group">
-                                <div className="absolute right-0 bottom-0 h-24 w-24 bg-emerald-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
-                                <div className="relative z-10">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="bg-emerald-100 p-3 rounded-2xl">
-                                            <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
-                                        </div>
-                                        <span className="text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">KPI Clave</span>
-                                    </div>
-                                    <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">
-                                        Ref {(() => {
-                                            const total = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
-                                            const count = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0);
-                                            return count > 0 ? (total / count).toLocaleString('es-VE', {minimumFractionDigits: 2}) : '0.00';
-                                        })()}
-                                    </p>
-                                    <p className="text-slate-400 text-sm font-medium">Promedio por Venta</p>
-                                </div>
+                            <div className="text-slate-300 font-bold">→</div>
+                            <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
+                                <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Hasta</span>
+                                <input type="date" value={reportDateRange.end} onChange={(e) => setReportDateRange(prev => ({...prev, end: e.target.value}))} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer"/>
                             </div>
+                            <div className="h-8 w-px bg-slate-200 mx-1"></div>
+                            <button onClick={fetchAdvancedReport} className="bg-higea-blue hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95">Actualizar</button>
+                            <button onClick={exportReportToCSV} className="bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95">Excel Resumen</button>
                         </div>
 
-                        {/* 2. GRÁFICAS COMPARATIVAS (GRID 2 COLUMNAS) */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            {/* TOP PRODUCTOS */}
-                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-                                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
-                                    <div className="bg-yellow-100 p-2 rounded-xl text-yellow-600 text-xl">🏆</div>
-                                    <div>
-                                        <h3 className="font-bold text-slate-800 text-lg">Productos Estrella</h3>
-                                        <p className="text-xs text-slate-400">Los 5 más vendidos en el periodo</p>
-                                    </div>
-                                </div>
-                                <SimpleBarChart 
-                                    data={analyticsData.topProducts} 
-                                    labelKey="name" 
-                                    valueKey="total_qty" 
-                                    colorClass="bg-yellow-400"
-                                    formatMoney={false}
-                                />
-                            </div>
-
-                            {/* VENTAS POR CATEGORÍA */}
-                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-                                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
-                                    <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600 text-xl">🏷️</div>
-                                    <div>
-                                        <h3 className="font-bold text-slate-800 text-lg">Rendimiento por Categoría</h3>
-                                        <p className="text-xs text-slate-400">Ingresos generados (USD/Ref)</p>
-                                    </div>
-                                </div>
-                                <SimpleBarChart 
-                                    data={analyticsData.salesByCategory} 
-                                    labelKey="category" 
-                                    valueKey="total_usd" 
-                                    colorClass="bg-indigo-500"
-                                    formatMoney={true}
-                                />
-                            </div>
-                        </div>
-
-                        {/* 3. RESUMEN DE COBRANZA Y DEUDORES (NUEVO) */}
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-1">
-                                <div className="flex items-center gap-3 mb-4">
-                                    <div className="bg-red-100 p-2 rounded-xl text-red-600 text-lg">📉</div>
-                                    <h3 className="font-bold text-slate-800">Top Deudores</h3>
-                                </div>
-                                <div className="space-y-4">
-                                    {topDebtors.slice(0, 5).map((debtor, idx) => (
-                                        <div key={idx} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-500">
-                                                    {debtor.full_name.charAt(0)}
-                                                </div>
-                                                <div>
-                                                    <p className="text-xs font-bold text-slate-700 truncate w-24">{debtor.full_name.split(' ')[0]}</p>
-                                                    <p className="text-[10px] text-slate-400">Pendiente</p>
-                                                </div>
-                                            </div>
-                                            <span className="font-black text-red-500 text-sm">
-                                                Ref {parseFloat(debtor.debt).toFixed(2)}
-                                            </span>
-                                        </div>
-                                    ))}
-                                    {topDebtors.length === 0 && <p className="text-center text-slate-400 text-sm py-4">Sin deudas pendientes 🎉</p>}
-                                </div>
-                             </div>
-
-                             {/* 4. TABLA DETALLADA (2/3 DEL ANCHO) */}
-                             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-2 overflow-hidden flex flex-col">
-                                <div className="flex items-center gap-3 mb-6">
-                                    <div className="bg-slate-100 p-2 rounded-xl text-slate-600 text-lg">📅</div>
-                                    <h3 className="font-bold text-slate-800 text-lg">Evolución Diaria Detallada</h3>
-                                </div>
+                        {analyticsData ? (
+                            <div className="space-y-8 pb-20">
                                 
-                                <div className="overflow-x-auto custom-scrollbar flex-1">
-                                    <table className="w-full text-left text-sm text-slate-600">
-                                        <thead>
-                                            <tr className="border-b-2 border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                                                <th className="px-4 py-3">Fecha</th>
-                                                <th className="px-4 py-3 text-center">Ops</th>
-                                                <th className="px-4 py-3 text-right">Total Ref</th>
-                                                <th className="px-4 py-3 text-right">Total Bs</th>
-                                                <th className="px-4 py-3 text-center hidden sm:table-cell">Volumen</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-50">
-                                            {analyticsData.salesOverTime.map((day, idx) => {
-                                                const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
-                                                const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
+                                {/* 1. SECCIÓN KPI (CLICKABLES) */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    {/* KPI 1: Ingresos -> Clic lleva a Ventas */}
+                                    <div onClick={fetchSalesDetail} className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-200 relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
+                                        <div className="absolute right-0 top-0 h-32 w-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+                                        <div className="relative z-10">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm"><svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div>
+                                                <span className="text-blue-200 text-xs font-bold bg-blue-900/30 px-2 py-1 rounded-lg flex items-center gap-1">Ver Detalle <span className="text-lg">→</span></span>
+                                            </div>
+                                            <p className="text-4xl font-black tracking-tight mb-1">Ref {analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
+                                            <p className="text-blue-200 text-sm font-medium">Total Facturado</p>
+                                        </div>
+                                    </div>
+
+                                    {/* KPI 2: Transacciones -> Clic lleva a Ventas */}
+                                    <div onClick={fetchSalesDetail} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
+                                        <div className="absolute right-0 bottom-0 h-24 w-24 bg-purple-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
+                                        <div className="relative z-10">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className="bg-purple-100 p-3 rounded-2xl"><svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg></div>
+                                                <span className="text-purple-600 text-xs font-bold bg-purple-50 px-2 py-1 rounded-lg">Ver Operaciones →</span>
+                                            </div>
+                                            <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">{analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0)}</p>
+                                            <p className="text-slate-400 text-sm font-medium">Operaciones Realizadas</p>
+                                        </div>
+                                    </div>
+
+                                    {/* KPI 3: Promedio (Informativo) */}
+                                    <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group">
+                                        <div className="absolute right-0 bottom-0 h-24 w-24 bg-emerald-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
+                                        <div className="relative z-10">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className="bg-emerald-100 p-3 rounded-2xl"><svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg></div>
+                                                <span className="text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">KPI Clave</span>
+                                            </div>
+                                            <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">
+                                                Ref {(() => {
+                                                    const total = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
+                                                    const count = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0);
+                                                    return count > 0 ? (total / count).toLocaleString('es-VE', {minimumFractionDigits: 2}) : '0.00';
+                                                })()}
+                                            </p>
+                                            <p className="text-slate-400 text-sm font-medium">Promedio por Venta</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* 2. GRÁFICAS COMPARATIVAS */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Productos Estrella -> Clic lleva a Inventario */}
+                                    <div onClick={fetchInventoryDetail} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 cursor-pointer hover:border-blue-200 transition-colors group">
+                                        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
+                                            <div className="bg-yellow-100 p-2 rounded-xl text-yellow-600 text-xl">🏆</div>
+                                            <div>
+                                                <h3 className="font-bold text-slate-800 text-lg group-hover:text-blue-600 transition-colors">Productos Estrella</h3>
+                                                <p className="text-xs text-slate-400">Clic para ver Inventario Completo</p>
+                                            </div>
+                                        </div>
+                                        <SimpleBarChart data={analyticsData.topProducts} labelKey="name" valueKey="total_qty" colorClass="bg-yellow-400" formatMoney={false} />
+                                    </div>
+
+                                    {/* Categorías */}
+                                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                                        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
+                                            <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600 text-xl">🏷️</div>
+                                            <div><h3 className="font-bold text-slate-800 text-lg">Rendimiento por Categoría</h3><p className="text-xs text-slate-400">Ingresos generados (Ref)</p></div>
+                                        </div>
+                                        <SimpleBarChart data={analyticsData.salesByCategory} labelKey="category" valueKey="total_usd" colorClass="bg-indigo-500" formatMoney={true} />
+                                    </div>
+                                </div>
+
+                                {/* 3. DEUDORES Y EVOLUCIÓN */}
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-1">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="bg-red-100 p-2 rounded-xl text-red-600 text-lg">📉</div>
+                                            <h3 className="font-bold text-slate-800">Top Deudores</h3>
+                                        </div>
+                                        <div className="space-y-4">
+                                            {topDebtors.slice(0, 5).map((debtor, idx) => (
+                                                <div key={idx} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-500">{debtor.full_name.charAt(0)}</div>
+                                                        <div><p className="text-xs font-bold text-slate-700 truncate w-24">{debtor.full_name}</p><p className="text-[10px] text-slate-400">Pendiente</p></div>
+                                                    </div>
+                                                    <span className="font-black text-red-500 text-sm">Ref {parseFloat(debtor.debt).toFixed(2)}</span>
+                                                </div>
+                                            ))}
+                                            {topDebtors.length === 0 && <p className="text-center text-slate-400 text-sm py-4">Sin deudas pendientes 🎉</p>}
+                                        </div>
+                                     </div>
+
+                                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-2 overflow-hidden flex flex-col">
+                                        <div className="flex items-center gap-3 mb-6">
+                                            <div className="bg-slate-100 p-2 rounded-xl text-slate-600 text-lg">📅</div>
+                                            <h3 className="font-bold text-slate-800 text-lg">Evolución Diaria Detallada</h3>
+                                        </div>
+                                        <div className="overflow-x-auto custom-scrollbar flex-1">
+                                            <table className="w-full text-left text-sm text-slate-600">
+                                                <thead>
+                                                    <tr className="border-b-2 border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                                        <th className="px-4 py-3">Fecha</th>
+                                                        <th className="px-4 py-3 text-center">Ops</th>
+                                                        <th className="px-4 py-3 text-right">Total Ref</th>
+                                                        <th className="px-4 py-3 text-right">Total Bs</th>
+                                                        <th className="px-4 py-3 text-center hidden sm:table-cell">Volumen</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-50">
+                                                    {analyticsData.salesOverTime.map((day, idx) => {
+                                                        const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
+                                                        const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
+                                                        return (
+                                                            <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
+                                                                <td className="px-4 py-3 font-medium text-slate-800">{new Date(day.sale_date).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                                                <td className="px-4 py-3 text-center"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-xs font-bold">{day.tx_count}</span></td>
+                                                                <td className="px-4 py-3 text-right font-black text-higea-blue">Ref {parseFloat(day.total_usd).toLocaleString('es-VE', {minimumFractionDigits: 2})}</td>
+                                                                <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">Bs {parseFloat(day.total_ves).toLocaleString('es-VE', {maximumFractionDigits: 0})}</td>
+                                                                <td className="px-4 py-3 align-middle hidden sm:table-cell w-32">
+                                                                    <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                                                        <div className={`h-full rounded-full ${percent > 80 ? 'bg-green-500' : percent > 40 ? 'bg-blue-500' : 'bg-slate-400'}`} style={{ width: `${percent}%` }}></div>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        )
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                     </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-96 text-slate-400">
+                                <div className="w-16 h-16 border-4 border-slate-200 border-t-higea-blue rounded-full animate-spin mb-6"></div>
+                                <p className="font-bold text-lg text-slate-500 animate-pulse">Procesando Inteligencia de Negocios...</p>
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {/* PESTAÑA 2: DETALLE DE VENTAS (TABLA AUDITORÍA PRO) */}
+                {reportTab === 'SALES' && (
+                    <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+                        {/* BARRA DE HERRAMIENTAS */}
+                        <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
+                            <div className="relative w-full md:w-96">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                                <input 
+                                    type="text" 
+                                    placeholder="Buscar por cliente, ID, referencia..." 
+                                    value={reportSearch} 
+                                    onChange={(e) => { setReportSearch(e.target.value); setSalesReportPage(1); }} 
+                                    className="w-full border p-3 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm"
+                                />
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                                    {detailedSales.length} Registros
+                                </span>
+                                <button onClick={() => downloadCSV(detailedSales, 'Reporte_Ventas_Higea')} className="bg-green-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-green-700 shadow-md flex items-center gap-2 transition-all active:scale-95">
+                                    <span>📥</span> Exportar CSV
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* TABLA DE DATOS */}
+                        <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
+                            <table className="w-full text-left text-xs text-gray-600">
+                                <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
+                                    <tr>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Fecha / Hora</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">N° Control</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Cliente</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Método</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Total Bs</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Total Ref</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 bg-white">
+                                    {(() => {
+                                        // Lógica de Paginación (50 items)
+                                        const ITEMS_PER_PAGE = 50;
+                                        const filteredData = detailedSales.filter(s => JSON.stringify(s).toLowerCase().includes(reportSearch.toLowerCase()));
+                                        const indexOfLast = salesReportPage * ITEMS_PER_PAGE;
+                                        const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
+                                        const currentData = filteredData.slice(indexOfFirst, indexOfLast);
+                                        const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+
+                                        if (currentData.length === 0) return <tr><td colSpan="7" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
+
+                                        return (
+                                            <>
+                                                {currentData.map((sale) => (
+                                                    <tr 
+                                                        key={sale.id} 
+                                                        // ACCIÓN: CLIC ABRE DETALLE
+                                                        onClick={() => showSaleDetail(sale)}
+                                                        className="hover:bg-blue-50 transition-colors cursor-pointer group"
+                                                    >
+                                                        <td className="px-6 py-4 whitespace-nowrap text-gray-500">
+                                                            {new Date(sale.created_at).toLocaleDateString()} 
+                                                            <span className="text-[10px] text-gray-400 ml-1">{new Date(sale.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                                        </td>
+                                                        <td className="px-6 py-4 font-mono font-bold text-higea-blue">#{sale.id}</td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="font-bold text-gray-700 text-sm">{sale.client_name}</div>
+                                                            <div className="text-[10px] text-gray-400">{sale.client_id}</div>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-center">
+                                                            {/* Método de pago corto o icono */}
+                                                            <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded text-[10px] font-medium text-gray-500 truncate max-w-[100px] inline-block" title={sale.payment_method}>
+                                                                {sale.payment_method.split('[')[0]}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right font-medium text-gray-500">
+                                                            Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right">
+                                                            <span className="font-black text-slate-800 text-sm bg-slate-100 px-2 py-1 rounded">
+                                                                Ref {parseFloat(sale.total_usd).toFixed(2)}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-center">
+                                                            <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                                                                sale.status === 'PAGADO' ? 'bg-green-100 text-green-700' : 
+                                                                sale.status === 'PENDIENTE' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'
+                                                            }`}>
+                                                                {sale.status}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
                                                 
-                                                return (
-                                                    <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
-                                                        <td className="px-4 py-3 font-medium text-slate-800">
-                                                            {new Date(day.sale_date).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
-                                                        </td>
-                                                        <td className="px-4 py-3 text-center">
-                                                            <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-xs font-bold">{day.tx_count}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-right font-black text-higea-blue">
-                                                            Ref {parseFloat(day.total_usd).toLocaleString('es-VE', {minimumFractionDigits: 2})}
-                                                        </td>
-                                                        <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">
-                                                            Bs {parseFloat(day.total_ves).toLocaleString('es-VE', {maximumFractionDigits: 0})}
-                                                        </td>
-                                                        <td className="px-4 py-3 align-middle hidden sm:table-cell w-32">
-                                                            <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                                                                <div 
-                                                                    className={`h-full rounded-full ${percent > 80 ? 'bg-green-500' : percent > 40 ? 'bg-blue-500' : 'bg-slate-400'}`} 
-                                                                    style={{ width: `${percent}%` }}
-                                                                ></div>
+                                                {/* CONTROLES DE PAGINACIÓN (Fila especial al final) */}
+                                                {totalPages > 1 && (
+                                                    <tr>
+                                                        <td colSpan="7" className="p-4 bg-slate-50 border-t border-slate-200">
+                                                            <div className="flex justify-center items-center gap-4">
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.max(1, p - 1)); }}
+                                                                    disabled={salesReportPage === 1}
+                                                                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
+                                                                >
+                                                                    Anterior
+                                                                </button>
+                                                                <span className="text-xs font-bold text-gray-600">
+                                                                    Página {salesReportPage} de {totalPages}
+                                                                </span>
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.min(totalPages, p + 1)); }}
+                                                                    disabled={salesReportPage === totalPages}
+                                                                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
+                                                                >
+                                                                    Siguiente
+                                                                </button>
                                                             </div>
                                                         </td>
                                                     </tr>
-                                                )
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                             </div>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                ) : (
-                    <div className="flex flex-col items-center justify-center h-96 text-slate-400">
-                        <div className="w-16 h-16 border-4 border-slate-200 border-t-higea-blue rounded-full animate-spin mb-6"></div>
-                        <p className="font-bold text-lg text-slate-500 animate-pulse">Procesando Inteligencia de Negocios...</p>
-                        <p className="text-sm">Analizando transacciones, productos y categorías</p>
+                )}
+
+                {/* PESTAÑA 3: INVENTARIO DETALLADO (TABLA CON BUSCADOR) */}
+                {reportTab === 'INVENTORY' && (
+                    <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+                        <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
+                            <input 
+                                type="text" 
+                                placeholder="🔍 Buscar producto, categoría..." 
+                                value={reportSearch} 
+                                onChange={(e) => setReportSearch(e.target.value)} 
+                                className="w-full md:w-96 border p-3 rounded-xl text-sm outline-none focus:border-indigo-500 shadow-sm"
+                            />
+                            <button onClick={() => downloadCSV(detailedInventory, 'Reporte_Inventario_Higea')} className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-md flex items-center gap-2">
+                                <span>📥</span> Descargar Inventario (CSV)
+                            </button>
+                        </div>
+                        <div className="overflow-x-auto flex-1 custom-scrollbar">
+                            <table className="w-full text-left text-xs text-gray-600">
+                                <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10">
+                                    <tr>
+                                        <th className="px-4 py-3 bg-slate-50">Producto</th>
+                                        <th className="px-4 py-3 bg-slate-50">Categoría</th>
+                                        <th className="px-4 py-3 bg-slate-50 text-center">Estatus</th>
+                                        <th className="px-4 py-3 bg-slate-50 text-right">Costo Unit</th>
+                                        <th className="px-4 py-3 bg-slate-50 text-center">Stock</th>
+                                        <th className="px-4 py-3 bg-slate-50 text-right">Valor Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 bg-white">
+                                    {detailedInventory
+                                        .filter(p => p.name.toLowerCase().includes(reportSearch.toLowerCase()) || p.category?.toLowerCase().includes(reportSearch.toLowerCase()))
+                                        .map((prod) => (
+                                        <tr key={prod.id} className="hover:bg-indigo-50">
+                                            <td className="px-4 py-3 font-bold text-gray-700 flex items-center gap-2">
+                                                {prod.barcode && <span className="text-[9px] bg-gray-100 px-1 border rounded">|||</span>} {prod.name}
+                                            </td>
+                                            <td className="px-4 py-3">{prod.category}</td>
+                                            <td className="px-4 py-3 text-center">
+                                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${prod.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>{prod.status}</span>
+                                            </td>
+                                            <td className="px-4 py-3 text-right">Ref {parseFloat(prod.price_usd).toFixed(2)}</td>
+                                            <td className={`px-4 py-3 text-center font-bold ${prod.stock < 5 ? 'text-red-500' : ''}`}>{prod.stock}</td>
+                                            <td className="px-4 py-3 text-right font-black text-indigo-900">Ref {parseFloat(prod.total_value_usd).toFixed(2)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 )}
             </div>
