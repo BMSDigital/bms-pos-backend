@@ -123,6 +123,10 @@ function App() {
   // Estado para paginación de reportes de ventas
   const [salesReportPage, setSalesReportPage] = useState(1);
   
+  // Estados para Auditoría de Inventario
+  const [inventoryReportPage, setInventoryReportPage] = useState(1);
+  const [selectedAuditProduct, setSelectedAuditProduct] = useState(null); // Para el modal de detalle
+  
   // --- ESTADOS PARA REPORTES AVANZADOS (NUEVO SISTEMA DE PESTAÑAS) ---
   const [reportTab, setReportTab] = useState('DASHBOARD'); // 'DASHBOARD', 'SALES', 'INVENTORY'
   const [detailedSales, setDetailedSales] = useState([]);
@@ -332,10 +336,11 @@ function App() {
           Swal.fire({title: 'Analizando inventario...', didOpen: () => Swal.showLoading()});
           const res = await axios.get(`${API_URL}/reports/inventory-detail`);
           setDetailedInventory(res.data);
-          setReportTab('INVENTORY'); // Cambiar a pestaña inventario
+          setReportTab('INVENTORY');
+          setInventoryReportPage(1); // <--- REINICIO DE PAGINACIÓN
           Swal.close();
       } catch (error) {
-          Swal.fire('Error', 'Revisa que hayas agregado los endpoints en server.js', 'error');
+          Swal.fire('Error', 'Revisa la conexión.', 'error');
       }
   };
 
@@ -3300,55 +3305,194 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                     </div>
                 )}
 
-                {/* PESTAÑA 3: INVENTARIO DETALLADO (TABLA CON BUSCADOR) */}
+                {/* PESTAÑA 3: INVENTARIO DETALLADO (AUDITORÍA COMPLETA) */}
                 {reportTab === 'INVENTORY' && (
                     <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+                        {/* BARRA DE HERRAMIENTAS */}
                         <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
-                            <input 
-                                type="text" 
-                                placeholder="🔍 Buscar producto, categoría..." 
-                                value={reportSearch} 
-                                onChange={(e) => setReportSearch(e.target.value)} 
-                                className="w-full md:w-96 border p-3 rounded-xl text-sm outline-none focus:border-indigo-500 shadow-sm"
-                            />
-                            <button onClick={() => downloadCSV(detailedInventory, 'Reporte_Inventario_Higea')} className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-md flex items-center gap-2">
-                                <span>📥</span> Descargar Inventario (CSV)
-                            </button>
+                            <div className="relative w-full md:w-96">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                                <input 
+                                    type="text" 
+                                    placeholder="Buscar producto, categoría, código..." 
+                                    value={reportSearch} 
+                                    onChange={(e) => { setReportSearch(e.target.value); setInventoryReportPage(1); }} 
+                                    className="w-full border p-3 pl-10 rounded-xl text-sm outline-none focus:border-indigo-500 shadow-sm"
+                                />
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                                    {detailedInventory.length} Artículos
+                                </span>
+                                <button onClick={() => downloadCSV(detailedInventory, 'Reporte_Inventario_Higea')} className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-md flex items-center gap-2 transition-all active:scale-95">
+                                    <span>📥</span> Exportar CSV
+                                </button>
+                            </div>
                         </div>
-                        <div className="overflow-x-auto flex-1 custom-scrollbar">
+
+                        {/* TABLA DE DATOS */}
+                        <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
                             <table className="w-full text-left text-xs text-gray-600">
-                                <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10">
+                                <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
                                     <tr>
-                                        <th className="px-4 py-3 bg-slate-50">Producto</th>
-                                        <th className="px-4 py-3 bg-slate-50">Categoría</th>
-                                        <th className="px-4 py-3 bg-slate-50 text-center">Estatus</th>
-                                        <th className="px-4 py-3 bg-slate-50 text-right">Costo Unit</th>
-                                        <th className="px-4 py-3 bg-slate-50 text-center">Stock</th>
-                                        <th className="px-4 py-3 bg-slate-50 text-right">Valor Total</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Producto</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Categoría</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Estatus</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Ref)</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Bs)</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Stock</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Ref)</th>
+                                        <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Bs)</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100 bg-white">
-                                    {detailedInventory
-                                        .filter(p => p.name.toLowerCase().includes(reportSearch.toLowerCase()) || p.category?.toLowerCase().includes(reportSearch.toLowerCase()))
-                                        .map((prod) => (
-                                        <tr key={prod.id} className="hover:bg-indigo-50">
-                                            <td className="px-4 py-3 font-bold text-gray-700 flex items-center gap-2">
-                                                {prod.barcode && <span className="text-[9px] bg-gray-100 px-1 border rounded">|||</span>} {prod.name}
-                                            </td>
-                                            <td className="px-4 py-3">{prod.category}</td>
-                                            <td className="px-4 py-3 text-center">
-                                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${prod.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>{prod.status}</span>
-                                            </td>
-                                            <td className="px-4 py-3 text-right">Ref {parseFloat(prod.price_usd).toFixed(2)}</td>
-                                            <td className={`px-4 py-3 text-center font-bold ${prod.stock < 5 ? 'text-red-500' : ''}`}>{prod.stock}</td>
-                                            <td className="px-4 py-3 text-right font-black text-indigo-900">Ref {parseFloat(prod.total_value_usd).toFixed(2)}</td>
-                                        </tr>
-                                    ))}
+                                    {(() => {
+                                        // Paginación (50 items)
+                                        const ITEMS_PER_PAGE = 50;
+                                        const filteredData = detailedInventory.filter(p => 
+                                            p.name.toLowerCase().includes(reportSearch.toLowerCase()) || 
+                                            p.category?.toLowerCase().includes(reportSearch.toLowerCase()) ||
+                                            p.barcode?.includes(reportSearch)
+                                        );
+                                        const indexOfLast = inventoryReportPage * ITEMS_PER_PAGE;
+                                        const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
+                                        const currentData = filteredData.slice(indexOfFirst, indexOfLast);
+                                        const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+
+                                        if (currentData.length === 0) return <tr><td colSpan="8" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
+
+                                        return (
+                                            <>
+                                                {currentData.map((prod) => (
+                                                    <tr 
+                                                        key={prod.id} 
+                                                        onClick={() => setSelectedAuditProduct(prod)} // <--- CLIC PARA DETALLE
+                                                        className="hover:bg-indigo-50 transition-colors cursor-pointer group"
+                                                    >
+                                                        <td className="px-6 py-4 font-bold text-gray-700 flex items-center gap-2">
+                                                            {prod.barcode && <span className="text-[9px] bg-gray-100 px-1 border rounded text-gray-400 font-mono">|||</span>} 
+                                                            {prod.name}
+                                                        </td>
+                                                        <td className="px-6 py-4">{prod.category}</td>
+                                                        <td className="px-6 py-4 text-center">
+                                                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${prod.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                                                                {prod.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right font-medium">Ref {parseFloat(prod.price_usd).toFixed(2)}</td>
+                                                        <td className="px-6 py-4 text-right text-gray-500">Bs {(parseFloat(prod.price_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</td>
+                                                        <td className={`px-6 py-4 text-center font-bold ${prod.stock < 5 ? 'text-red-500 bg-red-50 rounded' : ''}`}>{prod.stock}</td>
+                                                        <td className="px-6 py-4 text-right font-black text-indigo-900">Ref {parseFloat(prod.total_value_usd).toFixed(2)}</td>
+                                                        <td className="px-6 py-4 text-right text-indigo-600 font-bold">Bs {(parseFloat(prod.total_value_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</td>
+                                                    </tr>
+                                                ))}
+                                                
+                                                {/* CONTROLES PAGINACIÓN */}
+                                                {totalPages > 1 && (
+                                                    <tr>
+                                                        <td colSpan="8" className="p-4 bg-slate-50 border-t border-slate-200">
+                                                            <div className="flex justify-center items-center gap-4">
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.max(1, p - 1)); }}
+                                                                    disabled={inventoryReportPage === 1}
+                                                                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
+                                                                >
+                                                                    Anterior
+                                                                </button>
+                                                                <span className="text-xs font-bold text-gray-600">
+                                                                    Página {inventoryReportPage} de {totalPages}
+                                                                </span>
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.min(totalPages, p + 1)); }}
+                                                                    disabled={inventoryReportPage === totalPages}
+                                                                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
+                                                                >
+                                                                    Siguiente
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 )}
+				
+				{/* --- MODAL DETALLE DE AUDITORÍA (PRODUCTO) --- */}
+      {selectedAuditProduct && (
+          <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative animate-scale-up border-t-4 border-indigo-600">
+                  <button onClick={() => setSelectedAuditProduct(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
+                  
+                  <div className="p-6 bg-slate-50 border-b border-slate-100">
+                      <div className="flex items-start gap-4">
+                           {/* Ícono Grande */}
+                           <div className="h-16 w-16 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-4xl shadow-sm">
+                               {products.find(p => p.id === selectedAuditProduct.id)?.icon_emoji || '📦'}
+                           </div>
+                           <div>
+                               <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-1">Ficha Técnica</p>
+                               <h3 className="font-black text-2xl text-slate-800 leading-tight">{selectedAuditProduct.name}</h3>
+                               <p className="text-sm text-slate-500 mt-1">{selectedAuditProduct.category}</p>
+                           </div>
+                      </div>
+                  </div>
+
+                  <div className="p-6 space-y-6">
+                      {/* Estado y Código */}
+                      <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                          <div>
+                              <p className="text-[10px] text-gray-400 uppercase font-bold">Código Barras</p>
+                              <p className="font-mono text-sm font-bold text-slate-700">{selectedAuditProduct.barcode || 'N/A'}</p>
+                          </div>
+                          <div className="text-right">
+                              <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedAuditProduct.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                                  {selectedAuditProduct.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
+                              </span>
+                          </div>
+                      </div>
+
+                      {/* Costos Unitarios */}
+                      <div>
+                          <p className="text-xs font-bold text-slate-400 uppercase mb-2">Costo Unitario</p>
+                          <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                                  <p className="text-[10px] text-blue-400 font-bold">REFERENCIAL</p>
+                                  <p className="text-xl font-black text-blue-700">Ref {parseFloat(selectedAuditProduct.price_usd).toFixed(2)}</p>
+                              </div>
+                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                  <p className="text-[10px] text-slate-400 font-bold">BOLÍVARES</p>
+                                  <p className="text-xl font-black text-slate-700">Bs {(parseFloat(selectedAuditProduct.price_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</p>
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* Valoración Total (Auditoría) */}
+                      <div>
+                          <div className="flex justify-between items-end mb-2">
+                              <p className="text-xs font-bold text-slate-400 uppercase">Valoración de Inventario</p>
+                              <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">Stock: {selectedAuditProduct.stock} uds</span>
+                          </div>
+                          <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg shadow-indigo-200">
+                              <div className="flex justify-between items-center mb-2">
+                                  <span className="text-indigo-200 text-xs font-bold">TOTAL REF</span>
+                                  <span className="text-2xl font-black">Ref {parseFloat(selectedAuditProduct.total_value_usd).toFixed(2)}</span>
+                              </div>
+                              <div className="h-px bg-indigo-500 my-2"></div>
+                              <div className="flex justify-between items-center">
+                                  <span className="text-indigo-200 text-xs font-bold">TOTAL BS</span>
+                                  <span className="text-lg font-bold">Bs {(parseFloat(selectedAuditProduct.total_value_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</span>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
             </div>
 
         ) : (
