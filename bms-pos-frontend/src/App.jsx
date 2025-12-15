@@ -776,35 +776,37 @@ function App() {
       }
   };
   
-// --- GENERADOR DE HTML DE RECIBO (CORREGIDO PARA DEUDORES Y SALDOS INICIALES) ---
-const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0) => {
-    const rate = bcvRate; 
+// --- GENERADOR DE HTML DE RECIBO (CORREGIDO: TASA HISTÓRICA + NOMBRE COMPLETO) ---
+// Se añadió el parámetro 'historicalRate' al final
+const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0, historicalRate = null) => {
     
-    // VALIDACIÓN IMPORTANTE: Si es un Saldo Inicial, 'items' vendrá vacío.
-    // Creamos un item "falso" para que aparezca en el recibo.
+    // LÓGICA DE TASA: Si nos envían la histórica, la usamos. Si no, usamos la actual.
+    const rate = historicalRate ? parseFloat(historicalRate) : bcvRate; 
+    
     let itemsToPrint = items;
     if (!items || items.length === 0) {
         itemsToPrint = [{
             name: 'SALDO INICIAL / DEUDA ANTIGUA',
             quantity: 1,
-            price_usd: totalSaleUsd, // Usamos el total de la venta
+            price_usd: totalSaleUsd, 
             is_taxable: false
         }];
     }
 
-    // Acumuladores
     let totalBsExento = 0;      
     let totalBsBase = 0;        
     let totalRefBase = 0;       
     let totalUsdGravable = 0;   
 
     const itemsHTML = itemsToPrint.map(item => {
-        // En saldos iniciales usamos price_usd directo, en ventas normales price_at_moment
+        // En reportes históricos usamos el precio guardado (price_at_moment_usd)
         const priceUsd = item.price_at_moment_usd || item.price_usd || 0; 
         const qty = item.quantity;
         
         const subtotalItemUsd = priceUsd * qty;
-        const subtotalItemBs = subtotalItemUsd * rate;
+        
+        // CÁLCULO CRÍTICO: Usamos la tasa definida arriba (rate)
+        const subtotalItemBs = subtotalItemUsd * rate; 
         
         totalRefBase += subtotalItemUsd;
 
@@ -822,23 +824,21 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
         return `
         <tr>
             <td style="padding:2px 0;">${qty}</td>
-            <td style="padding:2px 0;">${item.name.substring(0, 18)}${exemptMark}</td>
+            <td style="padding:2px 0;">${item.name.substring(0, 25)}${exemptMark}</td>
             <td class="right" style="padding:2px 0;">${subtotalItemBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</td>
         </tr>`;
     }).join('');
 
-    // Cálculos
     const ivaBs = totalBsBase * 0.16; 
     const totalGeneralBs = totalBsExento + totalBsBase + ivaBs;
     const ivaUsd = totalUsdGravable * 0.16; 
     const totalGeneralRef = totalRefBase + ivaUsd; 
 
-    // Datos del Cliente (Ahora sí llegarán desde el backend)
+    // CORRECCIÓN NOMBRE: Mostramos nombre completo o por defecto
     const clientName = customer.full_name || 'CONSUMIDOR FINAL';
     const clientId = customer.id_number || 'V-00000000';
     const clientDir = customer.institution || '';
     
-    // Títulos
     const isFiscal = invoiceType === 'FISCAL';
     const isCredit = saleStatus === 'PENDIENTE' || saleStatus === 'PARCIAL';
     let docTitle = 'NOTA DE ENTREGA';
@@ -857,16 +857,18 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
             body { width: 72mm; margin: 2mm auto; font-family: 'Courier New', Courier, monospace; font-size: 11px; text-transform: uppercase; color: #000; background: #fff; }
             .header { text-align: center; margin-bottom: 5px; }
             .bold { font-weight: bold; }
-            .row { display: flex; justify-content: space-between; }
+            .row { display: flex; justify-content: space-between; align-items: flex-start; }
             .line { border-bottom: 1px dashed #000; margin: 5px 0; }
             .right { text-align: right; }
             .center { text-align: center; }
             .box { border: 1px solid #000; padding: 5px; text-align: center; margin: 10px 0; font-weight:bold;}
+            /* Ajuste para nombres largos */
+            .client-val { text-align: right; font-weight: bold; max-width: 65%; word-wrap: break-word; }
             table { width: 100%; border-collapse: collapse; table-layout: fixed; }
             td { vertical-align: top; word-wrap: break-word; }
             td:nth-child(1) { width: 15%; } 
-            td:nth-child(2) { width: 55%; } 
-            td:nth-child(3) { width: 30%; } 
+            td:nth-child(2) { width: 50%; } 
+            td:nth-child(3) { width: 35%; } 
         </style>
     </head>
     <body>
@@ -882,9 +884,12 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
         </div>
         
         <div style="font-size:10px;">
-            <div class="row"><span>CLIENTE:</span> <span class="right bold">${clientName.substring(0,20)}</span></div>
+            <div class="row">
+                <span>CLIENTE:</span> 
+                <span class="client-val">${clientName}</span>
+            </div>
             <div class="row"><span>RIF/CI:</span> <span class="right bold">${clientId}</span></div>
-            ${(clientDir) ? `<div class="row"><span>DIR:</span> <span class="right" style="font-size:9px">${clientDir.substring(0,20)}</span></div>` : ''}
+            ${(clientDir) ? `<div class="row"><span>DIR:</span> <span class="right" style="font-size:9px">${clientDir.substring(0,25)}</span></div>` : ''}
         </div>
 
         <div class="line"></div>
@@ -895,20 +900,13 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
         <div class="line"></div>
         
         <table>
-            <tr style="font-size:10px;"><td class="bold">CNT</td><td class="bold">DESCRIP</td><td class="bold right">TOTAL</td></tr>
+            <tr style="font-size:10px;"><td class="bold">CNT</td><td class="bold">DESCRIP</td><td class="bold right">BS</td></tr>
             ${itemsHTML}
         </table>
         
         <div class="line"></div>
         
         <div class="right">
-            ${totalBsBase > 0.01 ? `
-            <div class="row"><span>BI (16%):</span> <span>${totalBsBase.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
-            <div class="row"><span>IVA (16%):</span> <span>${ivaBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
-            ` : ''}
-            
-            <div class="line"></div>
-
             <div class="row bold" style="font-size:14px; margin-top:5px">
                 <span>TOTAL BS:</span> 
                 <span>${totalGeneralBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
@@ -917,6 +915,8 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
             <div class="row bold" style="font-size:11px; color:#333; margin-top:2px;">
                 <span>(REF $${totalGeneralRef.toFixed(2)})</span>
             </div>
+            
+            <div style="font-size:9px; margin-top:2px;">TASA: ${rate.toFixed(2)} Bs/$</div>
         </div>
 
         ${isCredit ? '<div class="box">VENTA A CRÉDITO<br/>PENDIENTE DE PAGO</div>' : ''}
