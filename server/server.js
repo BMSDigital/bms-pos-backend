@@ -246,12 +246,19 @@ app.post('/api/sales', async (req, res) => {
 
 // --- REPORTES Y CRÉDITOS ---
 
-// A. Resumen del Día
+// A. Resumen del Día (CORREGIDO: Solo suma lo realmente pagado)
 app.get('/api/reports/daily', async (req, res) => {
     try {
+        // total_income_usd: Suma solo lo que han pagado (incluye abonos de parciales y pagos completos).
+        // total_receivable_usd: Suma la deuda generada hoy (Total - Pagado).
         const result = await pool.query(`
-            SELECT COUNT(*) as total_transactions, COALESCE(SUM(total_usd), 0) as total_usd, COALESCE(SUM(total_ves), 0) as total_ves
-            FROM sales WHERE DATE(created_at) = CURRENT_DATE
+            SELECT 
+                COUNT(*) as total_transactions, 
+                COALESCE(SUM(amount_paid_usd), 0) as total_usd, 
+                COALESCE(SUM(total_usd - amount_paid_usd), 0) as total_debt_today,
+                COALESCE(SUM(total_ves), 0) as total_ves_invoice
+            FROM sales 
+            WHERE DATE(created_at) = CURRENT_DATE AND status != 'ANULADO'
         `);
         res.json(result.rows[0]);
     } catch (err) {
@@ -514,9 +521,13 @@ app.get('/api/reports/analytics', async (req, res) => {
             ORDER BY total_spent DESC
             LIMIT 5`;
 
-        // 3. Ventas en el tiempo (Diario)
+        // 3. Ventas en el tiempo (Diario - CORREGIDO: Basado en Ingresos Reales)
         const salesOverTimeQuery = `
-            SELECT DATE(created_at) as sale_date, SUM(total_usd) as total_usd, SUM(total_ves) as total_ves, COUNT(*) as tx_count
+            SELECT 
+                DATE(created_at) as sale_date, 
+                SUM(amount_paid_usd) as total_usd,  -- CAMBIO CLAVE AQUÍ
+                SUM(total_ves) as total_ves, 
+                COUNT(*) as tx_count
             FROM sales
             WHERE created_at BETWEEN $1 AND $2 AND status != 'ANULADO'
             GROUP BY DATE(created_at)
