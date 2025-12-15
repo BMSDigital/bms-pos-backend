@@ -246,17 +246,16 @@ app.post('/api/sales', async (req, res) => {
 
 // --- REPORTES Y CRÉDITOS ---
 
-// A. Resumen del Día (CORREGIDO: Solo suma lo realmente pagado)
+// A. Resumen del Día (MODIFICADO: Solo Dinero Real Recaudado)
 app.get('/api/reports/daily', async (req, res) => {
     try {
-        // total_income_usd: Suma solo lo que han pagado (incluye abonos de parciales y pagos completos).
-        // total_receivable_usd: Suma la deuda generada hoy (Total - Pagado).
+        // COALESCE(SUM(amount_paid_usd), 0) -> Suma solo lo que han abonado/pagado hoy.
+        // Para los Bs, multiplicamos lo pagado por la tasa de esa venta (más preciso).
         const result = await pool.query(`
             SELECT 
                 COUNT(*) as total_transactions, 
                 COALESCE(SUM(amount_paid_usd), 0) as total_usd, 
-                COALESCE(SUM(total_usd - amount_paid_usd), 0) as total_debt_today,
-                COALESCE(SUM(total_ves), 0) as total_ves_invoice
+                COALESCE(SUM(amount_paid_usd * bcv_rate_snapshot), 0) as total_ves
             FROM sales 
             WHERE DATE(created_at) = CURRENT_DATE AND status != 'ANULADO'
         `);
@@ -511,9 +510,9 @@ app.get('/api/reports/analytics', async (req, res) => {
             ORDER BY total_qty DESC
             LIMIT 5`;
 
-        // 2. Top Clientes
+        // 2. Top Clientes (MODIFICADO: Ordenar por lo que realmente han PAGADO)
         const topCustomersQuery = `
-            SELECT c.full_name, COUNT(s.id) as transactions, SUM(s.total_usd) as total_spent
+            SELECT c.full_name, COUNT(s.id) as transactions, SUM(s.amount_paid_usd) as total_spent
             FROM sales s
             JOIN customers c ON s.customer_id = c.id
             WHERE s.created_at BETWEEN $1 AND $2 AND s.status != 'ANULADO'
@@ -521,12 +520,12 @@ app.get('/api/reports/analytics', async (req, res) => {
             ORDER BY total_spent DESC
             LIMIT 5`;
 
-        // 3. Ventas en el tiempo (Diario - CORREGIDO: Basado en Ingresos Reales)
+        // 3. Ventas en el tiempo (MODIFICADO: Gráfica de Ingresos Reales)
         const salesOverTimeQuery = `
             SELECT 
                 DATE(created_at) as sale_date, 
-                SUM(amount_paid_usd) as total_usd,  -- CAMBIO CLAVE AQUÍ
-                SUM(total_ves) as total_ves, 
+                SUM(amount_paid_usd) as total_usd, 
+                SUM(amount_paid_usd * bcv_rate_snapshot) as total_ves, 
                 COUNT(*) as tx_count
             FROM sales
             WHERE created_at BETWEEN $1 AND $2 AND status != 'ANULADO'
@@ -576,11 +575,13 @@ app.get('/api/reports/analytics', async (req, res) => {
     }
 });
 
-// L. Obtener Ventas de HOY Detalladas (ESTE ES EL BLOQUE QUE TE FALTA)
+// L. Obtener Ventas de HOY Detalladas
 app.get('/api/reports/sales-today', async (req, res) => {
     try {
+        // Traemos amount_paid_usd para mostrar "Pagado" en vez de "Total" si prefieres
         const result = await pool.query(`
-            SELECT s.*, c.full_name 
+            SELECT s.*, c.full_name,
+            (s.total_usd - s.amount_paid_usd) as debt_amount -- Calculamos la deuda al vuelo
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
             WHERE DATE(s.created_at) = CURRENT_DATE
