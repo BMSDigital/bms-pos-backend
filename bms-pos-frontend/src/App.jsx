@@ -874,7 +874,7 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
     <body>
         <div class="header">
             ${isFiscal ? '<div class="bold" style="font-size:12px">SENIAT</div>' : ''}
-            <div class="bold" style="font-size:14px">VOLUNTARIADO HIGEA</div>
+            <div class="bold" style="font-size:14px">VOLUNTARIADO DE LA FUNDACION HIGEA</div>
             <div style="font-size:10px; margin-bottom: 2px;">RIF: J-30521322-4</div>
             <div style="font-size:9px; line-height: 1.1;">
                 Av. Vargas, Carrera 31, Edif. Sede de la Fundación Higea<br/>

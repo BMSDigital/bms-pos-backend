@@ -1,3 +1,4 @@
+process.env.TZ = 'America/Caracas';
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -17,6 +18,13 @@ app.use(express.json());
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
+});
+
+// ESTO ES NUEVO: Cada vez que se use la base de datos, forzamos la hora de Vzla
+pool.on('connect', (client) => {
+    client.query("SET TIME ZONE 'America/Caracas'", (err) => {
+        if (err) console.error('Error configurando Timezone DB:', err);
+    });
 });
 
 // --- LÓGICA DE PRECIOS & SCRAPING BCV ---
