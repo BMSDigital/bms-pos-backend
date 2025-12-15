@@ -254,15 +254,16 @@ app.post('/api/sales', async (req, res) => {
 
 // --- REPORTES Y CRÉDITOS ---
 
-// A. Resumen del Día (MODIFICADO: Solo Dinero Real Recaudado)
+// A. Resumen del Día (CORREGIDO: Solo Flujo de Caja Real)
 app.get('/api/reports/daily', async (req, res) => {
     try {
-        // COALESCE(SUM(amount_paid_usd), 0) -> Suma solo lo que han abonado/pagado hoy.
-        // Para los Bs, multiplicamos lo pagado por la tasa de esa venta (más preciso).
         const result = await pool.query(`
             SELECT 
-                COUNT(*) as total_transactions, 
-                COALESCE(SUM(amount_paid_usd), 0) as total_usd, 
+                COUNT(*) as total_transactions,
+                -- 1. Total Recaudado USD (Solo suma lo que está en la columna 'pagado')
+                COALESCE(SUM(amount_paid_usd), 0) as total_usd,
+                
+                -- 2. Total Recaudado VES (Lo pagado * la tasa de esa venta)
                 COALESCE(SUM(amount_paid_usd * bcv_rate_snapshot), 0) as total_ves
             FROM sales 
             WHERE DATE(created_at) = CURRENT_DATE AND status != 'ANULADO'
@@ -528,11 +529,13 @@ app.get('/api/reports/analytics', async (req, res) => {
             ORDER BY total_spent DESC
             LIMIT 5`;
 
-        // 3. Ventas en el tiempo (MODIFICADO: Gráfica de Ingresos Reales)
+        // 3. Ventas en el tiempo (CORREGIDO: Basado en Cobros Reales)
         const salesOverTimeQuery = `
             SELECT 
                 DATE(created_at) as sale_date, 
+                -- Aquí cambiamos total_usd por amount_paid_usd
                 SUM(amount_paid_usd) as total_usd, 
+                -- Y aquí calculamos los Bs reales recibidos
                 SUM(amount_paid_usd * bcv_rate_snapshot) as total_ves, 
                 COUNT(*) as tx_count
             FROM sales
@@ -583,13 +586,20 @@ app.get('/api/reports/analytics', async (req, res) => {
     }
 });
 
-// L. Obtener Ventas de HOY Detalladas
+// L. Obtener Ventas de HOY (Mejorado para UX)
 app.get('/api/reports/sales-today', async (req, res) => {
     try {
-        // Traemos amount_paid_usd para mostrar "Pagado" en vez de "Total" si prefieres
         const result = await pool.query(`
-            SELECT s.*, c.full_name,
-            (s.total_usd - s.amount_paid_usd) as debt_amount -- Calculamos la deuda al vuelo
+            SELECT 
+                s.id, 
+                s.created_at,
+                s.total_usd,             -- Monto Factura
+                s.amount_paid_usd,       -- Monto Real Pagado
+                (s.total_usd - s.amount_paid_usd) as debt, -- Cuánto falta (Útil para UX)
+                s.total_ves, 
+                s.payment_method, 
+                s.status, 
+                c.full_name 
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
             WHERE DATE(s.created_at) = CURRENT_DATE
@@ -597,7 +607,6 @@ app.get('/api/reports/sales-today', async (req, res) => {
         `);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: err.message });
     }
 });
