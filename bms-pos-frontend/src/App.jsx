@@ -1581,8 +1581,12 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
               ...sale,
               // 1. Evita error en .split() si el método es null
               payment_method: sale.payment_method || 'Desconocido', 
-              // 2. Evita NaN en las sumas
+              
+              // 2. CORRECCIÓN CLAVE: Aseguramos que TODOS los montos sean números reales
               total_usd: parseFloat(sale.total_usd) || 0,
+              amount_paid_usd: parseFloat(sale.amount_paid_usd) || 0, // <--- IMPORTANTE: Para sumar flujo de caja
+              bcv_rate_snapshot: parseFloat(sale.bcv_rate_snapshot) || 0, // <--- IMPORTANTE: Para calcular Bs exactos
+              
               // 3. Texto por defecto para nombre
               full_name: sale.full_name || 'Consumidor Final'
           }));
@@ -3839,99 +3843,116 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                   
                   <div className="flex-1 overflow-y-auto p-0 bg-gray-50/50">
                       <table className="w-full text-sm text-left border-collapse">
-    <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10 border-b border-gray-100">
-        <tr>
-            <th className="px-6 py-4 text-left">Hora</th>
-            <th className="px-6 py-4 text-left">Cliente</th>
-            <th className="px-6 py-4 text-left">Método Pago</th>
-            <th className="px-6 py-4 text-right">Total Ref</th>
-            <th className="px-6 py-4 text-center">Acción</th>
-        </tr>
-    </thead>
-    <tbody className="divide-y divide-gray-50 bg-white">
-        {dailySalesList.map(sale => (
-            <tr 
-                key={sale.id} 
-                // ACCIÓN 1: Click en toda la fila abre el detalle
-                onClick={() => showSaleDetail(sale)}
-                className="hover:bg-blue-50/60 transition-colors group cursor-pointer"
-            >
-                {/* HORA (Fuente Mono para alineación perfecta) */}
-                <td className="px-6 py-4 text-gray-500 font-mono text-xs whitespace-nowrap align-middle">
-                    {new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                </td>
-                
-                {/* CLIENTE */}
-                <td className="px-6 py-4 align-middle">
-                    <div className="flex flex-col">
-                        <span className="font-bold text-gray-700 text-sm">{sale.full_name || 'Consumidor Final'}</span>
-                        <span className="text-[10px] text-gray-400 font-medium">ID Venta: #{sale.id}</span>
-                    </div>
-                </td>
-                
-                {/* MÉTODO DE PAGO (Estilo Badge/Etiqueta Elegante) */}
-                <td className="px-6 py-4 align-middle">
-                    <div className="flex items-center">
-                        <div className="max-w-[160px]" title={sale.payment_method}>
-                            <p className="bg-gray-100 text-gray-600 border border-gray-200 px-3 py-1 rounded-full text-xs font-medium truncate w-full text-center">
-                                {sale.payment_method}
-                            </p>
-                        </div>
-                    </div>
-                </td>
-                
-                {/* TOTAL REF (Alineado a la derecha, tipografía fuerte) */}
-                <td className="px-6 py-4 text-right align-middle">
-                    <span className="font-black text-higea-blue text-base tracking-tight">
-                        Ref {parseFloat(sale.total_usd).toFixed(2)}
-                    </span>
-                </td>
-                
-                {/* ACCIÓN (Botón Visual) */}
-                <td className="px-6 py-4 text-center align-middle">
-                    <button 
-                        // ACCIÓN 2: El botón también funciona (stopPropagation previene doble evento)
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            showSaleDetail(sale);
-                        }} 
-                        className="p-2 text-gray-400 hover:text-higea-blue hover:bg-white bg-transparent rounded-full transition-all active:scale-95"
-                        title="Ver Detalles Completos"
-                    >
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                    </button>
-                </td>
-            </tr>
-        ))}
-        
-        {/* ESTADO VACÍO */}
-        {dailySalesList.length === 0 && (
-            <tr>
-                <td colSpan="5" className="p-12 text-center text-gray-400 italic bg-gray-50/30">
-                    <div className="flex flex-col items-center gap-2">
-                        <span className="text-2xl">💤</span>
-                        <span>No hay movimientos registrados hoy.</span>
-                    </div>
-                </td>
-            </tr>
-        )}
-    </tbody>
-</table>
+                        <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10 border-b border-gray-100">
+                            <tr>
+                                <th className="px-6 py-4 text-left">Hora</th>
+                                <th className="px-6 py-4 text-left">Cliente</th>
+                                <th className="px-6 py-4 text-left">Método Pago</th>
+                                <th className="px-6 py-4 text-right">Total Ref</th>
+                                <th className="px-6 py-4 text-center">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50 bg-white">
+                            {dailySalesList.map(sale => (
+                                <tr 
+                                    key={sale.id} 
+                                    // ACCIÓN 1: Click en toda la fila abre el detalle
+                                    onClick={() => showSaleDetail(sale)}
+                                    className="hover:bg-blue-50/60 transition-colors group cursor-pointer"
+                                >
+                                    {/* HORA (Fuente Mono para alineación perfecta) */}
+                                    <td className="px-6 py-4 text-gray-500 font-mono text-xs whitespace-nowrap align-middle">
+                                        {new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </td>
+                                    
+                                    {/* CLIENTE */}
+                                    <td className="px-6 py-4 align-middle">
+                                        <div className="flex flex-col">
+                                            <span className="font-bold text-gray-700 text-sm">{sale.full_name || 'Consumidor Final'}</span>
+                                            <span className="text-[10px] text-gray-400 font-medium">ID Venta: #{sale.id}</span>
+                                        </div>
+                                    </td>
+                                    
+                                    {/* MÉTODO DE PAGO (Estilo Badge/Etiqueta Elegante) */}
+                                    <td className="px-6 py-4 align-middle">
+                                        <div className="flex items-center">
+                                            <div className="max-w-[160px]" title={sale.payment_method}>
+                                                <p className="bg-gray-100 text-gray-600 border border-gray-200 px-3 py-1 rounded-full text-xs font-medium truncate w-full text-center">
+                                                    {sale.payment_method}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    
+                                    {/* TOTAL REF (Alineado a la derecha, tipografía fuerte) */}
+                                    <td className="px-6 py-4 text-right align-middle">
+                                        <span className="font-black text-higea-blue text-base tracking-tight">
+                                            Ref {parseFloat(sale.total_usd).toFixed(2)}
+                                        </span>
+                                    </td>
+                                    
+                                    {/* ACCIÓN (Botón Visual) */}
+                                    <td className="px-6 py-4 text-center align-middle">
+                                        <button 
+                                            // ACCIÓN 2: El botón también funciona (stopPropagation previene doble evento)
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                showSaleDetail(sale);
+                                            }} 
+                                            className="p-2 text-gray-400 hover:text-higea-blue hover:bg-white bg-transparent rounded-full transition-all active:scale-95"
+                                            title="Ver Detalles Completos"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                            
+                            {/* ESTADO VACÍO */}
+                            {dailySalesList.length === 0 && (
+                                <tr>
+                                    <td colSpan="5" className="p-12 text-center text-gray-400 italic bg-gray-50/30">
+                                        <div className="flex flex-col items-center gap-2">
+                                            <span className="text-2xl">💤</span>
+                                            <span>No hay movimientos registrados hoy.</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                      </table>
                   </div>
                   
-                  {/* Footer con Totales */}
-                  <div className="p-5 border-t bg-white flex justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20">
-                      <div className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+                  {/* Footer con Totales (CORREGIDO: MUESTRA FLUJO DE CAJA REAL Y FALLBACK PARA BS) */}
+                  <div className="p-5 border-t bg-white flex flex-col md:flex-row justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20 gap-4">
+                      <div className="text-xs font-bold text-gray-400 uppercase tracking-wide self-start md:self-center">
                           Transacciones: <span className="text-gray-800 text-lg ml-1">{dailySalesList.length}</span>
                       </div>
-                      <div className="text-right">
-                          <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado</p>
-                          <p className="text-3xl font-black text-higea-blue leading-none">
-                              Ref {dailySalesList.reduce((acc, curr) => acc + parseFloat(curr.total_usd), 0).toFixed(2)}
-                          </p>
+                      
+                      <div className="flex flex-col items-end">
+                          <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado (Dinero en Mano)</p>
+                          
+                          <div className="flex items-end gap-4">
+                              {/* TOTAL EN BS (CALCULADO REAL CON FALLBACK) */}
+                              <div className="text-right">
+                                  <span className="text-[10px] font-bold text-gray-400 block">EN BOLÍVARES</span>
+                                  <span className="text-xl font-bold text-gray-600">
+                                      {/* AQUÍ ESTÁ LA CORRECCIÓN: Si bcv_rate_snapshot es 0, usa bcvRate */}
+                                      Bs {dailySalesList.reduce((acc, curr) => acc + (curr.amount_paid_usd * (curr.bcv_rate_snapshot || bcvRate)), 0).toLocaleString('es-VE', {maximumFractionDigits: 2})}
+                                  </span>
+                              </div>
+
+                              {/* TOTAL EN USD (CALCULADO REAL) */}
+                              <div className="text-right border-l pl-4 border-gray-200">
+                                  <span className="text-[10px] font-bold text-higea-blue block">EN DÓLARES (REF)</span>
+                                  <span className="text-3xl font-black text-higea-blue leading-none">
+                                      Ref {dailySalesList.reduce((acc, curr) => acc + curr.amount_paid_usd, 0).toFixed(2)}
+                                  </span>
+                              </div>
+                          </div>
                       </div>
                   </div>
               </div>
