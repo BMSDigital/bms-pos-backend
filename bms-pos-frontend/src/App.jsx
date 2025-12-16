@@ -209,6 +209,11 @@ function App() {
       end: new Date().toISOString().split('T')[0]
   });
 
+  // AGREGAR ESTOS DOS NUEVOS:
+  const [salesSearch, setSalesSearch] = useState('');       // Exclusivo para Ventas
+  const [inventorySearch, setInventorySearch] = useState(''); // Exclusivo para Inventario
+  const [isSearchingSales, setIsSearchingSales] = useState(false); // Spinner local
+  
   // 1. Carga inicial de datos al montar el componente
   useEffect(() => { fetchData(); }, []);
   
@@ -297,6 +302,18 @@ function App() {
       setCreditCurrentPage(1); // Resetear a página 1 al buscar
   }, [creditSearchQuery, groupedCredits]);
   
+  // EFECTO: Búsqueda en vivo para Ventas (Espera 500ms tras escribir)
+  useEffect(() => {
+      // Solo ejecutar si estamos en la pestaña de ventas
+      if (reportTab === 'SALES') {
+          const delayDebounceFn = setTimeout(() => {
+              fetchSalesDetail(salesSearch);
+          }, 500);
+
+          return () => clearTimeout(delayDebounceFn);
+      }
+  }, [salesSearch, reportTab]); // Se ejecuta cuando cambia el texto o la pestaña
+  
   // --- FUNCIÓN MEJORADA PARA EXPORTAR CSV (Excel Compatible) ---
   const downloadCSV = (data, fileName) => {
       if (!data || data.length === 0) return Swal.fire('Vacío', 'No hay datos para exportar', 'info');
@@ -331,17 +348,31 @@ function App() {
       document.body.removeChild(link);
   };
 
-  // Cargar Ventas Detalladas
-  const fetchSalesDetail = async () => {
+  // Cargar Ventas Detalladas (Mejorado)
+  const fetchSalesDetail = async (searchTerm = '') => {
       try {
-          Swal.fire({title: 'Cargando registros...', didOpen: () => Swal.showLoading()});
-          const res = await axios.get(`${API_URL}/reports/sales-detail?startDate=${reportDateRange.start}&endDate=${reportDateRange.end}`);
+          // Solo mostramos Loading Grande si NO estamos buscando en vivo (ej: al cambiar fechas)
+          if (!searchTerm) Swal.fire({title: 'Cargando registros...', didOpen: () => Swal.showLoading()});
+          else setIsSearchingSales(true); // Activamos spinner pequeño
+
+          // Enviamos el parámetro search al backend
+          const res = await axios.get(`${API_URL}/reports/sales-detail`, {
+              params: {
+                  startDate: reportDateRange.start,
+                  endDate: reportDateRange.end,
+                  search: searchTerm // <--- Aquí va la búsqueda
+              }
+          });
+          
           setDetailedSales(res.data);
           setReportTab('SALES'); 
-          setSalesReportPage(1); // <--- REINICIAR PAGINACIÓN
-          Swal.close();
+          setSalesReportPage(1); 
+          
+          if (!searchTerm) Swal.close();
       } catch (error) {
           Swal.fire('Error', 'Error cargando reporte.', 'error');
+      } finally {
+          setIsSearchingSales(false); // Apagamos spinner pequeño
       }
   };
 
@@ -3228,16 +3259,22 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                 </button>
                             </div>
 
-                            {/* 2. BUSCADOR (FILTRO LOCAL) */}
+                            {/* 2. BUSCADOR (FILTRO LOCAL -> AHORA SERVIDOR) */}
                             <div className="relative w-full md:w-80">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
                                 <input 
                                     type="text" 
-                                    placeholder="Filtrar en resultados (Cliente, ID, Ref)..." 
-                                    value={reportSearch} 
-                                    onChange={(e) => { setReportSearch(e.target.value); setSalesReportPage(1); }} 
-                                    className="w-full border p-2.5 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm bg-white"
+                                    placeholder="Buscar (Cliente, Factura, ID)..." 
+                                    value={salesSearch} // Usamos la variable EXCLUSIVA de ventas
+                                    onChange={(e) => setSalesSearch(e.target.value)} 
+                                    className="w-full border p-2.5 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm bg-white transition-all"
                                 />
+                                {/* Spinner de carga pequeño UX Profesional */}
+                                {isSearchingSales && (
+                                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                        <div className="w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>
+                                    </div>
+                                )}
                             </div>
 
                             {/* 3. BOTÓN EXPORTAR */}
@@ -3342,9 +3379,9 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
                                 <input 
                                     type="text" 
-                                    placeholder="Buscar producto, categoría, código..." 
-                                    value={reportSearch} 
-                                    onChange={(e) => { setReportSearch(e.target.value); setInventoryReportPage(1); }} 
+                                    placeholder="Buscar producto, categoría..." 
+                                    value={inventorySearch} // <--- Variable INDEPENDIENTE
+                                    onChange={(e) => { setInventorySearch(e.target.value); setInventoryReportPage(1); }} 
                                     className="w-full border p-3 pl-10 rounded-xl text-sm outline-none focus:border-indigo-500 shadow-sm"
                                 />
                             </div>
@@ -3378,10 +3415,10 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                         // Paginación (50 items)
                                         const ITEMS_PER_PAGE = 50;
                                         const filteredData = detailedInventory.filter(p => 
-                                            p.name.toLowerCase().includes(reportSearch.toLowerCase()) || 
-                                            p.category?.toLowerCase().includes(reportSearch.toLowerCase()) ||
-                                            p.barcode?.includes(reportSearch)
-                                        );
+											p.name.toLowerCase().includes(inventorySearch.toLowerCase()) || 
+											p.category?.toLowerCase().includes(inventorySearch.toLowerCase()) ||
+											p.barcode?.includes(inventorySearch)
+										);
                                         const indexOfLast = inventoryReportPage * ITEMS_PER_PAGE;
                                         const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
                                         const currentData = filteredData.slice(indexOfFirst, indexOfLast);

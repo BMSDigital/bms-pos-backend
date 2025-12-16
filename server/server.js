@@ -611,24 +611,26 @@ app.get('/api/reports/sales-today', async (req, res) => {
     }
 });
 
-// M. REPORTE DETALLADO DE VENTAS (Optimizado para CSV)
+// M. REPORTE DETALLADO DE VENTAS (Con Búsqueda SQL Optimizada)
 app.get('/api/reports/sales-detail', async (req, res) => {
     try {
-        let { startDate, endDate } = req.query;
+        let { startDate, endDate, search } = req.query; // <--- Agregamos 'search'
 
-        // PROTECCIÓN UX: Si no envían fechas, usar el mes actual por defecto
-        // Esto evita que una consulta accidental colapse el servidor
+        // Protección UX: Fechas por defecto si no vienen
         if (!startDate || !endDate) {
             const now = new Date();
-            startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString(); // Primer día del mes
-            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString(); // Último día del mes
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString();
         }
 
-        // Aseguramos que cubra todo el día final (hasta las 23:59:59)
         const finalEndDate = new Date(endDate);
         finalEndDate.setHours(23, 59, 59, 999);
-
-        const result = await pool.query(`
+        
+        // Array de parámetros dinámicos
+        const queryParams = [startDate, finalEndDate.toISOString()];
+        
+        // Construcción de la consulta base
+        let queryText = `
             SELECT 
                 s.id as "Nro Factura",
                 to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as "Fecha Hora",
@@ -640,15 +642,29 @@ app.get('/api/reports/sales-detail', async (req, res) => {
                 s.total_usd as "Total USD", 
                 s.total_ves as "Total Bs",
                 s.bcv_rate_snapshot as "Tasa BCV",
-                -- Desglosamos un poco mejor la descripción para el CSV
                 (SELECT string_agg(p.name || ' (x' || si.quantity || ')', ' | ') 
                  FROM sale_items si JOIN products p ON si.product_id = p.id 
                  WHERE si.sale_id = s.id) as "Items Comprados"
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
             WHERE s.created_at BETWEEN $1 AND $2
-            ORDER BY s.id DESC
-        `, [startDate, finalEndDate.toISOString()]);
+        `;
+
+        // LÓGICA DE BÚSQUEDA INTELIGENTE
+        if (search) {
+            // Agregamos el filtro SQL si hay texto de búsqueda
+            // Filtra por ID de factura, Nombre de Cliente o Documento
+            queryText += ` AND (
+                CAST(s.id AS TEXT) ILIKE $3 OR 
+                c.full_name ILIKE $3 OR 
+                c.id_number ILIKE $3 
+            )`;
+            queryParams.push(`%${search}%`); // El parámetro $3
+        }
+
+        queryText += ` ORDER BY s.id DESC`;
+
+        const result = await pool.query(queryText, queryParams);
 
         res.json(result.rows);
     } catch (err) {
