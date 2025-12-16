@@ -131,7 +131,7 @@ function App() {
   const [reportTab, setReportTab] = useState('DASHBOARD'); // 'DASHBOARD', 'SALES', 'INVENTORY'
   const [detailedSales, setDetailedSales] = useState([]);
   const [detailedInventory, setDetailedInventory] = useState([]);
-  const [reportSearch, setReportSearch] = useState(''); // Buscador universal para tablas de reporte
+  //const [reportSearch, setReportSearch] = useState(''); // Buscador universal para tablas de reporte
   
   // Modales
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
@@ -348,33 +348,54 @@ function App() {
       document.body.removeChild(link);
   };
 
-  // Cargar Ventas Detalladas (Mejorado)
-  const fetchSalesDetail = async (searchTerm = '') => {
+  const fetchSalesDetail = async (termInput) => {
       try {
-          // Solo mostramos Loading Grande si NO estamos buscando en vivo (ej: al cambiar fechas)
-          if (!searchTerm) Swal.fire({title: 'Cargando registros...', didOpen: () => Swal.showLoading()});
-          else setIsSearchingSales(true); // Activamos spinner pequeño
+          // LÓGICA: Si termInput es un evento (click) o es null, usamos el estado actual 'salesSearch'.
+          // Si es un string (viene del useEffect al escribir), usamos ese.
+          const term = (typeof termInput === 'string') ? termInput : salesSearch;
 
-          // Enviamos el parámetro search al backend
+          if (!term) Swal.fire({title: 'Cargando registros...', didOpen: () => Swal.showLoading()});
+          else setIsSearchingSales(true); 
+
           const res = await axios.get(`${API_URL}/reports/sales-detail`, {
               params: {
                   startDate: reportDateRange.start,
                   endDate: reportDateRange.end,
-                  search: searchTerm // <--- Aquí va la búsqueda
+                  search: term // Usamos el término limpio
               }
           });
           
-          setDetailedSales(res.data);
+          const normalizedData = res.data.map(item => ({
+              ...item,
+              id: item.id || item["Nro Factura"] || item.sale_id, 
+              full_name: item.full_name || item["Cliente"] || 'Cliente Casual',
+              total_ves: item.total_ves || item["Total Bs"],
+              total_usd: item.total_usd || item["Total USD"],
+              status: item.status || item["Estado"]
+          }));
+
+          setDetailedSales(normalizedData);
           setReportTab('SALES'); 
           setSalesReportPage(1); 
           
-          if (!searchTerm) Swal.close();
+          if (!term) Swal.close();
       } catch (error) {
-          Swal.fire('Error', 'Error cargando reporte.', 'error');
+          console.error(error); 
       } finally {
-          setIsSearchingSales(false); // Apagamos spinner pequeño
+          setIsSearchingSales(false);
       }
   };
+
+// AGREGAR ESTE NUEVO EFECTO (Debounce)
+// Espera 500ms después de escribir para buscar (Mejora UX brutal)
+useEffect(() => {
+    if (reportTab === 'SALES') {
+        const timeoutId = setTimeout(() => {
+            fetchSalesDetail(salesSearch);
+        }, 500);
+        return () => clearTimeout(timeoutId);
+    }
+}, [salesSearch, reportTab]);
 
   // Cargar Inventario Detallado
   const fetchInventoryDetail = async () => {
@@ -1273,45 +1294,60 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
   }
 
   const showSaleDetail = async (sale) => {
-      try {
-          Swal.fire({ title: 'Cargando detalle...', didOpen: () => Swal.showLoading() });
-          
-          const res = await axios.get(`${API_URL}/sales/${sale.id}`);
-          
-          // Validación de seguridad para datos nulos
-          const safeParse = (val) => {
-              const num = parseFloat(val);
-              return isNaN(num) ? 0 : num;
-          };
+    try {
+        // --- [INICIO CORRECCIÓN] ---
+        // 1. Detectamos el ID correctamente, sin importar si viene de la búsqueda o de la lista normal
+        const saleId = sale.id || sale["Nro Factura"] || sale.sale_id;
 
-          setSelectedSaleDetail({ 
-              id: sale.id, 
-              items: res.data.items || [], 
-              // Si viene de la lista, usa ese dato, si no intenta buscarlo en la respuesta o pone texto genérico
-              payment_method: sale.payment_method || res.data.payment_method || 'Desconocido', 
-              total_usd: safeParse(res.data.total_usd),
-              total_ves: safeParse(res.data.total_ves),
-              status: sale.status || res.data.status || 'PAGADO',
-              full_name: sale.full_name || res.data.full_name || 'Cliente Casual',
-              id_number: sale.id_number || res.data.id_number || '',
-              due_date: sale.due_date || res.data.due_date || null,
-              bcv_rate_snapshot: safeParse(res.data.bcv_rate_snapshot), 
-              
-              // PROTECCIÓN CONTRA CRASH: Usamos '|| 0' para evitar error en ventas viejas
-              taxBreakdown: {
-                 subtotalTaxableUSD: safeParse(res.data.subtotal_taxable_usd || 0),
-                 subtotalExemptUSD: safeParse(res.data.subtotal_exempt_usd || 0),
-                 ivaUSD: safeParse(res.data.iva_usd || 0),
-                 ivaRate: safeParse(res.data.iva_rate || 0.16),
-              }
-          });
-          
-          Swal.close(); // Cerrar el loading
-      } catch (error) { 
-          console.error(error); 
-          Swal.fire('Error', 'No se pudieron cargar los detalles de la venta.', 'error');
-      }
-  };
+        // 2. Si no hay ID, detenemos todo para evitar el Error 500
+        if (!saleId) {
+             console.error("Objeto venta recibido sin ID:", sale);
+             return Swal.fire('Error', 'No se pudo identificar el ID de la venta.', 'error');
+        }
+        // --- [FIN CORRECCIÓN] ---
+
+        Swal.fire({ title: 'Cargando detalle...', didOpen: () => Swal.showLoading() });
+        
+        // 3. Usamos 'saleId' en lugar de 'sale.id' en la URL
+        const res = await axios.get(`${API_URL}/sales/${saleId}`);
+        
+        // Validación de seguridad para datos nulos (TU CÓDIGO ORIGINAL)
+        const safeParse = (val) => {
+            const num = parseFloat(val);
+            return isNaN(num) ? 0 : num;
+        };
+
+        setSelectedSaleDetail({ 
+            id: saleId, // <--- 4. Usamos la variable corregida aquí también
+            items: res.data.items || [], 
+            // Si viene de la lista, usa ese dato, si no intenta buscarlo en la respuesta o pone texto genérico
+            payment_method: sale.payment_method || res.data.payment_method || 'Desconocido', 
+            total_usd: safeParse(res.data.total_usd),
+            total_ves: safeParse(res.data.total_ves),
+            status: sale.status || res.data.status || 'PAGADO',
+            full_name: sale.full_name || res.data.full_name || 'Cliente Casual',
+            id_number: sale.id_number || res.data.id_number || '',
+            due_date: sale.due_date || res.data.due_date || null,
+            bcv_rate_snapshot: safeParse(res.data.bcv_rate_snapshot), 
+            
+            // AGREGADO POR PRECAUCIÓN: Para que el recibo sepa si es Fiscal o Ticket
+            invoice_type: sale.invoice_type || res.data.invoice_type || 'TICKET',
+
+            // PROTECCIÓN CONTRA CRASH: Usamos '|| 0' para evitar error en ventas viejas
+            taxBreakdown: {
+               subtotalTaxableUSD: safeParse(res.data.subtotal_taxable_usd || 0),
+               subtotalExemptUSD: safeParse(res.data.subtotal_exempt_usd || 0),
+               ivaUSD: safeParse(res.data.iva_usd || 0),
+               ivaRate: safeParse(res.data.iva_rate || 0.16),
+            }
+        });
+        
+        Swal.close(); // Cerrar el loading
+    } catch (error) { 
+        console.error(error); 
+        Swal.fire('Error', 'No se pudieron cargar los detalles de la venta.', 'error');
+    }
+};
   
   // Componente Reutilizable para la entrada de Pago (UX Táctil)
   const PaymentInput = ({ name, currency, value }) => {
@@ -3259,23 +3295,22 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                 </button>
                             </div>
 
-                            {/* 2. BUSCADOR (FILTRO LOCAL -> AHORA SERVIDOR) */}
-                            <div className="relative w-full md:w-80">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-                                <input 
-                                    type="text" 
-                                    placeholder="Buscar (Cliente, Factura, ID)..." 
-                                    value={salesSearch} // Usamos la variable EXCLUSIVA de ventas
-                                    onChange={(e) => setSalesSearch(e.target.value)} 
-                                    className="w-full border p-2.5 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm bg-white transition-all"
-                                />
-                                {/* Spinner de carga pequeño UX Profesional */}
-                                {isSearchingSales && (
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                        <div className="w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>
-                                    </div>
-                                )}
-                            </div>
+                            {/* INPUT DE BÚSQUEDA DE VENTAS */}
+<div className="relative w-full md:w-80">
+    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+    <input 
+        type="text" 
+        placeholder="Buscar (Cliente, ID, Ref)..." 
+        value={salesSearch} // ✅ Usamos salesSearch
+        onChange={(e) => setSalesSearch(e.target.value)} 
+        className="w-full border p-2.5 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm bg-white"
+    />
+    {isSearchingSales && (
+        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+             <div className="w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>
+        </div>
+    )}
+</div>
 
                             {/* 3. BOTÓN EXPORTAR */}
                             <div className="flex items-center gap-3 w-full md:w-auto justify-end">
@@ -3310,13 +3345,18 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                 <tbody className="divide-y divide-gray-100 bg-white">
                                     {(() => {
                                         const ITEMS_PER_PAGE = 50;
-                                        const filteredData = detailedSales.filter(s => JSON.stringify(s).toLowerCase().includes(reportSearch.toLowerCase()));
-                                        const indexOfLast = salesReportPage * ITEMS_PER_PAGE;
-                                        const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
-                                        const currentData = filteredData.slice(indexOfFirst, indexOfLast);
-                                        const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+        
+        // OPTIMIZACIÓN: Usamos 'detailedSales' directamente.
+        // El backend ya hizo el trabajo sucio de filtrar por fecha y texto.
+        const filteredData = detailedSales; 
 
-                                        if (currentData.length === 0) return <tr><td colSpan="7" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
+        const indexOfLast = salesReportPage * ITEMS_PER_PAGE;
+        const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
+        
+        const currentData = filteredData.slice(indexOfFirst, indexOfLast);
+        const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+
+        if (currentData.length === 0) return <tr><td colSpan="7" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
 
                                         return (
                                             <>
