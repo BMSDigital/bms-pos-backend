@@ -611,33 +611,49 @@ app.get('/api/reports/sales-today', async (req, res) => {
     }
 });
 
-// M. REPORTE DETALLADO DE VENTAS (Rango de Fechas)
+// M. REPORTE DETALLADO DE VENTAS (Optimizado para CSV)
 app.get('/api/reports/sales-detail', async (req, res) => {
-    const { startDate, endDate } = req.query;
     try {
-        // Traemos TODO el detalle para exportar/visualizar
+        let { startDate, endDate } = req.query;
+
+        // PROTECCIÓN UX: Si no envían fechas, usar el mes actual por defecto
+        // Esto evita que una consulta accidental colapse el servidor
+        if (!startDate || !endDate) {
+            const now = new Date();
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString(); // Primer día del mes
+            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString(); // Último día del mes
+        }
+
+        // Aseguramos que cubra todo el día final (hasta las 23:59:59)
+        const finalEndDate = new Date(endDate);
+        finalEndDate.setHours(23, 59, 59, 999);
+
         const result = await pool.query(`
             SELECT 
-                s.id, 
-                s.created_at, 
-                COALESCE(c.full_name, 'Consumidor Final') as client_name, 
-                COALESCE(c.id_number, 'N/A') as client_id,
-                s.payment_method, 
-                s.status, 
-                s.invoice_type, 
-                s.total_usd, 
-                s.total_ves,
-                (SELECT string_agg(p.name || ' (' || si.quantity || ')', ', ') 
+                s.id as "Nro Factura",
+                to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as "Fecha Hora",
+                COALESCE(c.full_name, 'Consumidor Final') as "Cliente", 
+                COALESCE(c.id_number, 'N/A') as "Documento",
+                s.payment_method as "Metodo Pago", 
+                s.status as "Estado", 
+                s.invoice_type as "Tipo", 
+                s.total_usd as "Total USD", 
+                s.total_ves as "Total Bs",
+                s.bcv_rate_snapshot as "Tasa BCV",
+                -- Desglosamos un poco mejor la descripción para el CSV
+                (SELECT string_agg(p.name || ' (x' || si.quantity || ')', ' | ') 
                  FROM sale_items si JOIN products p ON si.product_id = p.id 
-                 WHERE si.sale_id = s.id) as items_summary
+                 WHERE si.sale_id = s.id) as "Items Comprados"
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
             WHERE s.created_at BETWEEN $1 AND $2
             ORDER BY s.id DESC
-        `, [startDate, endDate]);
+        `, [startDate, finalEndDate.toISOString()]);
+
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: 'Error generando reporte detallado: ' + err.message });
     }
 });
 

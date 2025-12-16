@@ -297,20 +297,35 @@ function App() {
       setCreditCurrentPage(1); // Resetear a página 1 al buscar
   }, [creditSearchQuery, groupedCredits]);
   
-  // Función para descargar CSV (Excel genérico)
+  // --- FUNCIÓN MEJORADA PARA EXPORTAR CSV (Excel Compatible) ---
   const downloadCSV = (data, fileName) => {
       if (!data || data.length === 0) return Swal.fire('Vacío', 'No hay datos para exportar', 'info');
-      const replacer = (key, value) => value === null ? '' : value; 
-      const header = Object.keys(data[0]);
-      const csv = [
-          header.join(','), 
-          ...data.map(row => header.map(fieldName => JSON.stringify(row[fieldName], replacer)).join(','))
+      
+      // 1. Obtener encabezados dinámicamente
+      const headers = Object.keys(data[0]);
+      
+      // 2. Construir el contenido
+      const csvContent = [
+          headers.join(';'), // Usamos punto y coma para separar columnas en español
+          ...data.map(row => headers.map(fieldName => {
+              let value = row[fieldName];
+              // Limpieza de datos nulos
+              if (value === null || value === undefined) value = '';
+              // Convertir a string y limpiar saltos de línea o puntos y comas internos
+              value = String(value).replace(/(\r\n|\n|\r)/gm, " ").replace(/;/g, ","); 
+              return value;
+          }).join(';'))
       ].join('\r\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+
+      // 3. Crear Blob con codificación UTF-8 + BOM (Para que Excel reconozca tildes)
+      const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      
+      // 4. Descargar
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
       link.setAttribute("href", url);
-      link.setAttribute("download", `${fileName}.csv`);
+      // Incluimos las fechas en el nombre del archivo para mejor organización
+      link.setAttribute("download", `${fileName}_${reportDateRange.start}_al_${reportDateRange.end}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -3183,31 +3198,67 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                 {/* PESTAÑA 2: DETALLE DE VENTAS (TABLA AUDITORÍA PRO) */}
                 {reportTab === 'SALES' && (
                     <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
-                        {/* BARRA DE HERRAMIENTAS */}
-                        <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
-                            <div className="relative w-full md:w-96">
+                        
+                        {/* --- BARRA DE HERRAMIENTAS MEJORADA (FILTRO DE FECHAS) --- */}
+                        <div className="p-4 border-b border-slate-100 flex flex-col xl:flex-row justify-between items-center gap-4 bg-slate-50">
+                            
+                            {/* 1. FILTRO DE RANGO DE FECHAS */}
+                            <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm w-full md:w-auto">
+                                <span className="text-xs font-bold text-gray-400 pl-2">Rango:</span>
+                                <input 
+                                    type="date" 
+                                    value={reportDateRange.start} 
+                                    onChange={(e) => setReportDateRange(prev => ({...prev, start: e.target.value}))} 
+                                    className="text-xs font-bold text-gray-700 outline-none bg-transparent px-1 py-1 cursor-pointer"
+                                />
+                                <span className="text-gray-400 font-bold">→</span>
+                                <input 
+                                    type="date" 
+                                    value={reportDateRange.end} 
+                                    onChange={(e) => setReportDateRange(prev => ({...prev, end: e.target.value}))} 
+                                    className="text-xs font-bold text-gray-700 outline-none bg-transparent px-1 py-1 cursor-pointer"
+                                />
+                                {/* Botón para aplicar el filtro (Fetch) */}
+                                <button 
+                                    onClick={fetchSalesDetail} 
+                                    className="bg-higea-blue text-white p-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                                    title="Buscar ventas en este rango"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                </button>
+                            </div>
+
+                            {/* 2. BUSCADOR (FILTRO LOCAL) */}
+                            <div className="relative w-full md:w-80">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
                                 <input 
                                     type="text" 
-                                    placeholder="Buscar por cliente, ID, referencia..." 
+                                    placeholder="Filtrar en resultados (Cliente, ID, Ref)..." 
                                     value={reportSearch} 
                                     onChange={(e) => { setReportSearch(e.target.value); setSalesReportPage(1); }} 
-                                    className="w-full border p-3 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm"
+                                    className="w-full border p-2.5 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm bg-white"
                                 />
                             </div>
-                            <div className="flex items-center gap-3">
-                                <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200">
-                                    {detailedSales.length} Registros
+
+                            {/* 3. BOTÓN EXPORTAR */}
+                            <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                                <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200 hidden md:block">
+                                    {detailedSales.length} Reg
                                 </span>
-                                <button onClick={() => downloadCSV(detailedSales, 'Reporte_Ventas_Higea')} className="bg-green-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-green-700 shadow-md flex items-center gap-2 transition-all active:scale-95">
-                                    <span>📥</span> Exportar CSV
+                                <button 
+                                    onClick={() => downloadCSV(detailedSales, 'Reporte_Ventas')} 
+                                    className="bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-green-700 shadow-md flex items-center gap-2 transition-all active:scale-95 whitespace-nowrap w-full md:w-auto justify-center"
+                                >
+                                    <span>📥</span> Exportar Excel (.csv)
                                 </button>
                             </div>
                         </div>
 
-                        {/* TABLA DE DATOS */}
+                        {/* TABLA DE DATOS (Sin cambios en la estructura, solo renderiza lo que ya tenías) */}
                         <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
-                            <table className="w-full text-left text-xs text-gray-600">
+                             {/* ... (Aquí va tu tabla <table> actual) ... */}
+                             <table className="w-full text-left text-xs text-gray-600">
+                                {/* ... el resto de tu tabla ... */}
                                 <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
                                     <tr>
                                         <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Fecha / Hora</th>
@@ -3221,7 +3272,6 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                 </thead>
                                 <tbody className="divide-y divide-gray-100 bg-white">
                                     {(() => {
-                                        // Lógica de Paginación (50 items)
                                         const ITEMS_PER_PAGE = 50;
                                         const filteredData = detailedSales.filter(s => JSON.stringify(s).toLowerCase().includes(reportSearch.toLowerCase()));
                                         const indexOfLast = salesReportPage * ITEMS_PER_PAGE;
@@ -3234,68 +3284,42 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                         return (
                                             <>
                                                 {currentData.map((sale) => (
-                                                    <tr 
-                                                        key={sale.id} 
-                                                        // ACCIÓN: CLIC ABRE DETALLE
-                                                        onClick={() => showSaleDetail(sale)}
-                                                        className="hover:bg-blue-50 transition-colors cursor-pointer group"
-                                                    >
+                                                    <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
                                                         <td className="px-6 py-4 whitespace-nowrap text-gray-500">
-                                                            {new Date(sale.created_at).toLocaleDateString()} 
-                                                            <span className="text-[10px] text-gray-400 ml-1">{new Date(sale.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                                            {/* IMPORTANTE: Usar las claves que vienen del Backend (Nro Factura, etc) o las que definiste en server.js */}
+                                                            {/* Si aplicaste mi corrección de server.js anterior, las claves pueden haber cambiado a español. 
+                                                                Si NO cambiaste el server.js, mantén sale.created_at. 
+                                                                Asumo que usas el mapeo original o el que tenías en App.jsx: */}
+                                                            {new Date(sale.created_at || sale["Fecha Hora"]).toLocaleDateString()} <span className="text-[10px] text-gray-400 ml-1">{new Date(sale.created_at || sale["Fecha Hora"]).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
                                                         </td>
-                                                        <td className="px-6 py-4 font-mono font-bold text-higea-blue">#{sale.id}</td>
+                                                        <td className="px-6 py-4 font-mono font-bold text-higea-blue">#{sale.id || sale["Nro Factura"]}</td>
                                                         <td className="px-6 py-4">
-                                                            <div className="font-bold text-gray-700 text-sm">{sale.client_name}</div>
-                                                            <div className="text-[10px] text-gray-400">{sale.client_id}</div>
+                                                            <div className="font-bold text-gray-700 text-sm">{sale.client_name || sale["Cliente"]}</div>
+                                                            <div className="text-[10px] text-gray-400">{sale.client_id || sale["Documento"]}</div>
                                                         </td>
                                                         <td className="px-6 py-4 text-center">
-                                                            {/* Método de pago corto o icono */}
-                                                            <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded text-[10px] font-medium text-gray-500 truncate max-w-[100px] inline-block" title={sale.payment_method}>
-                                                                {sale.payment_method.split('[')[0]}
+                                                            <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded text-[10px] font-medium text-gray-500 truncate max-w-[100px] inline-block">
+                                                                {sale.payment_method || sale["Metodo Pago"]}
                                                             </span>
                                                         </td>
-                                                        <td className="px-6 py-4 text-right font-medium text-gray-500">
-                                                            Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', {minimumFractionDigits: 2})}
-                                                        </td>
-                                                        <td className="px-6 py-4 text-right">
-                                                            <span className="font-black text-slate-800 text-sm bg-slate-100 px-2 py-1 rounded">
-                                                                Ref {parseFloat(sale.total_usd).toFixed(2)}
-                                                            </span>
-                                                        </td>
+                                                        <td className="px-6 py-4 text-right font-medium text-gray-500">Bs {parseFloat(sale.total_ves || sale["Total Bs"]).toLocaleString('es-VE', {minimumFractionDigits: 2})}</td>
+                                                        <td className="px-6 py-4 text-right"><span className="font-black text-slate-800 text-sm bg-slate-100 px-2 py-1 rounded">Ref {parseFloat(sale.total_usd || sale["Total USD"]).toFixed(2)}</span></td>
                                                         <td className="px-6 py-4 text-center">
                                                             <span className={`px-2 py-1 rounded text-[10px] font-bold ${
-                                                                sale.status === 'PAGADO' ? 'bg-green-100 text-green-700' : 
-                                                                sale.status === 'PENDIENTE' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'
-                                                            }`}>
-                                                                {sale.status}
-                                                            </span>
+                                                                (sale.status || sale["Estado"]) === 'PAGADO' ? 'bg-green-100 text-green-700' : 
+                                                                (sale.status || sale["Estado"]) === 'PENDIENTE' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'
+                                                            }`}>{sale.status || sale["Estado"]}</span>
                                                         </td>
                                                     </tr>
                                                 ))}
-                                                
-                                                {/* CONTROLES DE PAGINACIÓN (Fila especial al final) */}
+                                                {/* Paginación... */}
                                                 {totalPages > 1 && (
                                                     <tr>
                                                         <td colSpan="7" className="p-4 bg-slate-50 border-t border-slate-200">
                                                             <div className="flex justify-center items-center gap-4">
-                                                                <button 
-                                                                    onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.max(1, p - 1)); }}
-                                                                    disabled={salesReportPage === 1}
-                                                                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
-                                                                >
-                                                                    Anterior
-                                                                </button>
-                                                                <span className="text-xs font-bold text-gray-600">
-                                                                    Página {salesReportPage} de {totalPages}
-                                                                </span>
-                                                                <button 
-                                                                    onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.min(totalPages, p + 1)); }}
-                                                                    disabled={salesReportPage === totalPages}
-                                                                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
-                                                                >
-                                                                    Siguiente
-                                                                </button>
+                                                                <button onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.max(1, p - 1)); }} disabled={salesReportPage === 1} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Anterior</button>
+                                                                <span className="text-xs font-bold text-gray-600">Página {salesReportPage} de {totalPages}</span>
+                                                                <button onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.min(totalPages, p + 1)); }} disabled={salesReportPage === totalPages} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Siguiente</button>
                                                             </div>
                                                         </td>
                                                     </tr>
