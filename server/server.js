@@ -676,9 +676,10 @@ app.get('/api/reports/sales-detail', async (req, res) => {
 // N. REPORTE DETALLADO DE INVENTARIO (Todo)
 app.get('/api/reports/inventory-detail', async (req, res) => {
     try {
+        // AGREGAMOS 'last_stock_update' AQUI 👇
         const result = await pool.query(`
             SELECT 
-                id, name, category, stock, price_usd, status, is_taxable, barcode,
+                id, name, category, stock, price_usd, status, is_taxable, barcode, last_stock_update,
                 (stock * price_usd) as total_value_usd
             FROM products 
             ORDER BY status, name ASC

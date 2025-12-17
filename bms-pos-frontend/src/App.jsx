@@ -3622,77 +3622,90 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
     </div>
 )}
 				
-				{/* --- MODAL DETALLE DE AUDITORÍA (PRODUCTO) --- */}
-      {selectedAuditProduct && (
-          <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-              <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative animate-scale-up border-t-4 border-indigo-600">
-                  <button onClick={() => setSelectedAuditProduct(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
-                  
-                  <div className="p-6 bg-slate-50 border-b border-slate-100">
-                      <div className="flex items-start gap-4">
-                           {/* Ícono Grande */}
-                           <div className="h-16 w-16 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-4xl shadow-sm">
-                               {products.find(p => p.id === selectedAuditProduct.id)?.icon_emoji || '📦'}
-                           </div>
-                           <div>
-                               <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-1">Ficha Técnica</p>
-                               <h3 className="font-black text-2xl text-slate-800 leading-tight">{selectedAuditProduct.name}</h3>
-                               <p className="text-sm text-slate-500 mt-1">{selectedAuditProduct.category}</p>
-                           </div>
+				
+{/* --- MODAL DETALLE DE AUDITORÍA (PRODUCTO) --- */}
+{selectedAuditProduct && (
+  <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative animate-scale-up border-t-4 border-indigo-600">
+          <button onClick={() => setSelectedAuditProduct(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
+          
+          <div className="p-6 bg-slate-50 border-b border-slate-100">
+              <div className="flex items-start gap-4">
+                   {/* Ícono Grande */}
+                   <div className="h-16 w-16 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-4xl shadow-sm">
+                       {products.find(p => p.id === selectedAuditProduct.id)?.icon_emoji || '📦'}
+                   </div>
+                   <div>
+                       <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-1">Ficha Técnica</p>
+                       <h3 className="font-black text-2xl text-slate-800 leading-tight">{selectedAuditProduct.name}</h3>
+                       <p className="text-sm text-slate-500 mt-1 font-medium">{selectedAuditProduct.category}</p>
+                       
+                       {/* --- AQUÍ LA MAGIA UX: FECHA DE ÚLTIMO MOVIMIENTO --- */}
+                       <div className="mt-2 inline-flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                            <span className="text-xs">🕒</span>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase">Modificado:</span>
+                            <span className="text-[10px] font-mono font-bold text-slate-700">
+                                {selectedAuditProduct.last_stock_update 
+                                    ? new Date(selectedAuditProduct.last_stock_update).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit' })
+                                    : 'Sin cambios recientes'}
+                            </span>
+                       </div>
+                       {/* --------------------------------------------------- */}
+                   </div>
+              </div>
+          </div>
+
+          <div className="p-6 space-y-6">
+              {/* ... (El resto del contenido del modal sigue igual: Estado, Costos, Valoración) ... */}
+              <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                  <div>
+                      <p className="text-[10px] text-gray-400 uppercase font-bold">Código Barras</p>
+                      <p className="font-mono text-sm font-bold text-slate-700">{selectedAuditProduct.barcode || 'N/A'}</p>
+                  </div>
+                  <div className="text-right">
+                      <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedAuditProduct.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                          {selectedAuditProduct.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
+                      </span>
+                  </div>
+              </div>
+
+              {/* Costos Unitarios */}
+              <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase mb-2">Costo Unitario</p>
+                  <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                          <p className="text-[10px] text-blue-400 font-bold">REFERENCIAL</p>
+                          <p className="text-xl font-black text-blue-700">Ref {parseFloat(selectedAuditProduct.price_usd).toFixed(2)}</p>
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                          <p className="text-[10px] text-slate-400 font-bold">BOLÍVARES</p>
+                          <p className="text-xl font-black text-slate-700">Bs {(parseFloat(selectedAuditProduct.price_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</p>
                       </div>
                   </div>
+              </div>
 
-                  <div className="p-6 space-y-6">
-                      {/* Estado y Código */}
-                      <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                          <div>
-                              <p className="text-[10px] text-gray-400 uppercase font-bold">Código Barras</p>
-                              <p className="font-mono text-sm font-bold text-slate-700">{selectedAuditProduct.barcode || 'N/A'}</p>
-                          </div>
-                          <div className="text-right">
-                              <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedAuditProduct.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
-                                  {selectedAuditProduct.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
-                              </span>
-                          </div>
+              {/* Valoración Total (Auditoría) */}
+              <div>
+                  <div className="flex justify-between items-end mb-2">
+                      <p className="text-xs font-bold text-slate-400 uppercase">Valoración de Inventario</p>
+                      <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">Stock: {selectedAuditProduct.stock} uds</span>
+                  </div>
+                  <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg shadow-indigo-200">
+                      <div className="flex justify-between items-center mb-2">
+                          <span className="text-indigo-200 text-xs font-bold">TOTAL REF</span>
+                          <span className="text-2xl font-black">Ref {parseFloat(selectedAuditProduct.total_value_usd).toFixed(2)}</span>
                       </div>
-
-                      {/* Costos Unitarios */}
-                      <div>
-                          <p className="text-xs font-bold text-slate-400 uppercase mb-2">Costo Unitario</p>
-                          <div className="grid grid-cols-2 gap-3">
-                              <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                                  <p className="text-[10px] text-blue-400 font-bold">REFERENCIAL</p>
-                                  <p className="text-xl font-black text-blue-700">Ref {parseFloat(selectedAuditProduct.price_usd).toFixed(2)}</p>
-                              </div>
-                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                                  <p className="text-[10px] text-slate-400 font-bold">BOLÍVARES</p>
-                                  <p className="text-xl font-black text-slate-700">Bs {(parseFloat(selectedAuditProduct.price_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</p>
-                              </div>
-                          </div>
-                      </div>
-
-                      {/* Valoración Total (Auditoría) */}
-                      <div>
-                          <div className="flex justify-between items-end mb-2">
-                              <p className="text-xs font-bold text-slate-400 uppercase">Valoración de Inventario</p>
-                              <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">Stock: {selectedAuditProduct.stock} uds</span>
-                          </div>
-                          <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg shadow-indigo-200">
-                              <div className="flex justify-between items-center mb-2">
-                                  <span className="text-indigo-200 text-xs font-bold">TOTAL REF</span>
-                                  <span className="text-2xl font-black">Ref {parseFloat(selectedAuditProduct.total_value_usd).toFixed(2)}</span>
-                              </div>
-                              <div className="h-px bg-indigo-500 my-2"></div>
-                              <div className="flex justify-between items-center">
-                                  <span className="text-indigo-200 text-xs font-bold">TOTAL BS</span>
-                                  <span className="text-lg font-bold">Bs {(parseFloat(selectedAuditProduct.total_value_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</span>
-                              </div>
-                          </div>
+                      <div className="h-px bg-indigo-500 my-2"></div>
+                      <div className="flex justify-between items-center">
+                          <span className="text-indigo-200 text-xs font-bold">TOTAL BS</span>
+                          <span className="text-lg font-bold">Bs {(parseFloat(selectedAuditProduct.total_value_usd) * bcvRate).toLocaleString('es-VE', {maximumFractionDigits: 2})}</span>
                       </div>
                   </div>
               </div>
           </div>
-      )}
+      </div>
+  </div>
+)}
             </div>
 
         ) : (
