@@ -500,11 +500,33 @@ app.get('/api/customers/search', async (req, res) => {
     }
 });
 
-// K. ESTADÍSTICAS AVANZADAS Y REPORTES GERENCIALES (MEJORADO)
+// K. ESTADÍSTICAS AVANZADAS Y REPORTES GERENCIALES (MEJORADO Y CORREGIDO)
 app.get('/api/reports/analytics', async (req, res) => {
     const { startDate, endDate } = req.query;
-    const start = startDate || new Date(new Date().setDate(new Date().getDate() - 30)).toISOString();
-    const end = endDate || new Date().toISOString();
+    
+    // 1. Configuración de Fechas por defecto (Últimos 30 días si no llegan datos)
+    let start = startDate;
+    let end = endDate;
+
+    if (!start || !end) {
+        const now = new Date();
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(now.getDate() - 30);
+        
+        start = thirtyDaysAgo.toISOString();
+        end = now.toISOString();
+    }
+
+    // 🔥 CORRECCIÓN CRÍTICA: Asegurar que la fecha final cubra todo el día (23:59:59)
+    // Si 'end' es solo fecha "YYYY-MM-DD", le agregamos la hora final.
+    if (end.length <= 10) {
+        end = `${end} 23:59:59`;
+    } else {
+        // Si ya es formato ISO, forzamos el ajuste manual para asegurar cobertura
+        const dateObj = new Date(end);
+        dateObj.setHours(23, 59, 59, 999);
+        end = dateObj.toISOString();
+    }
 
     const client = await pool.connect();
     try {
@@ -519,7 +541,7 @@ app.get('/api/reports/analytics', async (req, res) => {
             ORDER BY total_qty DESC
             LIMIT 5`;
 
-        // 2. Top Clientes (MODIFICADO: Ordenar por lo que realmente han PAGADO)
+        // 2. Top Clientes (Ordenado por PAGADO real)
         const topCustomersQuery = `
             SELECT c.full_name, COUNT(s.id) as transactions, SUM(s.amount_paid_usd) as total_spent
             FROM sales s
@@ -529,24 +551,19 @@ app.get('/api/reports/analytics', async (req, res) => {
             ORDER BY total_spent DESC
             LIMIT 5`;
 
-        // 3. Ventas en el tiempo (CORREGIDO: Basado en Cobros Reales / Dinero Recaudado)
+        // 3. Ventas en el tiempo (Dinero Recaudado / Flujo de Caja)
         const salesOverTimeQuery = `
             SELECT 
                 DATE(created_at) as sale_date, 
-                -- ✅ ESTO ES LO CORRECTO: Sumar solo lo pagado (amount_paid_usd)
-                -- Lo renombramos como "total_usd" para que el frontend lo reciba sin errores
                 SUM(amount_paid_usd) as total_usd, 
-                
-                -- ✅ CORRECTO: Calculamos los Bs reales que entraron según la tasa del día
                 SUM(amount_paid_usd * bcv_rate_snapshot) as total_ves, 
-                
                 COUNT(*) as tx_count
             FROM sales
             WHERE created_at BETWEEN $1 AND $2 AND status != 'ANULADO'
             GROUP BY DATE(created_at)
             ORDER BY sale_date ASC`;
 
-        // 4. Ventas por Categoría (NUEVO PARA GRÁFICAS)
+        // 4. Ventas por Categoría
         const salesByCategoryQuery = `
             SELECT p.category, SUM(si.quantity) as total_qty, SUM(si.quantity * si.price_at_moment_usd) as total_usd
             FROM sale_items si
@@ -556,7 +573,7 @@ app.get('/api/reports/analytics', async (req, res) => {
             GROUP BY p.category
             ORDER BY total_usd DESC`;
 
-        // 5. Top Deudores (Histórico global, no depende de fechas)
+        // 5. Top Deudores (Global)
         const topDebtorsQuery = `
             SELECT c.full_name, (SUM(s.total_usd) - SUM(s.amount_paid_usd)) as debt
             FROM sales s
