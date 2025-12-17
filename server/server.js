@@ -529,14 +529,17 @@ app.get('/api/reports/analytics', async (req, res) => {
             ORDER BY total_spent DESC
             LIMIT 5`;
 
-        // 3. Ventas en el tiempo (CORREGIDO: Basado en Cobros Reales)
+        // 3. Ventas en el tiempo (CORREGIDO: Basado en Cobros Reales / Dinero Recaudado)
         const salesOverTimeQuery = `
             SELECT 
                 DATE(created_at) as sale_date, 
-                -- Aquí cambiamos total_usd por amount_paid_usd
+                -- ✅ ESTO ES LO CORRECTO: Sumar solo lo pagado (amount_paid_usd)
+                -- Lo renombramos como "total_usd" para que el frontend lo reciba sin errores
                 SUM(amount_paid_usd) as total_usd, 
-                -- Y aquí calculamos los Bs reales recibidos
+                
+                -- ✅ CORRECTO: Calculamos los Bs reales que entraron según la tasa del día
                 SUM(amount_paid_usd * bcv_rate_snapshot) as total_ves, 
+                
                 COUNT(*) as tx_count
             FROM sales
             WHERE created_at BETWEEN $1 AND $2 AND status != 'ANULADO'

@@ -1433,24 +1433,37 @@ const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', sa
       const isSelected = currentMethod === name && isNumpadOpen;
       const displayValue = parseFloat(value) > 0 ? value : '0.00';
       const currencySymbol = currency === 'Ref' ? 'Ref ' : 'Bs ';
+      
+      // Detectar si tiene valor
+      const hasValue = parseFloat(value) > 0;
 
       const openNumpad = () => {
           setCurrentMethod(name);
-          // Usamos 'value' directamente para evitar el error de estado
           setCurrentInputValue(parseFloat(value) > 0 ? value.toString() : '');
           setCurrentReference(paymentReferences[name] || ''); 
           setIsNumpadOpen(true);
       };
 
-      const isCreditActive = name === 'Crédito' && parseFloat(value) > 0;
+      const isCreditActive = name === 'Crédito' && hasValue;
 
       return (
           <div 
               onClick={openNumpad}
-              className={`flex justify-between items-center p-4 rounded-xl shadow-md cursor-pointer transition-all ${isCreditActive ? 'bg-red-100 border-higea-red border-2' : (isSelected ? 'bg-blue-100 border-higea-blue border-2' : 'bg-gray-50 border border-gray-200 hover:bg-gray-100')}`}
+              // CAMBIO 1: Borde azul institucional suave cuando tiene valor
+              className={`flex justify-between items-center p-4 rounded-xl shadow-md cursor-pointer transition-all ${
+                  isCreditActive ? 'bg-red-50 border-higea-red border-2' : 
+                  (isSelected ? 'bg-blue-100 border-higea-blue border-2' : 
+                  (hasValue ? 'bg-white border-higea-blue border-2 shadow-blue-100' : 'bg-gray-50 border border-gray-200 hover:bg-gray-100'))
+              }`}
           >
-              <span className="font-bold text-gray-700">{name} ({currency})</span>
-              <span className={`font-black text-xl ${isCreditActive ? 'text-higea-red' : 'text-gray-800'}`}>
+              {/* CAMBIO 2: Texto del nombre en Azul Institucional si tiene valor */}
+              <span className={`font-bold ${hasValue ? 'text-higea-blue' : 'text-gray-600'}`}>{name} ({currency})</span>
+              
+              {/* CAMBIO 3: Monto GIGANTE en Azul Institucional (higea-blue) */}
+              <span className={`font-black text-2xl transition-colors ${
+                  isCreditActive ? 'text-higea-red' : 
+                  (hasValue ? 'text-higea-blue scale-110' : 'text-gray-300')
+              }`}>
                   {currencySymbol}{displayValue}
               </span>
           </div>
@@ -2086,11 +2099,37 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                       />
                   </div>
 
-                  {/* Filtros de Categoría (Ahora ocupan su propia fila) */}
-                  <div className="px-4 py-3 overflow-x-auto no-scrollbar flex items-center gap-2 bg-[#F8FAFC]">
-                      {categories.map(cat => (
-                          <button key={cat} onClick={() => setSelectedCategory(cat)} className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold border transition-all ${selectedCategory === cat ? 'bg-higea-blue text-white border-higea-blue' : 'bg-white text-gray-500 border-gray-200'}`}>{cat}</button>
-                      ))}
+                  {/* SECCIÓN DE CATEGORÍAS (DISEÑO PREMIUM UX) */}
+                  <div className="relative bg-[#F8FAFC] border-b border-gray-100 z-10 w-full shadow-sm">
+                      
+                      {/* Degradado Visual Izquierdo (Evita cortes secos) */}
+                      <div className="absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-[#F8FAFC] to-transparent pointer-events-none z-20"></div>
+                      
+                      {/* Degradado Visual Derecho (Indica más contenido) */}
+                      <div className="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-[#F8FAFC] to-transparent pointer-events-none z-20"></div>
+
+                      <div className="flex overflow-x-auto py-3 px-4 gap-3 no-scrollbar scroll-smooth snap-x w-full items-center">
+                          {categories.map(cat => {
+                              const isActive = selectedCategory === cat;
+                              return (
+                                  <button 
+                                      key={cat} 
+                                      onClick={() => setSelectedCategory(cat)} 
+                                      className={`
+                                          snap-start flex-shrink-0 px-5 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 border select-none
+                                          ${isActive 
+                                              ? 'bg-higea-blue text-white border-higea-blue shadow-lg shadow-blue-900/20 scale-105 tracking-wide' 
+                                              : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-higea-blue hover:shadow-md hover:-translate-y-0.5 active:scale-95'
+                                          }
+                                      `}
+                                  >
+                                      {cat === 'Todos' ? '🔥 Todos' : cat}
+                                  </button>
+                              )
+                          })}
+                          {/* Espaciador final para compensar el degradado derecho */}
+                          <div className="w-8 flex-shrink-0"></div>
+                      </div>
                   </div>
 
                   {/* 💡 MODIFICADO: Usar currentProducts para aplicar paginación */}
@@ -3278,19 +3317,26 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                             <div className="space-y-8 pb-20">
                                 
                                 {/* 1. SECCIÓN KPI (CLICKABLES) */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    {/* KPI 1: Ingresos -> Clic lleva a Ventas */}
-                                    <div onClick={fetchSalesDetail} className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-200 relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
-                                        <div className="absolute right-0 top-0 h-32 w-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
-                                        <div className="relative z-10">
-                                            <div className="flex justify-between items-start mb-4">
-                                                <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm"><svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div>
-                                                <span className="text-blue-200 text-xs font-bold bg-blue-900/30 px-2 py-1 rounded-lg flex items-center gap-1">Ver Detalle <span className="text-lg">→</span></span>
-                                            </div>
-                                            <p className="text-4xl font-black tracking-tight mb-1">Ref {analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
-                                            <p className="text-blue-200 text-sm font-medium">Total Facturado</p>
-                                        </div>
-                                    </div>
+<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+    {/* KPI 1: Ingresos -> Clic lleva a Ventas */}
+    <div onClick={fetchSalesDetail} className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-200 relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
+        <div className="absolute right-0 top-0 h-32 w-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+        <div className="relative z-10">
+            <div className="flex justify-between items-start mb-4">
+                <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <span className="text-blue-200 text-xs font-bold bg-blue-900/30 px-2 py-1 rounded-lg flex items-center gap-1">Ver Detalle <span className="text-lg">→</span></span>
+            </div>
+            <p className="text-4xl font-black tracking-tight mb-1">
+                Ref {analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toLocaleString('es-VE', {minimumFractionDigits: 2})}
+            </p>
+            {/* 💡 ETIQUETA ACTUALIZADA PARA REFLEJAR FLUJO DE CAJA REAL */}
+            <p className="text-blue-200 text-sm font-medium">Dinero Recaudado (Caja)</p>
+        </div>
+    </div>
 
                                     {/* KPI 2: Transacciones -> Clic lleva a Ventas */}
                                     <div onClick={fetchSalesDetail} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
