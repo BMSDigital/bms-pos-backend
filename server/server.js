@@ -652,19 +652,16 @@ app.get('/api/reports/sales-detail', async (req, res) => {
         // Construcción de la consulta base
         let queryText = `
             SELECT 
-                s.id as "Nro Factura",
-                to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as "Fecha Hora",
-                COALESCE(c.full_name, 'Consumidor Final') as "Cliente", 
-                COALESCE(c.id_number, 'N/A') as "Documento",
-                s.payment_method as "Metodo Pago", 
-                s.status as "Estado", 
-                s.invoice_type as "Tipo", 
-                s.total_usd as "Total USD", 
-                s.total_ves as "Total Bs",
-                s.bcv_rate_snapshot as "Tasa BCV",
-                (SELECT string_agg(p.name || ' (x' || si.quantity || ')', ' | ') 
-                 FROM sale_items si JOIN products p ON si.product_id = p.id 
-                 WHERE si.sale_id = s.id) as "Items Comprados"
+                s.id,              -- ✅ ENVIAR ID LIMPIO
+                s.created_at,      -- ✅ ENVIAR FECHA CRUDA (ESTO ARREGLA EL "INVALID DATE")
+                COALESCE(c.full_name, 'Consumidor Final') as client_name, -- Claves estandarizadas
+                COALESCE(c.id_number, 'N/A') as client_id,
+                s.payment_method, 
+                s.status, 
+                s.invoice_type, 
+                s.total_usd, 
+                s.total_ves,
+                s.bcv_rate_snapshot
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
             WHERE s.created_at BETWEEN $1 AND $2

@@ -216,10 +216,25 @@ function App() {
     const [topDebtors, setTopDebtors] = useState([]); // Top deudores para dashboard
 
     // --- ESTADOS REPORTE GERENCIAL AVANZADO ---
+    // --- ESTADOS REPORTE GERENCIAL AVANZADO ---
     const [analyticsData, setAnalyticsData] = useState(null);
-    const [reportDateRange, setReportDateRange] = useState({
-        start: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
-        end: new Date().toISOString().split('T')[0]
+
+    // 💡 MEJORA UX: Rango de fechas AUTOMÁTICO (Desde el 1° del mes hasta Hoy)
+    const [reportDateRange, setReportDateRange] = useState(() => {
+        const now = new Date();
+        // Obtener el primer día del mes actual
+        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1); 
+        
+        // Ajuste de zona horaria local para evitar desfases (opcional pero recomendado)
+        const toLocalISO = (date) => {
+            const offset = date.getTimezoneOffset() * 60000;
+            return new Date(date.getTime() - offset).toISOString().split('T')[0];
+        };
+
+        return {
+            start: toLocalISO(firstDay), // Ej: 2025-12-01
+            end: toLocalISO(now)         // Ej: 2025-12-17
+        };
     });
 
     // AGREGAR ESTOS DOS NUEVOS:
@@ -329,6 +344,7 @@ function App() {
             return () => clearTimeout(timer);
         }
     }, [salesSearch, reportTab]); // <--- AQUÍ SÍ DEJAMOS 'reportTab'
+	
 
     // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta Ventas e Inventario con Bs) ---
     const downloadCSV = (data, fileName) => {
