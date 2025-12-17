@@ -2012,7 +2012,8 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
           (p.barcode && p.barcode.includes(term))
       );
   });
-
+	
+	const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))].sort();
 
   return (
     <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
@@ -3103,10 +3104,58 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                                     <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio Ref (*)</label>
                                     <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
                                 </div>
-                                <div>
-                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Categoría</label>
-                                    <input type="text" name="category" placeholder="Ej: Comida" value={productForm.category} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none" />
-                                </div>
+                                {/* ========================================================== */}
+{/* PEGAR ESTE BLOQUE NUEVO */}
+<div className="animate-fade-in-up">
+    {/* Encabezado con Contador */}
+    <div className="flex justify-between items-center mb-1 ml-1">
+        <label className="text-xs font-bold text-gray-500 block">Categoría</label>
+        <span className="text-[10px] text-higea-blue font-bold bg-blue-50 px-2 py-0.5 rounded-full">
+            {uniqueCategories.length} opciones
+        </span>
+    </div>
+    
+    {/* A. Carrusel de Botones (Scroll Horizontal) */}
+    <div className="flex gap-2 overflow-x-auto pb-3 mb-1 custom-scrollbar snap-x scroll-smooth">
+        {uniqueCategories.map((cat) => (
+            <button
+                type="button"
+                key={cat}
+                onClick={() => setProductForm(prev => ({ ...prev, category: cat }))}
+                className={`snap-start whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold border-2 transition-all active:scale-95 shadow-sm hover:shadow-md ${
+                    productForm.category === cat 
+                    ? 'bg-higea-blue text-white border-higea-blue scale-105' 
+                    : 'bg-white text-gray-500 border-gray-100 hover:border-higea-blue hover:text-higea-blue'
+                }`}
+            >
+                {cat}
+            </button>
+        ))}
+    </div>
+
+    {/* B. Input Inteligente (Autocompletar) */}
+    <div className="relative group">
+        <input 
+            type="text" 
+            name="category" 
+            list="category-suggestions" 
+            placeholder="Escribe o selecciona arriba..." 
+            value={productForm.category} 
+            onChange={handleProductFormChange} 
+            className="w-full border-2 border-gray-100 p-3 pl-4 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700 bg-gray-50 focus:bg-white transition-all group-hover:bg-white shadow-sm" 
+        />
+        {/* Datalist Invisible para sugerencias nativas */}
+        <datalist id="category-suggestions">
+            {uniqueCategories.map(cat => <option key={cat} value={cat} />)}
+        </datalist>
+        
+        {/* Ícono decorativo */}
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-higea-blue transition-colors pointer-events-none text-lg">
+            📂
+        </div>
+    </div>
+</div>
+{/* ========================================================== */}
                             </div>
 
                             {/* CÓDIGO DE BARRAS (NUEVO) */}
