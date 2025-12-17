@@ -97,7 +97,7 @@ app.get('/api/status', (req, res) => {
 app.get('/api/products', async (req, res) => {
     try {
         // AGREGAMOS 'barcode' y 'status' A LA LISTA DE CAMPOS SELECCIONADOS
-        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status FROM products ORDER BY id ASC');
+        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, last_stock_update FROM products ORDER BY id ASC');
         
         const productsWithVes = result.rows.map(product => ({
             ...product,
@@ -138,7 +138,7 @@ app.post('/api/products', async (req, res) => {
             // UPDATE: Asegúrate de que el orden de los signos $ coincida con el array de valores
             const query = `
                 UPDATE products 
-                SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, is_taxable = $6, barcode = $7, status = $8 
+                SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, is_taxable = $6, barcode = $7, status = $8, last_stock_update = CURRENT_TIMESTAMP 
                 WHERE id = $9 RETURNING *`;
             
             const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, id];
