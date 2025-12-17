@@ -216,7 +216,6 @@ function App() {
     const [topDebtors, setTopDebtors] = useState([]); // Top deudores para dashboard
 
     // --- ESTADOS REPORTE GERENCIAL AVANZADO ---
-    // --- ESTADOS REPORTE GERENCIAL AVANZADO ---
     const [analyticsData, setAnalyticsData] = useState(null);
 
     // 💡 MEJORA UX: Rango de fechas AUTOMÁTICO (Desde el 1° del mes hasta Hoy)
@@ -441,38 +440,54 @@ function App() {
     };
 
     const fetchSalesDetail = async (termInput) => {
+        // --- [NUEVO] VALIDACIÓN DE FECHAS UX ---
+        const start = new Date(reportDateRange.start);
+        const end = new Date(reportDateRange.end);
+
+        if (end < start) {
+            return Swal.fire({
+                icon: 'error',
+                title: 'Rango de Fechas Inválido',
+                text: 'La fecha final no puede ser menor a la fecha de inicio.',
+                confirmButtonColor: '#E11D2B'
+            });
+        }
+        // ---------------------------------------
+
         try {
             // LÓGICA: Si termInput es un evento (click) o es null, usamos el estado actual 'salesSearch'.
-            // Si es un string (viene del useEffect al escribir), usamos ese.
             const term = (typeof termInput === 'string') ? termInput : salesSearch;
 
-            if (!term) Swal.fire({ title: 'Cargando registros...', didOpen: () => Swal.showLoading() });
+            if (!term) Swal.fire({ title: 'Cargando ventas...', didOpen: () => Swal.showLoading() }); // UX: Mensaje más claro
             else setIsSearchingSales(true);
 
             const res = await axios.get(`${API_URL}/reports/sales-detail`, {
                 params: {
                     startDate: reportDateRange.start,
                     endDate: reportDateRange.end,
-                    search: term // Usamos el término limpio
+                    search: term 
                 }
             });
 
+            // ... (Resto del código de normalización igual) ...
+            
             const normalizedData = res.data.map(item => ({
                 ...item,
                 id: item.id || item["Nro Factura"] || item.sale_id,
-                full_name: item.full_name || item["Cliente"] || 'Cliente Casual',
+                full_name: item.client_name || item["Cliente"] || 'Cliente Casual', // Ajuste para coincidir con tu server.js nuevo
                 total_ves: item.total_ves || item["Total Bs"],
                 total_usd: item.total_usd || item["Total USD"],
                 status: item.status || item["Estado"]
             }));
 
             setDetailedSales(normalizedData);
-            setReportTab('SALES');
+            setReportTab('SALES'); // Aseguramos que cambie la pestaña
             setSalesReportPage(1);
 
             if (!term) Swal.close();
         } catch (error) {
             console.error(error);
+            Swal.fire('Error', 'No se pudieron cargar las ventas.', 'error');
         } finally {
             setIsSearchingSales(false);
         }
@@ -3287,7 +3302,10 @@ function App() {
                                     <span>📊</span> Dashboard
                                 </button>
                                 <button
-                                    onClick={() => setReportTab('SALES')}
+                                    onClick={() => {
+                                        setReportTab('SALES');
+                                        fetchSalesDetail(); // <--- ¡ESTO ES LO QUE FALTABA!
+                                    }}
                                     className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'SALES' ? 'bg-higea-blue text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                                 >
                                     <span>📑</span> Ventas
@@ -3494,12 +3512,13 @@ function App() {
                                         <input
                                             type="date"
                                             value={reportDateRange.end}
+                                            min={reportDateRange.start} // <--- UX: Bloquea fechas anteriores en el calendario visual
                                             onChange={(e) => setReportDateRange(prev => ({ ...prev, end: e.target.value }))}
                                             className="text-xs font-bold text-gray-700 outline-none bg-transparent px-1 py-1 cursor-pointer"
                                         />
                                         {/* Botón para aplicar el filtro (Fetch) */}
                                         <button
-                                            onClick={fetchSalesDetail}
+                                            onClick={() => fetchSalesDetail()} // Aseguramos que llame a la función corregida
                                             className="bg-higea-blue text-white p-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
                                             title="Buscar ventas en este rango"
                                         >

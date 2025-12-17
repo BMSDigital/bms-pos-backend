@@ -631,30 +631,39 @@ app.get('/api/reports/sales-today', async (req, res) => {
     }
 });
 
-// M. REPORTE DETALLADO DE VENTAS (Con Búsqueda SQL Optimizada)
+// M. REPORTE DETALLADO DE VENTAS (CORREGIDO PARA INCLUIR TODO EL DÍA)
 app.get('/api/reports/sales-detail', async (req, res) => {
     try {
-        let { startDate, endDate, search } = req.query; // <--- Agregamos 'search'
+        let { startDate, endDate, search } = req.query;
 
-        // Protección UX: Fechas por defecto si no vienen
+        // 1. Fechas por defecto si no vienen
         if (!startDate || !endDate) {
             const now = new Date();
-            startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString();
+            // Inicio del mes (Formato YYYY-MM-DD manual para evitar líos de zona horaria)
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+            // Fin de mes
+            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
         }
 
-        const finalEndDate = new Date(endDate);
-        finalEndDate.setHours(23, 59, 59, 999);
+        // 🔥 CORRECCIÓN CRÍTICA: MANEJO DE TEXTO DIRECTO
+        // En lugar de convertir a "Date" (que a veces resta 4 horas por UTC),
+        // concatenamos manualmente la hora final del día. Postgres hará el resto.
         
-        // Array de parámetros dinámicos
-        const queryParams = [startDate, finalEndDate.toISOString()];
+        // Si endDate es "2025-12-17", esto lo convierte en "2025-12-17 23:59:59"
+        let finalEndDateString = endDate;
+        if (finalEndDateString.length <= 10) { 
+            finalEndDateString = `${endDate} 23:59:59`;
+        }
+
+        // Array de parámetros (Usamos el string directo, NO toISOString)
+        const queryParams = [startDate, finalEndDateString];
         
         // Construcción de la consulta base
         let queryText = `
             SELECT 
-                s.id,              -- ✅ ENVIAR ID LIMPIO
-                s.created_at,      -- ✅ ENVIAR FECHA CRUDA (ESTO ARREGLA EL "INVALID DATE")
-                COALESCE(c.full_name, 'Consumidor Final') as client_name, -- Claves estandarizadas
+                s.id,
+                s.created_at,      
+                COALESCE(c.full_name, 'Consumidor Final') as client_name,
                 COALESCE(c.id_number, 'N/A') as client_id,
                 s.payment_method, 
                 s.status, 
@@ -664,19 +673,17 @@ app.get('/api/reports/sales-detail', async (req, res) => {
                 s.bcv_rate_snapshot
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
-            WHERE s.created_at BETWEEN $1 AND $2
-        `;
+            WHERE s.created_at BETWEEN $1 AND $2 
+        `; // Nota: Postgres al recibir string en timestamp asume la zona horaria local (America/Caracas)
 
-        // LÓGICA DE BÚSQUEDA INTELIGENTE
+        // ... (El resto del código de búsqueda sigue igual)
         if (search) {
-            // Agregamos el filtro SQL si hay texto de búsqueda
-            // Filtra por ID de factura, Nombre de Cliente o Documento
             queryText += ` AND (
                 CAST(s.id AS TEXT) ILIKE $3 OR 
                 c.full_name ILIKE $3 OR 
                 c.id_number ILIKE $3 
             )`;
-            queryParams.push(`%${search}%`); // El parámetro $3
+            queryParams.push(`%${search}%`);
         }
 
         queryText += ` ORDER BY s.id DESC`;
