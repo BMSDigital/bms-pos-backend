@@ -83,22 +83,35 @@ const IVA_RATE = 0.16;
 
 // --- LISTA EXTENSA DE EMOJIS SOLICITADA POR EL USUARIO (Más de 100) ---
 const EMOJI_OPTIONS = [
-    // Comida Rápida / Platos
-    '🍔', '🍟', '🍕', '🌭', '🌮', '🌯', '🥙', '🧆', '🥪', '🫔', '🍝', '🍜', '🍲', '🥣', '🥗', '🥘', '🍣', '🍤', '🍙', '🍚', '🍛', '🦪', '🍢', '🍡', '🥟', '🥠', '🥡', '🍜', 
+    // Comida Rápida / Platos (Agregado: Arepa 🫓)
+    '🍔', '🍟', '🍕', '🌭', '🌮', '🌯', '🥙', '🧆', '🥪', '🫔', '🍝', '🍜', '🍲', '🥣', '🥗', '🥘', '🍣', '🍤', '🍙', '🍚', '🍛', '🦪', '🍢', '🍡', '🥟', '🥠', '🥡', '🍜', '🫓', 
+    
     // Carnes / Aves / Proteínas
     '🥩', '🥓', '🍗', '🍖', '🥚', '🍳', '🐟', '🦞', '🦀', '🦐', '🦑', 
-    // Víveres / Productos
-    '🍎', '🍏', '🍊', '🍋', '🍅', '🍆', '🥑', '🥦', '🥬', '🥒', '🌶️', '🫑', '🧅', '🧄', '🍠', '🍄', '🥜', '🌰', '🌽', '🥕', '🥔', '🥐', '🍞', '🥖', '🥨', '🥯', '🧇', '🧀', '🧈', '🥛', '🍼', '🍯', 
-    // Dulces / Postres
-    '🍰', '🎂', '🧁', '🥧', '🍫', '🍬', '🍭', '🍮', '🍩', '🍪', '🍦', '🍧', '🍨', '🍬', '🍫', '🍿', '🧇', 
+    
+    // Víveres / Productos (Agregado: Enlatados 🥫 y Sal 🧂)
+    '🍎', '🍏', '🍊', '🍋', '🍅', '🍆', '🥑', '🥦', '🥬', '🥒', '🌶️', '🫑', '🧅', '🧄', '🍠', '🍄', '🥜', '🌰', '🌽', '🥕', '🥔', '🥐', '🍞', '🥖', '🥨', '🥯', '🧇', '🧀', '🧈', '🥛', '🍼', '🍯', '🥫', '🧂', 
+    
+    // Dulces / Postres (Agregado: Panquecas 🥞)
+    '🍰', '🎂', '🧁', '🥧', '🍫', '🍬', '🍭', '🍮', '🍩', '🍪', '🍦', '🍧', '🍨', '🍬', '🍫', '🍿', '🧇', '🥞', 
+    
     // Frutas
     '🍉', '🍇', '🍓', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍌', '🍐', 
-    // Bebidas
-    '🥤', '🧋', '🫖', '☕️', '🍵', '🍾', '🍷', '🍸', '🍹', '🍺', '🍻', '🥛', '🧃', 
+    
+    // Bebidas (Agregado: Agua 💧 y Hielo 🧊)
+    '🥤', '🧋', '🫖', '☕️', '🍵', '🍾', '🍷', '🍸', '🍹', '🍺', '🍻', '🥛', '🧃', '💧', '🧊', 
+    
+    // Higiene y Cuidado Personal (NUEVO: Para Jabones y Aseo)
+    '🧼', '🧻', '🧴', '🪥', '🧽', '🚿', '🛀', '🧸', 
+    
+    // Temporada / Navidad (NUEVO: Para Botas Navideñas y Regalos)
+    '🎄', '🎅', '🎁', '🎉', '🎈', 
+    
     // Informática / Electrónica
     '💻', '🖥️', '⌨️', '🖱️', '🖨️', '📱', '🔋', '🔌', '💡', '💾', '💿', '⏱️', '⌚', '🎙️', '🎧', 
+    
     // General / Misceláneos
-    '🏷️', '🎁', '🛍️', '💸', '📦', '🛠️', '🧹', '🧺', '🛒', '🔑', '🔗', '📍'
+    '🏷️', '🛍️', '💸', '📦', '🛠️', '🧹', '🧺', '🛒', '🔑', '🔗', '📍'
 ];
 
 function App() {
@@ -302,17 +315,20 @@ function App() {
       setCreditCurrentPage(1); // Resetear a página 1 al buscar
   }, [creditSearchQuery, groupedCredits]);
   
-  // EFECTO: Búsqueda en vivo para Ventas (Espera 500ms tras escribir)
+  // EFECTO: Carga de Ventas (Automática y Debounced)
   useEffect(() => {
-      // Solo ejecutar si estamos en la pestaña de ventas
       if (reportTab === 'SALES') {
-          const delayDebounceFn = setTimeout(() => {
-              fetchSalesDetail(salesSearch);
-          }, 500);
+          // Si acabamos de entrar a la pestaña (no hay búsqueda escrita), cargamos RÁPIDO (100ms)
+          // Si estamos escribiendo en el buscador, esperamos un poco más (500ms) para no saturar
+          const delayTime = salesSearch ? 500 : 50; 
 
-          return () => clearTimeout(delayDebounceFn);
+          const timer = setTimeout(() => {
+              fetchSalesDetail(salesSearch);
+          }, delayTime);
+
+          return () => clearTimeout(timer);
       }
-  }, [salesSearch, reportTab]); // Se ejecuta cuando cambia el texto o la pestaña
+  }, [salesSearch, reportTab]); // <--- AQUÍ SÍ DEJAMOS 'reportTab'
   
   // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta Ventas e Inventario con Bs) ---
   const downloadCSV = (data, fileName) => {
@@ -3174,7 +3190,7 @@ const SimpleBarChart = ({ data, labelKey, valueKey, colorClass, formatMoney, ico
                             <span>📊</span> Dashboard
                         </button>
                         <button 
-                            onClick={fetchSalesDetail}
+                            onClick={() => setReportTab('SALES')}
                             className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'SALES' ? 'bg-higea-blue text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
                             <span>📑</span> Ventas
