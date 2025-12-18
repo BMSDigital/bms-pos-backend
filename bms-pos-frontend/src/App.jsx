@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
+import jsPDF from 'jspdf';              
+import autoTable from 'jspdf-autotable';
 
 // --- NUEVAS FUNCIONES DE VALIDACIÓN Y FORMATO ---
 
@@ -350,6 +352,7 @@ function App() {
         if (!data || data.length === 0) return Swal.fire('Vacío', 'No hay datos para exportar', 'info');
 
         // 1. DETECTAR QUÉ TIPO DE DATA ES
+        // Si tiene 'stock', es inventario. Si no, asumimos que es reporte de ventas.
         const isInventory = data[0].hasOwnProperty('stock') && data[0].hasOwnProperty('name');
 
         let orderedHeaders = [];
@@ -358,20 +361,10 @@ function App() {
         if (isInventory) {
             // --- MODO INVENTARIO ---
             orderedHeaders = [
-                "ID",
-                "Código Barras",
-                "Producto",
-                "Categoría",
-                "Estatus",
-                "Impuesto",
-                "Stock",
-                "Costo Unit (Ref)",
-                "Costo Unit (Bs)",       // <--- NUEVA COLUMNA
-                "Valor Total (Ref)",
-                "Valor Total (Bs)"       // <--- NUEVA COLUMNA
+                "ID", "Código Barras", "Producto", "Categoría", "Estatus", "Impuesto", 
+                "Stock", "Costo Unit (Ref)", "Costo Unit (Bs)", "Valor Total (Ref)", "Valor Total (Bs)"
             ];
 
-            // Mapeo con cálculo de tasa BCV
             rowMapper = (row) => ({
                 "ID": row.id,
                 "Código Barras": row.barcode || '',
@@ -381,21 +374,18 @@ function App() {
                 "Impuesto": row.is_taxable ? 'GRAVADO' : 'EXENTO',
                 "Stock": row.stock,
                 "Costo Unit (Ref)": parseFloat(row.price_usd).toFixed(2),
-                // Cálculo usando la tasa actual del estado
                 "Costo Unit (Bs)": (parseFloat(row.price_usd) * bcvRate).toFixed(2),
                 "Valor Total (Ref)": parseFloat(row.total_value_usd).toFixed(2),
-                // Cálculo del total en Bs
                 "Valor Total (Bs)": (parseFloat(row.total_value_usd) * bcvRate).toFixed(2)
             });
 
         } else {
-            // --- MODO VENTAS ---
+            // --- MODO VENTAS (CORREGIDO) ---
             orderedHeaders = [
                 "Nro Factura",
                 "Fecha Hora",
                 "Cliente",
-                "Documento",
-                "Items Comprados",
+                "Documento ID",
                 "Tipo",
                 "Estado",
                 "Metodo Pago",
@@ -404,7 +394,21 @@ function App() {
                 "Total Bs"
             ];
 
-            rowMapper = (row) => row;
+            // 🔥 AQUÍ ESTABA EL ERROR: Ahora mapeamos manualmente cada campo
+            rowMapper = (row) => ({
+                "Nro Factura": row.id || row.sale_id,
+                "Fecha Hora": new Date(row.created_at).toLocaleString('es-VE'),
+                "Cliente": row.full_name || row.client_name || 'Consumidor Final',
+                "Documento ID": row.client_id || row.id_number || 'N/A',
+                "Tipo": row.invoice_type || 'TICKET',
+                "Estado": row.status,
+                "Metodo Pago": row.payment_method,
+                // Usamos la tasa histórica de la venta, o la actual si no existe
+                "Tasa BCV": row.bcv_rate_snapshot || bcvRate, 
+                "Total USD": parseFloat(row.total_usd).toFixed(2),
+                // Formateamos sin separadores de miles para que Excel entienda mejor el número si es CSV simple
+                "Total Bs": parseFloat(row.total_ves).toFixed(2) 
+            });
         }
 
         // 2. Construir el contenido
@@ -416,7 +420,7 @@ function App() {
                 return orderedHeaders.map(header => {
                     let value = mappedRow[header];
                     if (value === null || value === undefined) value = '';
-                    // Limpieza para CSV (Excel en español usa ; como separador)
+                    // Limpieza para CSV (Excel usa ; como separador en regiones latinas)
                     value = String(value).replace(/(\r\n|\n|\r)/gm, " ").replace(/;/g, ",");
                     return value;
                 }).join(';');
@@ -1804,146 +1808,242 @@ function App() {
         }
     };
 
-    // --- FUNCIÓN PARA EXPORTAR A EXCEL (CSV) ---
-    const exportReportToCSV = () => {
+    // --- FUNCIÓN GENERAR REPORTE PDF (DISEÑO MODERNO: REF + BS) ---
+    const exportReportToPDF = () => {
         // 1. Validar datos
-        if (!analyticsData || !analyticsData.salesOverTime || analyticsData.salesOverTime.length === 0) {
-            return Swal.fire('Sin datos', 'No hay información para exportar en este rango.', 'warning');
+        if (!analyticsData || !analyticsData.salesOverTime) {
+            return Swal.fire('Sin datos', 'No hay información para generar el reporte.', 'warning');
         }
 
-        try {
-            // 2. Estilos CSS para el Excel (Colores institucionales Higea)
-            // Esto le dará el toque "Profesional" y "Novedoso"
-            const styles = `
-            <style>
-              .header { background-color: #0056B3; color: white; font-weight: bold; text-align: center; border: 1px solid #000; }
-              .sub-header { background-color: #E11D2B; color: white; font-weight: bold; text-align: left; border: 1px solid #000; }
-              .row-even { background-color: #f2f2f2; border: 1px solid #ccc; }
-              .row-odd { background-color: #ffffff; border: 1px solid #ccc; }
-              .money { text-align: right; }
-              .title { font-size: 18px; font-weight: bold; text-align: center; height: 40px; }
-              .meta { font-style: italic; color: #555; text-align: center; }
-              td { padding: 5px; }
-            </style>
-          `;
+        const doc = new jsPDF();
+        
+        // --- PALETA DE COLORES HIGEA MODERNA ---
+        const colors = {
+            primary: [0, 86, 179],   // Higea Blue (#0056B3)
+            secondary: [225, 29, 43], // Higea Red (#E11D2B)
+            darkText: [30, 41, 59],   // Slate 800
+            lightText: [100, 116, 139], // Slate 500
+            bgLight: [248, 250, 252],  // Slate 50
+            border: [226, 232, 240]    // Slate 200
+        };
 
-            // 3. Construir el contenido HTML (Tablas)
-            let html = `
-            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-            <head>
-              <meta charset="UTF-8">
-              ${styles}
-            </head>
-            <body>
-              <table>
-                <tr><td colspan="5" class="title">REPORTE GERENCIAL DE VENTAS - HIGEA</td></tr>
-                <tr><td colspan="5" class="meta">Generado el: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</td></tr>
-                <tr><td colspan="5" class="meta">Rango: ${reportDateRange.start} al ${reportDateRange.end}</td></tr>
-                <tr><td></td></tr>
+        // --- HELPER: TARJETA KPI (AHORA SOPORTA DOBLE MONEDA) ---
+        const drawModernCard = (x, y, width, height, title, valueRef, valueBs, accentColor) => {
+            // Fondo y Borde
+            doc.setDrawColor(...colors.border);
+            doc.setFillColor(255, 255, 255);
+            doc.roundedRect(x, y, width, height, 4, 4, 'FD');
 
-                <tr><td colspan="5" class="sub-header">HISTÓRICO DE VENTAS DIARIAS</td></tr>
-                <tr>
-                    <td class="header">Fecha</td>
-                    <td class="header">Transacciones</td>
-                    <td class="header">Total Ref (USD)</td>
-                    <td class="header">Total Bs</td>
-                    <td class="header">Ticket Promedio</td>
-                </tr>
-          `;
+            // Línea de acento superior
+            doc.setFillColor(...accentColor);
+            doc.rect(x + 1, y + 1, width - 2, 2, 'F');
 
-            // Llenar datos diarios
-            analyticsData.salesOverTime.forEach((row, index) => {
-                const rowClass = index % 2 === 0 ? 'row-even' : 'row-odd';
-                const ticketAvg = row.tx_count > 0 ? (row.total_usd / row.tx_count).toFixed(2) : 0;
-                const date = new Date(row.sale_date).toLocaleDateString();
+            // Título
+            doc.setTextColor(...colors.lightText);
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'bold');
+            doc.text(title.toUpperCase(), x + 6, y + 12);
 
-                html += `
-                <tr>
-                    <td class="${rowClass}">${date}</td>
-                    <td class="${rowClass}" style="text-align:center;">${row.tx_count}</td>
-                    <td class="${rowClass} money">${parseFloat(row.total_usd).toFixed(2)}</td>
-                    <td class="${rowClass} money">${parseFloat(row.total_ves).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                    <td class="${rowClass} money">${ticketAvg}</td>
-                </tr>
-              `;
-            });
+            // Valor Principal (REF)
+            doc.setTextColor(...accentColor);
+            doc.setFontSize(14); // Un poco más pequeño para que quepa todo
+            doc.setFont('helvetica', 'bold');
+            doc.text(valueRef, x + 6, y + 20);
+            
+            // Subtítulo / Valor Secundario (BS)
+            if(valueBs) {
+                doc.setFontSize(9);
+                doc.setTextColor(...colors.darkText);
+                doc.setFont('helvetica', 'bold'); // Bs en negrita gris oscuro
+                doc.text(valueBs, x + 6, y + 26);
+            }
+        };
 
-            // SECCIÓN 2: PRODUCTOS TOP
-            html += `
-                <tr><td></td></tr>
-                <tr><td colspan="3" class="sub-header">TOP PRODUCTOS ESTRELLA</td></tr>
-                <tr>
-                    <td class="header" colspan="2">Producto</td>
-                    <td class="header">Unidades Vendidas</td>
-                    <td class="header">Ingresos Generados (Ref)</td>
-                </tr>
-          `;
+        // --- 1. ENCABEZADO ---
+        doc.setFillColor(...colors.primary);
+        doc.rect(0, 0, 210, 4, 'F');
 
-            analyticsData.topProducts.forEach((row, index) => {
-                const rowClass = index % 2 === 0 ? 'row-even' : 'row-odd';
-                html += `
-                <tr>
-                    <td class="${rowClass}" colspan="2">${row.name}</td>
-                    <td class="${rowClass}" style="text-align:center;">${row.total_qty}</td>
-                    <td class="${rowClass} money">${parseFloat(row.total_revenue).toFixed(2)}</td>
-                </tr>
-              `;
-            });
+        doc.setFontSize(24);
+        doc.setTextColor(...colors.darkText);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Reporte Gerencial", 14, 25);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(...colors.lightText);
+        doc.setFont('helvetica', 'normal');
+        doc.text("Inteligencia de Negocios Higea POS", 14, 32);
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...colors.primary);
+        doc.text(`Periodo: ${new Date(reportDateRange.start).toLocaleDateString()} — ${new Date(reportDateRange.end).toLocaleDateString()}`, 14, 38);
 
-            // SECCIÓN 3: VENTAS POR CATEGORÍA
-            html += `
-                <tr><td></td></tr>
-                <tr><td colspan="2" class="sub-header">RENDIMIENTO POR CATEGORÍA</td></tr>
-                <tr>
-                    <td class="header">Categoría</td>
-                    <td class="header">Total Facturado (Ref)</td>
-                </tr>
-          `;
+        doc.setFontSize(8);
+        doc.setTextColor(...colors.lightText);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Generado: ${new Date().toLocaleString()}`, 196, 25, { align: 'right' });
 
-            analyticsData.salesByCategory.forEach((row, index) => {
-                const rowClass = index % 2 === 0 ? 'row-even' : 'row-odd';
-                html += `
-                <tr>
-                    <td class="${rowClass}">${row.category}</td>
-                    <td class="${rowClass} money">${parseFloat(row.total_usd).toFixed(2)}</td>
-                </tr>
-              `;
-            });
 
-            // Totales Generales al final
-            const totalGeneralUSD = analyticsData.salesOverTime.reduce((acc, curr) => acc + parseFloat(curr.total_usd), 0);
-            html += `
-                <tr><td></td></tr>
-                <tr>
-                    <td colspan="2" style="font-weight:bold; font-size:14px; text-align:right;">TOTAL GENERAL PERIODO:</td>
-                    <td style="font-weight:bold; font-size:14px; background-color:#FFFF00; border:1px solid #000;" class="money">
-                        Ref ${totalGeneralUSD.toFixed(2)}
-                    </td>
-                </tr>
-          `;
+        // --- 2. SECCIÓN DE KPIS (DOBLE MONEDA) ---
+        let finalY = 50;
+        doc.setFontSize(12);
+        doc.setTextColor(...colors.darkText);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Resumen Ejecutivo", 14, finalY);
+        finalY += 8;
+        
+        // Cálculos Totales
+        const totalUSD = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
+        const totalVES = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_ves), 0); // Total Bs real
+        const totalTransacciones = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count), 0);
+        
+        // Cálculos Promedios
+        const ticketPromedioUSD = totalTransacciones > 0 ? totalUSD / totalTransacciones : 0;
+        const ticketPromedioVES = totalTransacciones > 0 ? totalVES / totalTransacciones : 0;
 
-            html += `
-              </table>
-            </body>
-            </html>
-          `;
+        // Dibujar Tarjetas
+        const cardWidth = 58;
+        const cardHeight = 32; // Un poco más alta para que quepan los dos montos
+        const gap = 6;
 
-            // 4. Crear Blob y Descargar
-            // Usamos 'application/vnd.ms-excel' para que el SO reconozca que debe abrirse con Excel
-            const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            // La extensión .xls es necesaria para este truco de HTML
-            link.setAttribute("download", `Reporte_Gerencial_Higea_${reportDateRange.start}.xls`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+        // KPI 1: Dinero Recaudado (Ref y Bs)
+        drawModernCard(
+            14, finalY, cardWidth, cardHeight, 
+            "Dinero Recaudado", 
+            `Ref ${totalUSD.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 
+            `Bs ${totalVES.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 
+            colors.primary
+        );
+        
+        // KPI 2: Transacciones (Solo número)
+        drawModernCard(
+            14 + cardWidth + gap, finalY, cardWidth, cardHeight, 
+            "Transacciones", 
+            `${totalTransacciones}`, 
+            "Operaciones exitosas", 
+            colors.darkText
+        );
+        
+        // KPI 3: Ticket Promedio (Ref y Bs)
+        const ticketColor = ticketPromedioUSD > 50 ? colors.primary : colors.secondary; 
+        drawModernCard(
+            14 + (cardWidth + gap) * 2, finalY, cardWidth, cardHeight, 
+            "Ticket Promedio", 
+            `Ref ${ticketPromedioUSD.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 
+            `Bs ${ticketPromedioVES.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, 
+            ticketColor
+        );
 
-        } catch (error) {
-            console.error("Error exportando Excel:", error);
-            Swal.fire('Error', 'No se pudo generar el reporte.', 'error');
+        finalY += cardHeight + 15;
+
+        // --- ESTILOS DE TABLA ---
+        const cleanTableStyles = {
+            theme: 'striped',
+            headStyles: { 
+                fillColor: colors.primary, 
+                textColor: 255, 
+                fontStyle: 'bold',
+                halign: 'left',
+                cellPadding: 3
+            },
+            bodyStyles: { textColor: colors.darkText, fontSize: 9, cellPadding: 3 },
+            alternateRowStyles: { fillColor: colors.bgLight },
+            styles: { lineColor: 255, lineWidth: 0.1 }
+        };
+
+        // --- TABLA 1: EVOLUCIÓN (Ref y Bs) ---
+        doc.setFontSize(11);
+        doc.setTextColor(...colors.darkText);
+        doc.text("1. Evolución de Ventas Diarias", 14, finalY);
+        finalY += 4;
+
+        autoTable(doc, {
+            ...cleanTableStyles,
+            startY: finalY,
+            // Encabezados explícitos
+            head: [['Fecha', 'Ops', 'Recaudado (Ref)', 'Recaudado (Bs)']],
+            body: analyticsData.salesOverTime.map(row => [
+                new Date(row.sale_date).toLocaleDateString(),
+                row.tx_count,
+                // Usamos Ref y Bs sin el símbolo $
+                `Ref ${parseFloat(row.total_usd).toLocaleString('es-VE', {minimumFractionDigits: 2})}`,
+                `Bs ${parseFloat(row.total_ves).toLocaleString('es-VE', {minimumFractionDigits: 2})}`
+            ]),
+            columnStyles: { 
+                0: { cellWidth: 35 },
+                1: { halign: 'center' },
+                2: { fontStyle: 'bold', halign: 'right', textColor: colors.primary }, // Ref destacado
+                3: { halign: 'right', textColor: colors.darkText } // Bs normal
+            }
+        });
+
+        finalY = doc.lastAutoTable.finalY + 15;
+
+        // --- TABLA 2: TOP PRODUCTOS ---
+        if (finalY > 230) { doc.addPage(); finalY = 20; }
+
+        doc.setFontSize(11);
+        doc.setTextColor(...colors.darkText);
+        doc.text("2. Productos Más Vendidos (Top 5)", 14, finalY);
+        finalY += 4;
+
+        autoTable(doc, {
+            ...cleanTableStyles,
+            startY: finalY,
+            head: [['Producto', 'Unidades', 'Ingreso (Ref)']], // Solo Ref disponible en este endpoint
+            headStyles: { ...cleanTableStyles.headStyles, fillColor: colors.secondary }, 
+            body: analyticsData.topProducts.map(row => [
+                row.name,
+                row.total_qty,
+                `Ref ${parseFloat(row.total_revenue).toLocaleString('es-VE', {minimumFractionDigits: 2})}`
+            ]),
+            columnStyles: { 
+                1: { halign: 'center' },
+                2: { halign: 'right', fontStyle: 'bold' }
+            }
+        });
+
+        finalY = doc.lastAutoTable.finalY + 15;
+
+        // --- TABLA 3: CATEGORÍAS ---
+        if (finalY > 230) { doc.addPage(); finalY = 20; }
+
+        doc.setFontSize(11);
+        doc.setTextColor(...colors.darkText);
+        doc.text("3. Rendimiento por Categoría", 14, finalY);
+        finalY += 4;
+
+        autoTable(doc, {
+            ...cleanTableStyles,
+            startY: finalY,
+            head: [['Categoría', 'Participación', 'Total (Ref)']],
+            body: analyticsData.salesByCategory.map(row => {
+               const percentage = totalUSD > 0 ? (parseFloat(row.total_usd) / totalUSD * 100).toFixed(1) : 0;
+               return [
+                row.category,
+                `${percentage}%`,
+                `Ref ${parseFloat(row.total_usd).toLocaleString('es-VE', {minimumFractionDigits: 2})}`
+               ]
+            }),
+            columnStyles: { 
+                1: { halign: 'center', textColor: colors.lightText, fontSize: 8 },
+                2: { halign: 'right', fontStyle: 'bold' }
+            }
+        });
+
+        // --- PIE DE PÁGINA ---
+        const pageCount = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setDrawColor(...colors.border);
+            doc.line(14, 285, 196, 285);
+            
+            doc.setFontSize(8);
+            doc.setTextColor(...colors.lightText);
+            doc.text(`Sistema Higea POS - Reporte Gerencial Multimoneda`, 14, 290);
+            doc.text(`${i} / ${pageCount}`, 196, 290, { align: 'right' });
         }
+
+        doc.save(`Higea_Reporte_${reportDateRange.start}.pdf`);
     };
 
     // Cargar Reporte Avanzado con Filtro de Fecha
@@ -3335,9 +3435,25 @@ function App() {
                                         <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Hasta</span>
                                         <input type="date" value={reportDateRange.end} onChange={(e) => setReportDateRange(prev => ({ ...prev, end: e.target.value }))} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer" />
                                     </div>
+                                    {/* Separador vertical */}
                                     <div className="h-8 w-px bg-slate-200 mx-1"></div>
-                                    <button onClick={fetchAdvancedReport} className="bg-higea-blue hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95">Actualizar</button>
-                                    <button onClick={exportReportToCSV} className="bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95">Excel Resumen</button>
+                                    
+                                    {/* Botón Actualizar (Estilo Refinado) */}
+                                    <button onClick={fetchAdvancedReport} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-95 flex items-center gap-2">
+                                        <span>🔄</span> <span className="hidden sm:inline">Actualizar</span>
+                                    </button>
+
+                                    {/* 🔥 NUEVO: BOTÓN PDF REPORTE */}
+                                    <button onClick={exportReportToPDF} className="bg-higea-red hover:bg-red-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95 flex items-center gap-2">
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                                        <span>PDF Reporte</span>
+                                    </button>
+
+                                    {/* Botón Excel (Mantenido) */}
+                                    <button onClick={() => downloadCSV(analyticsData.salesOverTime, 'Resumen_Gerencial')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95 flex items-center gap-2">
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                        <span className="hidden sm:inline">Excel</span>
+                                    </button>
                                 </div>
 
                                 {analyticsData ? (
