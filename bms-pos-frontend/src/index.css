@@ -8,3 +8,15 @@
 body {
   background-color: #f8fafc; /* Fondo gris muy claro */
 }
+
+/* --- CLASE UTILITARIA PARA OCULTAR SCROLLBAR --- */
+/* Esto funciona en Chrome, Safari y Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Esto funciona en IE, Edge y Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

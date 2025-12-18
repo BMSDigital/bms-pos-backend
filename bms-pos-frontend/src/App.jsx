@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 import jsPDF from 'jspdf';              
@@ -123,6 +123,18 @@ function App() {
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [selectedCategory, setSelectedCategory] = useState('Todos');
+	// --- LÓGICA PARA CARRUSEL DE CATEGORÍAS UX ---
+    const categoryScrollRef = useRef(null);
+
+    const scrollCategories = (direction) => {
+        if (categoryScrollRef.current) {
+            const scrollAmount = 300; // Cantidad de píxeles a mover
+            categoryScrollRef.current.scrollBy({ 
+                left: direction === 'left' ? -scrollAmount : scrollAmount, 
+                behavior: 'smooth' 
+            });
+        }
+    };
     const [bcvRate, setBcvRate] = useState(0);
     const [fallbackRate, setFallbackRate] = useState(0); // 💡 NUEVO: Tasa de Fallback para el warning
     const [loading, setLoading] = useState(true);
@@ -347,97 +359,76 @@ function App() {
     }, [salesSearch, reportTab]); // <--- AQUÍ SÍ DEJAMOS 'reportTab'
 	
 
-    // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta Ventas e Inventario con Bs) ---
+    // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta: Inventario, Ventas Detalle y Resumen Gerencial) ---
     const downloadCSV = (data, fileName) => {
         if (!data || data.length === 0) return Swal.fire('Vacío', 'No hay datos para exportar', 'info');
 
         // 1. DETECTAR QUÉ TIPO DE DATA ES
-        // Si tiene 'stock', es inventario. Si no, asumimos que es reporte de ventas.
         const isInventory = data[0].hasOwnProperty('stock') && data[0].hasOwnProperty('name');
+        const isDailySummary = data[0].hasOwnProperty('sale_date') && data[0].hasOwnProperty('total_usd'); // Detectar Resumen Gerencial
 
         let orderedHeaders = [];
         let rowMapper = null;
 
         if (isInventory) {
-            // --- MODO INVENTARIO ---
-            orderedHeaders = [
-                "ID", "Código Barras", "Producto", "Categoría", "Estatus", "Impuesto", 
-                "Stock", "Costo Unit (Ref)", "Costo Unit (Bs)", "Valor Total (Ref)", "Valor Total (Bs)"
-            ];
-
+            // --- A. MODO INVENTARIO ---
+            orderedHeaders = ["ID", "Producto", "Categoría", "Estatus", "Stock", "Costo Ref", "Costo Bs", "Valor Total Ref"];
             rowMapper = (row) => ({
                 "ID": row.id,
-                "Código Barras": row.barcode || '',
                 "Producto": row.name,
                 "Categoría": row.category,
-                "Estatus": row.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO',
-                "Impuesto": row.is_taxable ? 'GRAVADO' : 'EXENTO',
+                "Estatus": row.status,
                 "Stock": row.stock,
-                "Costo Unit (Ref)": parseFloat(row.price_usd).toFixed(2),
-                "Costo Unit (Bs)": (parseFloat(row.price_usd) * bcvRate).toFixed(2),
-                "Valor Total (Ref)": parseFloat(row.total_value_usd).toFixed(2),
-                "Valor Total (Bs)": (parseFloat(row.total_value_usd) * bcvRate).toFixed(2)
+                "Costo Ref": parseFloat(row.price_usd).toFixed(2),
+                "Costo Bs": (parseFloat(row.price_usd) * bcvRate).toFixed(2),
+                "Valor Total Ref": parseFloat(row.total_value_usd).toFixed(2)
+            });
+
+        } else if (isDailySummary) {
+            // --- B. MODO RESUMEN GERENCIAL (Dashboard) ---
+            // Este es el que estaba fallando antes
+            orderedHeaders = ["Fecha", "Transacciones", "Total Recaudado (Ref)", "Total Recaudado (Bs)"];
+            rowMapper = (row) => ({
+                "Fecha": new Date(row.sale_date).toLocaleDateString(),
+                "Transacciones": row.tx_count,
+                "Total Recaudado (Ref)": parseFloat(row.total_usd).toFixed(2),
+                "Total Recaudado (Bs)": parseFloat(row.total_ves).toFixed(2)
             });
 
         } else {
-            // --- MODO VENTAS (CORREGIDO) ---
-            orderedHeaders = [
-                "Nro Factura",
-                "Fecha Hora",
-                "Cliente",
-                "Documento ID",
-                "Tipo",
-                "Estado",
-                "Metodo Pago",
-                "Tasa BCV",
-                "Total USD",
-                "Total Bs"
-            ];
-
-            // 🔥 AQUÍ ESTABA EL ERROR: Ahora mapeamos manualmente cada campo
+            // --- C. MODO VENTAS DETALLADAS ---
+            orderedHeaders = ["Nro Factura", "Fecha", "Cliente", "Documento", "Estado", "Pago", "Total Ref", "Total Bs"];
             rowMapper = (row) => ({
                 "Nro Factura": row.id || row.sale_id,
-                "Fecha Hora": new Date(row.created_at).toLocaleString('es-VE'),
+                "Fecha": new Date(row.created_at).toLocaleString('es-VE'),
                 "Cliente": row.full_name || row.client_name || 'Consumidor Final',
-                "Documento ID": row.client_id || row.id_number || 'N/A',
-                "Tipo": row.invoice_type || 'TICKET',
+                "Documento": row.client_id || row.id_number || 'N/A',
                 "Estado": row.status,
-                "Metodo Pago": row.payment_method,
-                // Usamos la tasa histórica de la venta, o la actual si no existe
-                "Tasa BCV": row.bcv_rate_snapshot || bcvRate, 
-                "Total USD": parseFloat(row.total_usd).toFixed(2),
-                // Formateamos sin separadores de miles para que Excel entienda mejor el número si es CSV simple
-                "Total Bs": parseFloat(row.total_ves).toFixed(2) 
+                "Pago": row.payment_method,
+                "Total Ref": parseFloat(row.total_usd).toFixed(2),
+                "Total Bs": parseFloat(row.total_ves).toFixed(2)
             });
         }
 
-        // 2. Construir el contenido
+        // 2. Construir el contenido CSV
         const csvContent = [
-            orderedHeaders.join(';'), // Encabezados
+            orderedHeaders.join(';'),
             ...data.map(originalRow => {
                 const mappedRow = rowMapper(originalRow);
-
                 return orderedHeaders.map(header => {
                     let value = mappedRow[header];
                     if (value === null || value === undefined) value = '';
-                    // Limpieza para CSV (Excel usa ; como separador en regiones latinas)
-                    value = String(value).replace(/(\r\n|\n|\r)/gm, " ").replace(/;/g, ",");
-                    return value;
+                    return String(value).replace(/(\r\n|\n|\r)/gm, " ").replace(/;/g, ",");
                 }).join(';');
             })
         ].join('\r\n');
 
-        // 3. Crear Blob y Descargar
+        // 3. Descargar
         const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         const url = URL.createObjectURL(blob);
         link.setAttribute("href", url);
-
-        const dateSuffix = isInventory
-            ? new Date().toLocaleDateString().replace(/\//g, '-')
-            : `${reportDateRange.start}_al_${reportDateRange.end}`;
-
-        link.setAttribute("download", `${fileName}_${dateSuffix}.csv`);
+        link.setAttribute("download", `${fileName}_${new Date().toISOString().split('T')[0]}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -2228,38 +2219,69 @@ function App() {
                                 />
                             </div>
 
-                            {/* SECCIÓN DE CATEGORÍAS (DISEÑO PREMIUM UX) */}
-                            <div className="relative bg-[#F8FAFC] border-b border-gray-100 z-10 w-full shadow-sm">
+                            {/* SECCIÓN DE CATEGORÍAS (DISEÑO FINAL: SÓLIDO Y ALINEADO) */}
+                  <div className="relative w-full bg-white border-b border-gray-100 h-16 shadow-sm z-10 group flex items-center">
+                      
+                      {/* 1. ZONA IZQUIERDA (Botón Atrás - Fondo Sólido) */}
+                      {/* bg-white: Tapa lo que pasa por debajo de forma nítida */}
+                      {/* w-12 (48px): Define el ancho de la zona del botón */}
+                      <div className="absolute left-0 top-0 bottom-0 w-12 bg-white z-20 flex items-center justify-center shadow-[4px_0_12px_-4px_rgba(0,0,0,0.1)]">
+                          <button 
+                              onClick={() => scrollCategories('left')}
+                              className="w-8 h-8 rounded-full bg-gray-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-higea-blue hover:border-higea-blue hover:bg-white transition-all active:scale-95"
+                              title="Anterior"
+                          >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                          </button>
+                      </div>
 
-                                {/* Degradado Visual Izquierdo (Evita cortes secos) */}
-                                <div className="absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-[#F8FAFC] to-transparent pointer-events-none z-20"></div>
+                      {/* 2. CONTENEDOR DE SCROLL */}
+                      <div 
+                          ref={categoryScrollRef}
+                          // Quitamos padding lateral para usar espaciadores físicos
+                          className="flex overflow-x-auto gap-3 h-full items-center no-scrollbar scroll-smooth snap-x"
+                      >
+                          {/* 🔥 ESPACIADOR INICIAL (CLAVE DEL ÉXITO) */}
+                          {/* w-16 (64px) es mayor que el botón (48px). */}
+                          {/* Esto deja 16px de aire VISIBLE entre la flecha y "Todos". */}
+                          <div className="w-16 flex-shrink-0"></div>
 
-                                {/* Degradado Visual Derecho (Indica más contenido) */}
-                                <div className="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-[#F8FAFC] to-transparent pointer-events-none z-20"></div>
-
-                                <div className="flex overflow-x-auto py-3 px-4 gap-3 no-scrollbar scroll-smooth snap-x w-full items-center">
-                                    {categories.map(cat => {
-                                        const isActive = selectedCategory === cat;
-                                        return (
-                                            <button
-                                                key={cat}
-                                                onClick={() => setSelectedCategory(cat)}
-                                                className={`
-                                          snap-start flex-shrink-0 px-5 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 border select-none
-                                          ${isActive
-                                                        ? 'bg-higea-blue text-white border-higea-blue shadow-lg shadow-blue-900/20 scale-105 tracking-wide'
-                                                        : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-higea-blue hover:shadow-md hover:-translate-y-0.5 active:scale-95'
-                                                    }
+                          {categories.map((cat) => {
+                              const isActive = selectedCategory === cat;
+                              return (
+                                  <button 
+                                      key={cat} 
+                                      onClick={() => setSelectedCategory(cat)} 
+                                      className={`
+                                          snap-start whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition-all duration-300 border select-none flex items-center gap-2 z-10
+                                          ${isActive 
+                                              ? 'bg-higea-blue text-white border-transparent shadow-md shadow-blue-500/20 scale-100' 
+                                              : 'bg-white text-slate-500 border-slate-100 hover:border-blue-200 hover:text-higea-blue hover:bg-slate-50'
+                                          }
                                       `}
-                                            >
-                                                {cat === 'Todos' ? '🔥 Todos' : cat}
-                                            </button>
-                                        )
-                                    })}
-                                    {/* Espaciador final para compensar el degradado derecho */}
-                                    <div className="w-8 flex-shrink-0"></div>
-                                </div>
-                            </div>
+                                  >
+                                      {/* Icono rayo solo para Todos */}
+                                      {cat === 'Todos' && <span className="text-base">⚡</span>}
+                                      <span>{cat}</span>
+                                  </button>
+                              )
+                          })}
+                          
+                          {/* Espaciador final para simetría */}
+                          <div className="w-16 flex-shrink-0"></div>
+                      </div>
+
+                      {/* 3. ZONA DERECHA (Botón Siguiente - Fondo Sólido) */}
+                      <div className="absolute right-0 top-0 bottom-0 w-12 bg-white z-20 flex items-center justify-center shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.1)]">
+                          <button 
+                              onClick={() => scrollCategories('right')}
+                              className="w-8 h-8 rounded-full bg-gray-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-higea-blue hover:border-higea-blue hover:bg-white transition-all active:scale-95"
+                              title="Siguiente"
+                          >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                          </button>
+                      </div>
+                  </div>
 
                             {/* 💡 MODIFICADO: Usar currentProducts para aplicar paginación */}
                             <div className="flex-1 overflow-y-auto px-4 pb-20 md:pb-6 custom-scrollbar">
