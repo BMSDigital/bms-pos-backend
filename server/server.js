@@ -5,9 +5,16 @@ const cors = require('cors');
 const cheerio = require('cheerio');
 const https = require('https');
 const { Pool } = require('pg');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// --- CONEXIÓN A BASE DE DATOS ---
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+});
 
 // Habilitar CORS para que el Frontend pueda conectarse
 app.use(cors());
@@ -766,6 +773,17 @@ app.post('/api/customers/:id/initial-balance', async (req, res) => {
     } finally {
         client.release();
     }
+});
+
+// --- SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND (REACT) --- //
+// 1. Decirle a Express que busque en la carpeta dist (que se crea en el build)
+// Se asume la estructura: /bms-pos-backend/server (aquí estamos) y /bms-pos-backend/bms-pos-frontend
+app.use(express.static(path.join(__dirname, '../bms-pos-frontend/dist')));
+
+// 2. Cualquier ruta que NO sea /api, se redirige al index.html de React
+// Esto permite que el React Router funcione (ej: /dashboard, /inventory) al recargar la página
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../bms-pos-frontend/dist', 'index.html'));
 });
 
 app.listen(port, () => {
