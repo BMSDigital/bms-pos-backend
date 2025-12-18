@@ -10,6 +10,8 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// [CORRECCIÓN 1] Aquí borré la conexión 'pool' duplicada que tenías antes.
+
 // Habilitar CORS para que el Frontend pueda conectarse
 app.use(cors());
 app.use(express.json());
@@ -775,8 +777,8 @@ app.post('/api/customers/:id/initial-balance', async (req, res) => {
 app.use(express.static(path.join(__dirname, '../bms-pos-frontend/dist')));
 
 // 2. Cualquier ruta que NO sea /api, se redirige al index.html de React
-// Esto permite que el React Router funcione (ej: /dashboard, /inventory) al recargar la página
-app.get('*', (req, res) => {
+// [CORRECCIÓN 2] Cambiado '*' por /.*/ porque Express 5.0 ya no acepta '*'
+app.get(/.*/, (req, res) => {
     res.sendFile(path.join(__dirname, '../bms-pos-frontend/dist', 'index.html'));
 });
 
