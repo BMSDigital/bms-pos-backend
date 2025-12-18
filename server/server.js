@@ -10,12 +10,6 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// --- CONEXIÓN A BASE DE DATOS ---
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
-
 // Habilitar CORS para que el Frontend pueda conectarse
 app.use(cors());
 app.use(express.json());
