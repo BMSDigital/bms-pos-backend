@@ -778,6 +778,58 @@ app.post('/api/customers/:id/initial-balance', async (req, res) => {
     }
 });
 
+// --- Z. ANULACIÓN Y NOTA DE CRÉDITO (REVERSO COMPLETO) ---
+app.post('/api/sales/:id/void', async (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body; // Motivo de la anulación
+
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Verificar el estado actual de la venta
+        const saleCheck = await client.query('SELECT status, invoice_type FROM sales WHERE id = $1', [id]);
+        if (saleCheck.rows.length === 0) throw new Error('Venta no encontrada');
+        if (saleCheck.rows[0].status === 'ANULADO') throw new Error('Esta venta ya está anulada.');
+
+        // 2. Obtener los ítems para devolver al inventario
+        const itemsRes = await client.query('SELECT product_id, quantity FROM sale_items WHERE sale_id = $1', [id]);
+        
+        // 3. Devolver Stock (Reverso de Inventario)
+        for (const item of itemsRes.rows) {
+            await client.query(
+                'UPDATE products SET stock = stock + $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2',
+                [item.quantity, item.product_id]
+            );
+        }
+
+        // 4. Actualizar la venta a ANULADO
+        // Nota: Al cambiar el status a 'ANULADO', tus reportes existentes (que tienen WHERE status != 'ANULADO')
+        // automáticamente dejarán de sumar estos montos.
+        const updateQuery = `
+            UPDATE sales 
+            SET status = 'ANULADO', 
+                payment_method = payment_method || ' [ANULADO: ' || $1 || ']' 
+            WHERE id = $2 
+            RETURNING id
+        `;
+        await client.query(updateQuery, [reason || 'Sin motivo', id]);
+
+        await client.query('COMMIT');
+        
+        console.log(`🚫 Venta #${id} anulada. Stock restaurado.`);
+        res.json({ success: true, message: 'Venta anulada y stock restaurado correctamente.' });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error anulando venta:', err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 // --- SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND (REACT) --- //
 // 1. Decirle a Express que busque en la carpeta dist (que se crea en el build)
 // Se asume la estructura: /bms-pos-backend/server (aquí estamos) y /bms-pos-backend/bms-pos-frontend

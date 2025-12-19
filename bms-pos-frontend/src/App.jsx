@@ -1799,6 +1799,182 @@ function App() {
             Swal.fire('Error', 'No se pudo cargar el reporte de hoy', 'error');
         }
     };
+	
+	// --- NUEVO: GESTIÓN DE CIERRE DE CAJA (CUADRE) ---
+    const handleCashClose = () => {
+        // 1. Calcular totales esperados según el sistema
+        let systemTotals = {
+            efectivoRef: 0,
+            zelle: 0,
+            pagoMovil: 0,
+            puntoVenta: 0,
+            otros: 0
+        };
+
+        // Recorremos las ventas del día cargadas en dailySalesList
+        dailySalesList.forEach(sale => {
+            if (sale.status === 'ANULADO') return; // Ignorar anuladas
+
+            // Lógica simple de parsing para detectar métodos (adaptar si tu string es complejo)
+            const pm = sale.payment_method.toLowerCase();
+            const paidUsd = parseFloat(sale.amount_paid_usd);
+            const rate = parseFloat(sale.bcv_rate_snapshot) || bcvRate;
+            
+            // Convertimos todo a su moneda base estimada para el cuadre
+            if (pm.includes('efectivo ref')) systemTotals.efectivoRef += paidUsd;
+            else if (pm.includes('zelle')) systemTotals.zelle += paidUsd;
+            else if (pm.includes('pago móvil') || pm.includes('pago movil')) systemTotals.pagoMovil += (paidUsd * rate);
+            else if (pm.includes('punto')) systemTotals.puntoVenta += (paidUsd * rate);
+            else systemTotals.otros += paidUsd;
+        });
+
+        // 2. Mostrar Modal de Cuadre
+        Swal.fire({
+            title: '🔐 Cierre de Caja y Cuadre',
+            html: `
+                <div class="text-left space-y-4 font-sans">
+                    <p class="text-xs text-gray-400 text-center uppercase font-bold mb-4">Ingrese los montos reales (Cierre de Lote / Arqueo)</p>
+                    
+                    <div class="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                        <div class="flex justify-between text-xs font-bold text-blue-800 mb-1">
+                            <span>💳 Punto de Venta (Bs)</span>
+                            <span>Sistema: Bs ${systemTotals.puntoVenta.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
+                        </div>
+                        <input id="close-pos" type="number" step="0.01" class="w-full p-2 rounded-lg border border-blue-200 outline-none font-bold text-gray-700" placeholder="Monto Cierre de Lote">
+                    </div>
+
+                    <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
+                        <div class="flex justify-between text-xs font-bold text-gray-500 mb-1">
+                            <span>📱 Pago Móvil (Bs)</span>
+                            <span>Sistema: Bs ${systemTotals.pagoMovil.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
+                        </div>
+                        <input id="close-pm" type="number" step="0.01" class="w-full p-2 rounded-lg border border-gray-300 outline-none text-sm" placeholder="Monto Verificado">
+                    </div>
+
+                    <div class="bg-green-50 p-3 rounded-xl border border-green-100">
+                        <div class="flex justify-between text-xs font-bold text-green-700 mb-1">
+                            <span>💵 Efectivo (Ref)</span>
+                            <span>Sistema: $${systemTotals.efectivoRef.toFixed(2)}</span>
+                        </div>
+                        <input id="close-cash" type="number" step="0.01" class="w-full p-2 rounded-lg border border-green-200 outline-none font-bold text-gray-700" placeholder="Conteo de Billetes">
+                    </div>
+                </div>
+            `,
+            confirmButtonText: 'Calcular Diferencias',
+            confirmButtonColor: '#0056B3',
+            showCancelButton: true,
+            cancelButtonText: 'Cancelar',
+            preConfirm: () => {
+                return {
+                    realPos: parseFloat(document.getElementById('close-pos').value) || 0,
+                    realPm: parseFloat(document.getElementById('close-pm').value) || 0,
+                    realCash: parseFloat(document.getElementById('close-cash').value) || 0,
+                    systemTotals
+                };
+            }
+        }).then((result) => {
+            if (result.isConfirmed) {
+                const { realPos, realPm, realCash, systemTotals } = result.value;
+                
+                // Calcular Diferencias
+                const diffPos = realPos - systemTotals.puntoVenta;
+                const diffPm = realPm - systemTotals.pagoMovil;
+                const diffCash = realCash - systemTotals.efectivoRef;
+
+                // Generar reporte de diferencias
+                Swal.fire({
+                    title: '📊 Resultados del Cuadre',
+                    html: `
+                        <div class="space-y-3 text-sm">
+                            <div class="flex justify-between items-center border-b pb-2">
+                                <span>💳 Punto de Venta</span>
+                                <span class="font-bold ${Math.abs(diffPos) < 1 ? 'text-green-600' : 'text-red-600'}">
+                                    ${diffPos >= 0 ? '+' : ''}${diffPos.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
+                                </span>
+                            </div>
+                            <div class="flex justify-between items-center border-b pb-2">
+                                <span>📱 Pago Móvil</span>
+                                <span class="font-bold ${Math.abs(diffPm) < 1 ? 'text-green-600' : 'text-red-600'}">
+                                    ${diffPm >= 0 ? '+' : ''}${diffPm.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
+                                </span>
+                            </div>
+                            <div class="flex justify-between items-center border-b pb-2">
+                                <span>💵 Efectivo Divisa</span>
+                                <span class="font-bold ${Math.abs(diffCash) < 0.1 ? 'text-green-600' : 'text-red-600'}">
+                                    ${diffCash >= 0 ? '+' : ''}${diffCash.toFixed(2)} Ref
+                                </span>
+                            </div>
+                            <p class="text-xs text-gray-400 mt-4 text-center">
+                                ${Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1 
+                                    ? '✅ ¡Caja Cuadrada Perfectamente!' 
+                                    : '⚠️ Existen diferencias. Verifique reportes o realice ajuste.'}
+                            </p>
+                        </div>
+                    `,
+                    icon: (Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1) ? 'success' : 'warning'
+                });
+            }
+        });
+    };
+	
+	// --- NUEVO: FUNCIÓN PARA ANULAR VENTA (NOTA DE CRÉDITO) ---
+    const handleVoidSale = async (sale) => {
+        // Validaciones UX
+        if (sale.status === 'ANULADO') return Swal.fire('Error', 'Esta venta ya está anulada.', 'error');
+
+        const isFiscal = sale.invoice_type === 'FISCAL';
+        
+        // 1. Confirmación de Seguridad
+        const { value: reason } = await Swal.fire({
+            title: isFiscal ? '⚠️ Generar Nota de Crédito' : '⚠️ Anular Venta',
+            html: `
+                <p class="text-sm text-gray-600 mb-4">
+                    Esta acción <b>reversará el inventario</b> (sumará el stock) y marcará la venta como ANULADA para que no sume en los reportes.
+                </p>
+                ${isFiscal ? '<p class="text-xs text-red-500 font-bold bg-red-50 p-2 rounded mb-4">Nota: Al ser Fiscal, esto registrará una Nota de Crédito interna.</p>' : ''}
+            `,
+            input: 'text',
+            inputPlaceholder: 'Motivo de la anulación (Ej: Error en cobro, Devolución)',
+            inputValidator: (value) => {
+                if (!value) return '¡Debes escribir un motivo obligatoriamente!';
+            },
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#E11D2B', // Rojo Alerta
+            confirmButtonText: 'Sí, Anular y Reversar',
+            cancelButtonText: 'Cancelar'
+        });
+
+        if (reason) {
+            try {
+                Swal.fire({ title: 'Procesando Reverso...', didOpen: () => Swal.showLoading() });
+                
+                // 2. Llamada al Backend
+                // Usamos el ID normalizado que ya tienes en tus objetos de venta
+                const saleId = sale.id || sale["Nro Factura"]; 
+                
+                await axios.post(`${API_URL}/sales/${saleId}/void`, { reason });
+
+                // 3. Feedback Exitoso
+                await Swal.fire({
+                    icon: 'success',
+                    title: '¡Anulación Exitosa!',
+                    text: 'El inventario ha sido restaurado y la venta descontada de los reportes.',
+                    timer: 2000
+                });
+
+                // 4. Actualizar Vistas
+                setSelectedSaleDetail(null); // Cerrar modal detalle
+                fetchData(); // Refrescar Dashboard
+                if(reportTab === 'SALES') fetchSalesDetail(); // Refrescar reporte de ventas si está abierto
+                if(showDailySalesModal) openDailySalesDetail(); // Refrescar ventas del día si está abierto
+
+            } catch (error) {
+                console.error(error);
+                Swal.fire('Error', error.response?.data?.error || 'No se pudo anular la venta', 'error');
+            }
+        }
+    };
 
     // --- FUNCIÓN GENERAR REPORTE PDF (DISEÑO MODERNO: REF + BS) ---
     const exportReportToPDF = () => {
@@ -4143,137 +4319,154 @@ function App() {
             )}
 
             {/* --- MODAL DETALLE VENTA (CORREGIDO Y PROFESIONAL) --- */}
-            {selectedSaleDetail && (
-                <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                    <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up border-4 border-white">
+{selectedSaleDetail && (
+    <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+        <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up border-4 border-white">
 
-                        {/* BOTÓN CERRAR */}
-                        <button
-                            onClick={() => setSelectedSaleDetail(null)}
-                            className="absolute top-3 right-3 text-gray-500 hover:text-red-600 bg-white rounded-full p-2 shadow-sm z-20 font-bold"
-                        >
-                            ✕
-                        </button>
+            {/* BOTÓN CERRAR */}
+            <button
+                onClick={() => setSelectedSaleDetail(null)}
+                className="absolute top-3 right-3 text-gray-500 hover:text-red-600 bg-white rounded-full p-2 shadow-sm z-20 font-bold"
+            >
+                ✕
+            </button>
 
-                        {/* --- CABECERA DINÁMICA (Aquí está la magia visual) --- */}
-                        <div className={`p-6 text-center border-b ${selectedSaleDetail.invoice_type === 'FISCAL' ? 'bg-blue-600 text-white' :
-                                (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'bg-red-600 text-white' :
-                                    'bg-gray-100 text-gray-800'
-                            }`}>
-                            <h3 className="font-black text-2xl uppercase tracking-wide">
-                                {selectedSaleDetail.invoice_type === 'FISCAL' ? 'DOCUMENTO FISCAL' :
-                                    (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'CRÉDITO / DEUDA' :
-                                        'TICKET DE VENTA'}
-                            </h3>
-                            <p className="text-sm font-medium opacity-90 mt-1">
-                                Venta #{selectedSaleDetail.id} • {new Date(selectedSaleDetail.created_at || new Date()).toLocaleDateString()}
-                            </p>
+            {/* --- CABECERA DINÁMICA (Aquí está la magia visual) --- */}
+            <div className={`p-6 text-center border-b ${selectedSaleDetail.invoice_type === 'FISCAL' ? 'bg-blue-600 text-white' :
+                    (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'bg-red-600 text-white' :
+                        'bg-gray-100 text-gray-800'
+                }`}>
+                <h3 className="font-black text-2xl uppercase tracking-wide">
+                    {selectedSaleDetail.invoice_type === 'FISCAL' ? 'DOCUMENTO FISCAL' :
+                        (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'CRÉDITO / DEUDA' :
+                            'TICKET DE VENTA'}
+                </h3>
+                <p className="text-sm font-medium opacity-90 mt-1">
+                    Venta #{selectedSaleDetail.id} • {new Date(selectedSaleDetail.created_at || new Date()).toLocaleDateString()}
+                </p>
 
-                            {/* ETIQUETA DE ESTATUS GRANDE */}
-                            <div className="mt-3">
-                                <span className={`px-4 py-1 rounded-full text-xs font-black uppercase tracking-wider shadow-sm ${selectedSaleDetail.status === 'PAGADO' ? 'bg-green-400 text-green-900' : 'bg-yellow-400 text-yellow-900'
-                                    }`}>
-                                    ESTADO: {selectedSaleDetail.status}
-                                </span>
-                            </div>
+                {/* ETIQUETA DE ESTATUS GRANDE */}
+                <div className="mt-3">
+                    <span className={`px-4 py-1 rounded-full text-xs font-black uppercase tracking-wider shadow-sm ${selectedSaleDetail.status === 'PAGADO' ? 'bg-green-400 text-green-900' : 'bg-yellow-400 text-yellow-900'
+                        }`}>
+                        ESTADO: {selectedSaleDetail.status}
+                    </span>
+                </div>
+            </div>
+
+            <div className="max-h-[60vh] overflow-y-auto bg-gray-50">
+
+                {/* --- SECCIÓN DATOS DEL CLIENTE --- */}
+                <div className="p-5 bg-white border-b border-gray-200">
+                    <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Datos del Cliente</p>
+
+                    {selectedSaleDetail.full_name ? (
+                        <div className="space-y-1">
+                            <p className="text-lg font-bold text-gray-800">{selectedSaleDetail.full_name}</p>
+                            <p className="text-sm text-gray-500 font-mono">ID: {selectedSaleDetail.id_number || 'No registrado'}</p>
+
+                            {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') && selectedSaleDetail.due_date && (
+                                <p className="text-xs font-bold text-red-600 mt-2 bg-red-50 p-2 rounded-lg inline-block">
+                                    ⚠️ Vence: {new Date(selectedSaleDetail.due_date).toLocaleDateString()}
+                                </p>
+                            )}
                         </div>
+                    ) : (
+                        <p className="text-sm text-gray-400 italic">Cliente Consumidor Final (Anónimo)</p>
+                    )}
+                </div>
 
-                        <div className="max-h-[60vh] overflow-y-auto bg-gray-50">
-
-                            {/* --- SECCIÓN DATOS DEL CLIENTE --- */}
-                            <div className="p-5 bg-white border-b border-gray-200">
-                                <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Datos del Cliente</p>
-
-                                {selectedSaleDetail.full_name ? (
-                                    <div className="space-y-1">
-                                        <p className="text-lg font-bold text-gray-800">{selectedSaleDetail.full_name}</p>
-                                        <p className="text-sm text-gray-500 font-mono">ID: {selectedSaleDetail.id_number || 'No registrado'}</p>
-
-                                        {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') && selectedSaleDetail.due_date && (
-                                            <p className="text-xs font-bold text-red-600 mt-2 bg-red-50 p-2 rounded-lg inline-block">
-                                                ⚠️ Vence: {new Date(selectedSaleDetail.due_date).toLocaleDateString()}
-                                            </p>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <p className="text-sm text-gray-400 italic">Cliente Consumidor Final (Anónimo)</p>
-                                )}
-                            </div>
-
-                            {/* --- LISTA DE PRODUCTOS --- */}
-                            <div className="p-5">
-                                <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Items Vendidos</p>
-                                <div className="space-y-3">
-                                    {selectedSaleDetail.items.map((item, idx) => (
-                                        <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
-                                            <div>
-                                                <p className="font-bold text-sm text-gray-700">{item.name}</p>
-                                                <p className="text-xs text-gray-400">Ref {parseFloat(item.price_at_moment_usd).toFixed(2)} x {item.quantity}</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="font-black text-gray-800">Ref {(parseFloat(item.price_at_moment_usd) * item.quantity).toFixed(2)}</p>
-                                            </div>
-                                        </div>
-                                    ))}
+                {/* --- LISTA DE PRODUCTOS --- */}
+                <div className="p-5">
+                    <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Items Vendidos</p>
+                    <div className="space-y-3">
+                        {selectedSaleDetail.items.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
+                                <div>
+                                    <p className="font-bold text-sm text-gray-700">{item.name}</p>
+                                    <p className="text-xs text-gray-400">Ref {parseFloat(item.price_at_moment_usd).toFixed(2)} x {item.quantity}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="font-black text-gray-800">Ref {(parseFloat(item.price_at_moment_usd) * item.quantity).toFixed(2)}</p>
                                 </div>
                             </div>
-
-                            {/* --- TOTALES Y PAGOS --- */}
-                            <div className="p-5 bg-white border-t border-gray-200">
-                                <div className="flex justify-between items-end mb-4">
-                                    <span className="text-sm font-bold text-gray-500">Total Pagado</span>
-                                    <div className="text-right">
-                                        <span className="block text-2xl font-black text-gray-900">Ref {parseFloat(selectedSaleDetail.total_usd).toFixed(2)}</span>
-                                        <span className="block text-xs text-gray-500 font-medium">Bs {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
-                                    </div>
-                                </div>
-
-                                <div className="bg-gray-50 p-3 rounded-xl text-xs text-gray-600 space-y-1">
-                                    <p><span className="font-bold">Método:</span> {selectedSaleDetail.payment_method}</p>
-                                    {selectedSaleDetail.taxBreakdown && selectedSaleDetail.taxBreakdown.ivaUSD > 0 && (
-                                        <p><span className="font-bold text-blue-600">Incluye IVA (16%):</span> Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</p>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* --- BOTÓN DE REIMPRESIÓN MEJORADO --- */}
-                        <div className="p-4 bg-white border-t border-gray-200">
-                            <button
-                                onClick={() => {
-                                    // Preparamos los datos del cliente. Si no hay datos (cliente casual), enviamos vacíos
-                                    // para que la función generateReceiptHTML use los valores por defecto ("CONSUMIDOR FINAL")
-                                    const tempCustomer = {
-                                        full_name: selectedSaleDetail.full_name || '', // Si es null, pasa string vacío
-                                        id_number: selectedSaleDetail.id_number || '',
-                                        institution: selectedSaleDetail.institution || '',
-                                        phone: selectedSaleDetail.phone || ''
-                                    };
-
-                                    // Llamamos a la nueva función con todos los parámetros
-                                    const html = generateReceiptHTML(
-                                        selectedSaleDetail.id,
-                                        tempCustomer,
-                                        selectedSaleDetail.items,
-                                        selectedSaleDetail.invoice_type, // 'FISCAL' o 'TICKET'
-                                        selectedSaleDetail.status,       // 'PAGADO', 'PENDIENTE', etc.
-                                        selectedSaleDetail.created_at,    // Fecha real de la venta
-                                        parseFloat(selectedSaleDetail.total_usd)
-                                    );
-
-                                    setReceiptPreview(html);
-                                }}
-                                className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-all active:scale-95"
-                            >
-                                <span className="text-xl">🖨️</span>
-                                {/* Cambiamos el texto dinámicamente para mejor UX */}
-                                {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Reimprimir Copia Fiscal' : 'Imprimir Ticket / Nota'}
-                            </button>
-                        </div>
-
+                        ))}
                     </div>
                 </div>
-            )}
+
+                {/* --- TOTALES Y PAGOS --- */}
+                <div className="p-5 bg-white border-t border-gray-200">
+                    <div className="flex justify-between items-end mb-4">
+                        <span className="text-sm font-bold text-gray-500">Total Pagado</span>
+                        <div className="text-right">
+                            <span className="block text-2xl font-black text-gray-900">Ref {parseFloat(selectedSaleDetail.total_usd).toFixed(2)}</span>
+                            <span className="block text-xs text-gray-500 font-medium">Bs {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
+                        </div>
+                    </div>
+
+                    <div className="bg-gray-50 p-3 rounded-xl text-xs text-gray-600 space-y-1">
+                        <p><span className="font-bold">Método:</span> {selectedSaleDetail.payment_method}</p>
+                        {selectedSaleDetail.taxBreakdown && selectedSaleDetail.taxBreakdown.ivaUSD > 0 && (
+                            <p><span className="font-bold text-blue-600">Incluye IVA (16%):</span> Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* --- PIE DE PÁGINA CON ACCIONES (IMPRIMIR + ANULAR) --- */}
+            {/* Se agregó 'flex flex-col gap-3' para apilar los botones limpiamente */}
+            <div className="p-4 bg-white border-t border-gray-200 flex flex-col gap-3">
+                
+                {/* 1. BOTÓN DE REIMPRESIÓN (EXISTENTE) */}
+                <button
+                    onClick={() => {
+                        const tempCustomer = {
+                            full_name: selectedSaleDetail.full_name || '',
+                            id_number: selectedSaleDetail.id_number || '',
+                            institution: selectedSaleDetail.institution || '',
+                            phone: selectedSaleDetail.phone || ''
+                        };
+
+                        const html = generateReceiptHTML(
+                            selectedSaleDetail.id,
+                            tempCustomer,
+                            selectedSaleDetail.items,
+                            selectedSaleDetail.invoice_type,
+                            selectedSaleDetail.status,
+                            selectedSaleDetail.created_at,
+                            parseFloat(selectedSaleDetail.total_usd)
+                        );
+
+                        setReceiptPreview(html);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-all active:scale-95"
+                >
+                    <span className="text-xl">🖨️</span>
+                    {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Reimprimir Copia Fiscal' : 'Imprimir Ticket / Nota'}
+                </button>
+
+                {/* 2. BOTÓN DE ANULACIÓN / NOTA DE CRÉDITO (NUEVO) */}
+                {selectedSaleDetail.status !== 'ANULADO' ? (
+                    <button
+                        onClick={() => handleVoidSale(selectedSaleDetail)}
+                        className="w-full flex items-center justify-center gap-2 bg-red-50 text-red-600 border border-red-100 font-bold py-3 rounded-xl hover:bg-red-600 hover:text-white transition-all active:scale-95"
+                    >
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {selectedSaleDetail.invoice_type === 'FISCAL' ? 'EMITIR NOTA DE CRÉDITO (REVERSO)' : 'ANULAR VENTA (DEVOLVER STOCK)'}
+                    </button>
+                ) : (
+                    // Indicador visual si ya está anulada
+                    <div className="w-full bg-gray-100 text-gray-500 font-bold py-3 rounded-xl text-center border border-gray-200 flex items-center justify-center gap-2">
+                        <span>🚫</span> ESTA VENTA FUE ANULADA
+                    </div>
+                )}
+            </div>
+
+        </div>
+    </div>
+)}
 
             {/* MODAL: STOCK COMPLETO (UX Mejorada) */}
             {showStockModal && (
@@ -4314,134 +4507,147 @@ function App() {
             )}
 
             {/* MODAL: VENTAS DE HOY DETALLADAS */}
-            {showDailySalesModal && (
-                <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-                    <div className="bg-white rounded-3xl w-full max-w-3xl h-[85vh] flex flex-col shadow-2xl animate-scale-up overflow-hidden">
-                        <div className="p-6 border-b flex justify-between items-center bg-blue-50">
-                            <div>
-                                <h3 className="font-black text-2xl text-higea-blue">Cierre de Caja - HOY</h3>
-                                <p className="text-sm text-blue-400 font-medium">{new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                            </div>
-                            <button onClick={() => setShowDailySalesModal(false)} className="bg-white w-10 h-10 rounded-full text-blue-500 font-bold shadow-sm hover:bg-blue-100 transition-colors">✕</button>
+{showDailySalesModal && (
+    <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+        <div className="bg-white rounded-3xl w-full max-w-3xl h-[85vh] flex flex-col shadow-2xl animate-scale-up overflow-hidden">
+            
+            {/* --- HEADER CON BOTÓN DE CUADRE --- */}
+            <div className="p-6 border-b flex justify-between items-center bg-blue-50">
+                <div>
+                    <h3 className="font-black text-2xl text-higea-blue">Cierre de Caja - HOY</h3>
+                    <p className="text-sm text-blue-400 font-medium">{new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                    {/* BOTÓN DE GESTIÓN DE CIERRE (NUEVO) */}
+                    <button 
+                        onClick={handleCashClose}
+                        className="bg-higea-blue hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-2 animate-pulse"
+                    >
+                        <span>📠</span> <span className="hidden sm:inline">Realizar Cuadre</span>
+                    </button>
+
+                    <button onClick={() => setShowDailySalesModal(false)} className="bg-white w-10 h-10 rounded-full text-blue-500 font-bold shadow-sm hover:bg-blue-100 transition-colors">✕</button>
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-0 bg-gray-50/50">
+                <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10 border-b border-gray-100">
+                        <tr>
+                            <th className="px-6 py-4 text-left">Hora</th>
+                            <th className="px-6 py-4 text-left">Cliente</th>
+                            <th className="px-6 py-4 text-left">Método Pago</th>
+                            <th className="px-6 py-4 text-right">Total Ref</th>
+                            <th className="px-6 py-4 text-center">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 bg-white">
+                        {dailySalesList.map(sale => (
+                            <tr
+                                key={sale.id}
+                                // ACCIÓN 1: Click en toda la fila abre el detalle
+                                onClick={() => showSaleDetail(sale)}
+                                className="hover:bg-blue-50/60 transition-colors group cursor-pointer"
+                            >
+                                {/* HORA (Fuente Mono para alineación perfecta) */}
+                                <td className="px-6 py-4 text-gray-500 font-mono text-xs whitespace-nowrap align-middle">
+                                    {new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+
+                                {/* CLIENTE */}
+                                <td className="px-6 py-4 align-middle">
+                                    <div className="flex flex-col">
+                                        <span className="font-bold text-gray-700 text-sm">{sale.full_name || 'Consumidor Final'}</span>
+                                        <span className="text-[10px] text-gray-400 font-medium">ID Venta: #{sale.id}</span>
+                                    </div>
+                                </td>
+
+                                {/* MÉTODO DE PAGO (Estilo Badge/Etiqueta Elegante) */}
+                                <td className="px-6 py-4 align-middle">
+                                    <div className="flex items-center">
+                                        <div className="max-w-[160px]" title={sale.payment_method}>
+                                            <p className="bg-gray-100 text-gray-600 border border-gray-200 px-3 py-1 rounded-full text-xs font-medium truncate w-full text-center">
+                                                {sale.payment_method}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </td>
+
+                                {/* TOTAL REF (Alineado a la derecha, tipografía fuerte) */}
+                                <td className="px-6 py-4 text-right align-middle">
+                                    <span className="font-black text-higea-blue text-base tracking-tight">
+                                        Ref {parseFloat(sale.total_usd).toFixed(2)}
+                                    </span>
+                                </td>
+
+                                {/* ACCIÓN (Botón Visual) */}
+                                <td className="px-6 py-4 text-center align-middle">
+                                    <button
+                                        // ACCIÓN 2: El botón también funciona (stopPropagation previene doble evento)
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            showSaleDetail(sale);
+                                        }}
+                                        className="p-2 text-gray-400 hover:text-higea-blue hover:bg-white bg-transparent rounded-full transition-all active:scale-95"
+                                        title="Ver Detalles Completos"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+
+                        {/* ESTADO VACÍO */}
+                        {dailySalesList.length === 0 && (
+                            <tr>
+                                <td colSpan="5" className="p-12 text-center text-gray-400 italic bg-gray-50/30">
+                                    <div className="flex flex-col items-center gap-2">
+                                        <span className="text-2xl">💤</span>
+                                        <span>No hay movimientos registrados hoy.</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Footer con Totales (CORREGIDO: MUESTRA FLUJO DE CAJA REAL Y FALLBACK PARA BS) */}
+            <div className="p-5 border-t bg-white flex flex-col md:flex-row justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20 gap-4">
+                <div className="text-xs font-bold text-gray-400 uppercase tracking-wide self-start md:self-center">
+                    Transacciones: <span className="text-gray-800 text-lg ml-1">{dailySalesList.length}</span>
+                </div>
+
+                <div className="flex flex-col items-end">
+                    <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado (Dinero en Mano)</p>
+
+                    <div className="flex items-end gap-4">
+                        {/* TOTAL EN BS (CALCULADO REAL CON FALLBACK) */}
+                        <div className="text-right">
+                            <span className="text-[10px] font-bold text-gray-400 block">EN BOLÍVARES</span>
+                            <span className="text-xl font-bold text-gray-600">
+                                {/* AQUÍ ESTÁ LA CORRECCIÓN: Si bcv_rate_snapshot es 0, usa bcvRate */}
+                                Bs {dailySalesList.reduce((acc, curr) => acc + (curr.amount_paid_usd * (curr.bcv_rate_snapshot || bcvRate)), 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
+                            </span>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-0 bg-gray-50/50">
-                            <table className="w-full text-sm text-left border-collapse">
-                                <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10 border-b border-gray-100">
-                                    <tr>
-                                        <th className="px-6 py-4 text-left">Hora</th>
-                                        <th className="px-6 py-4 text-left">Cliente</th>
-                                        <th className="px-6 py-4 text-left">Método Pago</th>
-                                        <th className="px-6 py-4 text-right">Total Ref</th>
-                                        <th className="px-6 py-4 text-center">Acción</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-50 bg-white">
-                                    {dailySalesList.map(sale => (
-                                        <tr
-                                            key={sale.id}
-                                            // ACCIÓN 1: Click en toda la fila abre el detalle
-                                            onClick={() => showSaleDetail(sale)}
-                                            className="hover:bg-blue-50/60 transition-colors group cursor-pointer"
-                                        >
-                                            {/* HORA (Fuente Mono para alineación perfecta) */}
-                                            <td className="px-6 py-4 text-gray-500 font-mono text-xs whitespace-nowrap align-middle">
-                                                {new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </td>
-
-                                            {/* CLIENTE */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <div className="flex flex-col">
-                                                    <span className="font-bold text-gray-700 text-sm">{sale.full_name || 'Consumidor Final'}</span>
-                                                    <span className="text-[10px] text-gray-400 font-medium">ID Venta: #{sale.id}</span>
-                                                </div>
-                                            </td>
-
-                                            {/* MÉTODO DE PAGO (Estilo Badge/Etiqueta Elegante) */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <div className="flex items-center">
-                                                    <div className="max-w-[160px]" title={sale.payment_method}>
-                                                        <p className="bg-gray-100 text-gray-600 border border-gray-200 px-3 py-1 rounded-full text-xs font-medium truncate w-full text-center">
-                                                            {sale.payment_method}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </td>
-
-                                            {/* TOTAL REF (Alineado a la derecha, tipografía fuerte) */}
-                                            <td className="px-6 py-4 text-right align-middle">
-                                                <span className="font-black text-higea-blue text-base tracking-tight">
-                                                    Ref {parseFloat(sale.total_usd).toFixed(2)}
-                                                </span>
-                                            </td>
-
-                                            {/* ACCIÓN (Botón Visual) */}
-                                            <td className="px-6 py-4 text-center align-middle">
-                                                <button
-                                                    // ACCIÓN 2: El botón también funciona (stopPropagation previene doble evento)
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        showSaleDetail(sale);
-                                                    }}
-                                                    className="p-2 text-gray-400 hover:text-higea-blue hover:bg-white bg-transparent rounded-full transition-all active:scale-95"
-                                                    title="Ver Detalles Completos"
-                                                >
-                                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                    </svg>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-
-                                    {/* ESTADO VACÍO */}
-                                    {dailySalesList.length === 0 && (
-                                        <tr>
-                                            <td colSpan="5" className="p-12 text-center text-gray-400 italic bg-gray-50/30">
-                                                <div className="flex flex-col items-center gap-2">
-                                                    <span className="text-2xl">💤</span>
-                                                    <span>No hay movimientos registrados hoy.</span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {/* Footer con Totales (CORREGIDO: MUESTRA FLUJO DE CAJA REAL Y FALLBACK PARA BS) */}
-                        <div className="p-5 border-t bg-white flex flex-col md:flex-row justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20 gap-4">
-                            <div className="text-xs font-bold text-gray-400 uppercase tracking-wide self-start md:self-center">
-                                Transacciones: <span className="text-gray-800 text-lg ml-1">{dailySalesList.length}</span>
-                            </div>
-
-                            <div className="flex flex-col items-end">
-                                <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado (Dinero en Mano)</p>
-
-                                <div className="flex items-end gap-4">
-                                    {/* TOTAL EN BS (CALCULADO REAL CON FALLBACK) */}
-                                    <div className="text-right">
-                                        <span className="text-[10px] font-bold text-gray-400 block">EN BOLÍVARES</span>
-                                        <span className="text-xl font-bold text-gray-600">
-                                            {/* AQUÍ ESTÁ LA CORRECCIÓN: Si bcv_rate_snapshot es 0, usa bcvRate */}
-                                            Bs {dailySalesList.reduce((acc, curr) => acc + (curr.amount_paid_usd * (curr.bcv_rate_snapshot || bcvRate)), 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
-                                        </span>
-                                    </div>
-
-                                    {/* TOTAL EN USD (CALCULADO REAL) */}
-                                    <div className="text-right border-l pl-4 border-gray-200">
-                                        <span className="text-[10px] font-bold text-higea-blue block">EN DÓLARES (REF)</span>
-                                        <span className="text-3xl font-black text-higea-blue leading-none">
-                                            Ref {dailySalesList.reduce((acc, curr) => acc + curr.amount_paid_usd, 0).toFixed(2)}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
+                        {/* TOTAL EN USD (CALCULADO REAL) */}
+                        <div className="text-right border-l pl-4 border-gray-200">
+                            <span className="text-[10px] font-bold text-higea-blue block">EN DÓLARES (REF)</span>
+                            <span className="text-3xl font-black text-higea-blue leading-none">
+                                Ref {dailySalesList.reduce((acc, curr) => acc + curr.amount_paid_usd, 0).toFixed(2)}
+                            </span>
                         </div>
                     </div>
                 </div>
-            )}
+            </div>
+        </div>
+    </div>
+)}
 
             {/* --- MODAL DE VISUALIZACIÓN PREVIA DE FACTURA (CENTRADO) --- */}
             {receiptPreview && (
