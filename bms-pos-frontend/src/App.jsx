@@ -397,12 +397,13 @@ function App() {
 
         } else {
             // --- C. MODO VENTAS DETALLADAS ---
-            orderedHeaders = ["Nro Factura", "Fecha", "Cliente", "Documento", "Estado", "Pago", "Total Ref", "Total Bs"];
+            orderedHeaders = ["Nro Factura", "Fecha", "Cliente", "Documento","Ítems Comprados", "Estado", "Pago", "Total Ref", "Total Bs"];
             rowMapper = (row) => ({
                 "Nro Factura": row.id || row.sale_id,
                 "Fecha": new Date(row.created_at).toLocaleString('es-VE'),
                 "Cliente": row.full_name || row.client_name || 'Consumidor Final',
                 "Documento": row.client_id || row.id_number || 'N/A',
+				"Ítems Comprados": row.items_comprados || 'Sin detalle',
                 "Estado": row.status,
                 "Pago": row.payment_method,
                 "Total Ref": parseFloat(row.total_usd).toFixed(2),

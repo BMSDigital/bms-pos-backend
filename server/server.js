@@ -673,7 +673,14 @@ app.get('/api/reports/sales-detail', async (req, res) => {
                 s.invoice_type, 
                 s.total_usd, 
                 s.total_ves,
-                s.bcv_rate_snapshot
+                s.bcv_rate_snapshot,
+                -- NUEVA COLUMNA MÁGICA: Concatena los productos en una sola celda
+                (
+                    SELECT STRING_AGG(CONCAT(p.name, ' (', si.quantity, ')'), ', ')
+                    FROM sale_items si
+                    JOIN products p ON si.product_id = p.id
+                    WHERE si.sale_id = s.id
+                ) as items_comprados
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
             WHERE s.created_at BETWEEN $1 AND $2 
