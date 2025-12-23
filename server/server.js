@@ -168,7 +168,8 @@ app.post('/api/products', async (req, res) => {
 
 // 4. PROCESAR VENTA
 app.post('/api/sales', async (req, res) => {
-    const { items, payment_method, customer_data, is_credit, due_days, invoice_type } = req.body;
+    // [CAMBIO 1] Agregamos 'customer_id' a la extracción de datos
+    const { items, payment_method, customer_data, customer_id, is_credit, due_days, invoice_type } = req.body;
     const client = await pool.connect();
     
     try {
@@ -200,21 +201,33 @@ app.post('/api/sales', async (req, res) => {
         // Si es contado, el pagado es igual al total. Si es crédito, 0 (por ahora).
         let amountPaidUsd = finalTotalUsd; 
         
-        // Permitir guardar cliente si es crédito O si es factura fiscal
-        if ((is_credit || invoice_type === 'FISCAL') && customer_data) {
-            customerId = await findOrCreateCustomer(client, customer_data);
+        // [CAMBIO 2] Lógica mejorada para determinar el Cliente
+        // Permitir procesar si es crédito O si es factura fiscal
+        if (is_credit || invoice_type === 'FISCAL') {
             
-            // CORRECCIÓN: Solo marcar PENDIENTE si es explícitamente crédito
-            if (is_credit) {
-                saleStatus = 'PENDIENTE';
-                amountPaidUsd = 0; 
-                const days = due_days === 30 ? 30 : 15;
-                dueDate = `CURRENT_TIMESTAMP + INTERVAL '${days} days'`;
-            } else {
-                // Si es Fiscal pero de Contado -> PAGADO
-                saleStatus = 'PAGADO';
-                amountPaidUsd = finalTotalUsd; // Se asume pagado completo
-                dueDate = null;
+            // ESCENARIO A: El frontend ya nos mandó el ID (porque lo buscó en el autocomplete)
+            if (customer_id) {
+                customerId = customer_id;
+            } 
+            // ESCENARIO B: Es un cliente nuevo o manual (usamos la data para buscarlo o crearlo)
+            else if (customer_data) {
+                customerId = await findOrCreateCustomer(client, customer_data);
+            }
+
+            // Solo aplicamos la lógica de deuda/fiscal si efectivamente tenemos un cliente
+            if (customerId) {
+                // CORRECCIÓN: Solo marcar PENDIENTE si es explícitamente crédito
+                if (is_credit) {
+                    saleStatus = 'PENDIENTE';
+                    amountPaidUsd = 0; 
+                    const days = due_days === 30 ? 30 : 15;
+                    dueDate = `CURRENT_TIMESTAMP + INTERVAL '${days} days'`;
+                } else {
+                    // Si es Fiscal pero de Contado -> PAGADO
+                    saleStatus = 'PAGADO';
+                    amountPaidUsd = finalTotalUsd; // Se asume pagado completo
+                    dueDate = null;
+                }
             }
         }
 
@@ -229,7 +242,7 @@ app.post('/api/sales', async (req, res) => {
         const saleValues = [
             finalTotalUsd.toFixed(2), totalVes.toFixed(2), globalBCVRate, payment_method, saleStatus, customerId,
             subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2),
-			invoice_type || 'TICKET'
+            invoice_type || 'TICKET'
         ];
         
         const saleResult = await client.query(saleQuery, saleValues);
@@ -491,14 +504,25 @@ app.post('/api/customers', async (req, res) => {
 app.get('/api/customers/search', async (req, res) => {
     const { query } = req.query; 
     if (!query) return res.status(400).json({ error: 'Parámetro query requerido.' });
-    const searchQuery = `%${query.toLowerCase()}%`; 
+    
+    // El % rodea el texto para buscar coincidencias parciales
+    const searchQuery = `%${query}%`; 
+    
     try {
+        // USO DE ILIKE: Ignora mayúsculas/minúsculas automáticamente
+        // Busca en Nombre, Cédula o Institución
         const result = await pool.query(
-            `SELECT id, full_name, id_number, phone, institution FROM customers WHERE (LOWER(id_number) LIKE $1 OR LOWER(full_name) LIKE $1) AND status = 'ACTIVO' ORDER BY full_name ASC LIMIT 10`,
+            `SELECT id, full_name, id_number, phone, institution, status 
+             FROM customers 
+             WHERE (full_name ILIKE $1 OR id_number ILIKE $1 OR institution ILIKE $1) 
+             AND status = 'ACTIVO' 
+             ORDER BY full_name ASC 
+             LIMIT 10`,
             [searchQuery]
         );
         res.json(result.rows);
     } catch (err) {
+        console.error('Error buscando clientes:', err);
         res.status(500).json({ error: 'Error al buscar cliente' });
     }
 });

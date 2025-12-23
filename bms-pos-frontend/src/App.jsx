@@ -123,6 +123,10 @@ function App() {
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [selectedCategory, setSelectedCategory] = useState('Todos');
+	
+	// --- ESTADOS NECESARIOS (Agrégalos junto a tus otros useState) ---
+    const [selectedCustomerId, setSelectedCustomerId] = useState(null);   // ID para enviar al backend
+	
 	// --- LÓGICA PARA CARRUSEL DE CATEGORÍAS UX ---
     const categoryScrollRef = useRef(null);
 
@@ -939,6 +943,7 @@ function App() {
         }
         setIsSearchingCustomer(true);
         try {
+            // Asegúrate que API_URL esté definido, si no usa 'http://localhost:3000/api'
             const res = await axios.get(`${API_URL}/customers/search?query=${query}`);
             setCustomerSearchResults(res.data);
         } catch (error) {
@@ -947,6 +952,24 @@ function App() {
         } finally {
             setIsSearchingCustomer(false);
         }
+    };
+
+    // 2. FUNCIÓN PARA SELECCIONAR CLIENTE (Esta es la nueva lógica UX)
+    // Se ejecuta cuando el usuario hace click en un nombre de la lista desplegable
+    const selectCustomer = (customer) => {
+        // A. Llenamos los campos visibles del formulario automáticamente
+        setCustomerData({
+            full_name: customer.full_name,
+            id_number: customer.id_number,
+            phone: customer.phone || '',
+            institution: customer.institution || ''
+        });
+
+        // B. GUARDAMOS EL ID (Esto es lo vital para que el Backend vincule el historial)
+        setSelectedCustomerId(customer.id);
+
+        // C. Limpiamos los resultados para cerrar la lista desplegable
+        setCustomerSearchResults([]);
     };
 
     // --- GENERADOR DE HTML DE RECIBO (CORREGIDO: TASA HISTÓRICA + NOMBRE COMPLETO) ---
@@ -1642,36 +1665,55 @@ function App() {
         // Detectamos si estamos aquí por crédito o solo por factura fiscal
         const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
 
+        // Usamos el debounce para no saturar el servidor mientras escribes
         const debouncedSearch = useCallback(
             debounce((query) => searchCustomers(query), 300),
             []
         );
 
+        // --- NUEVA FUNCIÓN: LIMPIAR FORMULARIO (UX MEJORADO) ---
+        const handleClear = () => {
+            setCustomerData({
+                full_name: '',
+                id_number: '',
+                phone: '',
+                institution: ''
+            });
+            setSelectedCustomerId(null);
+            setCustomerSearchResults([]);
+        };
+        // -------------------------------------------------------
+
+        // 1. MANEJO DEL INPUT DE NOMBRE (AQUÍ ESTÁ LA BÚSQUEDA NUEVA UX)
+        const handleNameChange = (e) => {
+            const value = capitalizeWords(e.target.value);
+            
+            // Actualizamos el dato visual
+            setCustomerData(prev => ({ ...prev, full_name: value }));
+            
+            // Disparamos la búsqueda si hay más de 2 letras
+            if (value.length > 2) {
+                debouncedSearch(value);
+            } else {
+                setCustomerSearchResults([]);
+            }
+
+            // IMPORTANTE: Si el usuario escribe manualmente, reseteamos el ID seleccionado
+            // para que el backend sepa que podría ser un cliente nuevo o modificado.
+            setSelectedCustomerId(null);
+        };
+
+        // 2. MANEJO DEL INPUT DE CÉDULA (Solo validación, ya no busca aquí para evitar conflicto)
         const handleIdChange = (e) => {
             const value = validateIdNumber(e.target.value);
-            setCustomerData(prev => ({
-                ...prev,
-                id_number: value,
-                full_name: customerSearchResults.find(c => c.id_number === value)?.full_name || prev.full_name,
-                institution: customerSearchResults.find(c => c.id_number === value)?.institution || prev.institution,
-            }));
-
-            if (value.length > 3) debouncedSearch(value);
-            else setCustomerSearchResults([]);
+            setCustomerData(prev => ({ ...prev, id_number: value }));
         };
 
-        const handleNameChange = (e) => {
-            setCustomerData(prev => ({ ...prev, full_name: capitalizeWords(e.target.value) }));
-        };
-
-        const handleSelectCustomer = (customer) => {
-            setCustomerData({
-                full_name: customer.full_name,
-                id_number: customer.id_number,
-                phone: customer.phone || '',
-                institution: customer.institution || '',
-            });
-            setCustomerSearchResults([]);
+        // 3. AL SELECCIONAR DE LA LISTA DESPLEGABLE
+        const handleListSelect = (customer) => {
+            // Llamamos a la función PRINCIPAL 'selectCustomer' que definimos arriba en App
+            // Esta función llena los campos Y guarda el 'selectedCustomerId' vital para el backend
+            selectCustomer(customer);
         };
 
         const handleChange = (e) => {
@@ -1706,8 +1748,21 @@ function App() {
         return (
             <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
-                    {/* HEADER DIFERENCIADO POR COLOR */}
-                    <div className={`p-5 text-white text-center ${isCreditUsed ? 'bg-higea-red' : 'bg-higea-blue'}`}>
+                    {/* HEADER DIFERENCIADO POR COLOR (CON POSICIÓN RELATIVA PARA EL BOTÓN) */}
+                    <div className={`p-5 text-white text-center relative ${isCreditUsed ? 'bg-higea-red' : 'bg-higea-blue'}`}>
+                        
+                        {/* --- BOTÓN NUEVO: LIMPIAR TODO (Esquina superior derecha) --- */}
+                        <button 
+                            onClick={handleClear}
+                            className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-full transition-all text-white shadow-sm"
+                            title="Limpiar Formulario"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                        {/* ----------------------------------------------------------- */}
+
                         <h3 className="text-xl font-bold">
                             {isCreditUsed ? 'Registro de Crédito' : 'Datos para Factura Fiscal'}
                         </h3>
@@ -1728,26 +1783,56 @@ function App() {
                             </div>
                         )}
 
+                        {/* INPUT NOMBRE (AHORA CON LA LÓGICA DE BÚSQUEDA AQUÍ) */}
                         <div className="relative">
-                            <input type="text" name="id_number" placeholder="Cédula/Rif (*)" onChange={handleIdChange} value={customerData.id_number}
-                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold"
-                                autoFocus={true}
+                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Razón Social / Nombre (*)</label>
+                            <input 
+                                type="text" 
+                                name="full_name" 
+                                placeholder="Escribe para buscar cliente..." 
+                                onChange={handleNameChange} 
+                                value={customerData.full_name} 
+                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-800"
+                                autoFocus={true} 
                             />
-                            {isSearchingCustomer && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>}
+                            
+                            {/* Spinner de carga dentro del input */}
+                            {isSearchingCustomer && <div className="absolute right-3 top-9 w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>}
 
+                            {/* DROPDOWN DE RESULTADOS (MOVIDO AQUÍ) */}
                             {customerSearchResults.length > 0 && (
-                                <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-lg z-10 max-h-40 overflow-y-auto">
+                                <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-xl z-50 max-h-48 overflow-y-auto">
                                     {customerSearchResults.map(customer => (
-                                        <div key={customer.id} onClick={() => handleSelectCustomer(customer)} className="p-3 border-b border-gray-100 hover:bg-blue-50 cursor-pointer">
-                                            <p className="font-bold text-gray-800">{customer.full_name}</p>
-                                            <p className="text-xs text-gray-500">{customer.id_number}</p>
+                                        <div 
+                                            key={customer.id} 
+                                            onClick={() => handleListSelect(customer)} 
+                                            className="p-3 border-b border-gray-50 hover:bg-blue-50 cursor-pointer flex justify-between items-center transition-colors"
+                                        >
+                                            <div className="flex flex-col">
+                                                <span className="font-bold text-gray-800 text-sm">{customer.full_name}</span>
+                                                <span className="text-xs text-gray-400">{customer.institution || 'Sin dirección'}</span>
+                                            </div>
+                                            <span className="text-xs font-mono font-bold text-higea-blue bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                                                {customer.id_number}
+                                            </span>
                                         </div>
                                     ))}
                                 </div>
                             )}
                         </div>
 
-                        <input type="text" name="full_name" placeholder="Razón Social / Nombre (*)" onChange={handleNameChange} value={customerData.full_name} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                        {/* INPUT CÉDULA (SIMPLE) */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Cédula / RIF (*)</label>
+                            <input 
+                                type="text" 
+                                name="id_number" 
+                                placeholder="V-12345678" 
+                                onChange={handleIdChange} 
+                                value={customerData.id_number}
+                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-mono text-gray-700 font-medium"
+                            />
+                        </div>
 
                         <div className="grid grid-cols-2 gap-4">
                             <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
@@ -1756,11 +1841,11 @@ function App() {
                     </div>
 
                     <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
-                        <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm">Volver</button>
+                        <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-50 rounded-xl transition-colors">Volver</button>
                         <button
                             onClick={handleConfirm}
                             disabled={!isFormReadyToSubmit}
-                            className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all ${!isFormReadyToSubmit ? 'bg-gray-300' : (isCreditUsed ? 'bg-higea-red hover:bg-red-700' : 'bg-higea-blue hover:bg-blue-700')}`}
+                            className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 ${!isFormReadyToSubmit ? 'bg-gray-300' : (isCreditUsed ? 'bg-higea-red hover:bg-red-700' : 'bg-higea-blue hover:bg-blue-700')}`}
                         >
                             {isCreditUsed ? 'Confirmar Crédito' : 'Guardar Datos Fiscales'}
                         </button>
