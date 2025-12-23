@@ -854,6 +854,147 @@ app.post('/api/sales/:id/void', async (req, res) => {
     }
 });
 
+// --- 🚀 NUEVO MÓDULO: GESTIÓN Y CIERRE DE CAJA ---
+
+// 1. Verificar si hay caja abierta / Abrir Caja
+app.post('/api/cash/open', async (req, res) => {
+    const { initial_cash_usd, initial_cash_ves } = req.body;
+    const client = await pool.connect();
+    try {
+        const checkOpen = await client.query("SELECT id FROM cash_shifts WHERE status = 'ABIERTA'");
+        if (checkOpen.rows.length > 0) {
+            return res.status(400).json({ error: 'Ya existe una caja abierta. Debe cerrarla primero.' });
+        }
+
+        const result = await client.query(`
+            INSERT INTO cash_shifts (initial_cash_usd, initial_cash_ves, status)
+            VALUES ($1, $2, 'ABIERTA') RETURNING *
+        `, [initial_cash_usd || 0, initial_cash_ves || 0]);
+        
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// 2. Obtener estado actual (Pre-Cierre)
+app.get('/api/cash/current-status', async (req, res) => {
+    try {
+        const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' LIMIT 1");
+        
+        // Si no hay caja abierta, avisamos al frontend
+        if (shiftRes.rows.length === 0) return res.json({ status: 'CERRADA' });
+
+        const shift = shiftRes.rows[0];
+
+        // Sumar ventas DESDE la fecha de apertura
+        // NOTA: Usamos lógica de texto para detectar métodos mixtos que guardaste como strings
+        const salesRes = await pool.query(`
+            SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
+            FROM sales 
+            WHERE created_at >= $1 AND status != 'ANULADO'
+        `, [shift.opened_at]);
+
+        let sys = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
+
+        salesRes.rows.forEach(row => {
+            const pm = row.payment_method.toUpperCase();
+            const paid = parseFloat(row.amount_paid_usd);
+            const rate = parseFloat(row.bcv_rate_snapshot);
+            
+            // Lógica simple de detección de texto en tus métodos de pago
+            if (pm.includes('EFECTIVO REF') || pm.includes('EFECTIVO USD')) sys.cash_usd += paid;
+            else if (pm.includes('EFECTIVO BS')) sys.cash_ves += (paid * rate);
+            else if (pm.includes('ZELLE')) sys.zelle += paid;
+            else if (pm.includes('PAGO MÓVIL') || pm.includes('PAGO MOVIL')) sys.pm += (paid * rate);
+            else if (pm.includes('PUNTO')) sys.punto += (paid * rate);
+            // Las donaciones o mixtos caerán aquí según lo que diga el string
+        });
+
+        res.json({
+            status: 'ABIERTA',
+            shift_info: shift,
+            system_totals: sys
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3. Cerrar Caja (Con Validación Estricta)
+app.post('/api/cash/close', async (req, res) => {
+    const { declared, notes } = req.body; 
+    // declared = { cash_usd, cash_ves, zelle, pm, punto }
+    
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Buscar caja abierta y bloquear fila
+        const shiftRes = await client.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' FOR UPDATE");
+        if (shiftRes.rows.length === 0) throw new Error('No hay caja abierta.');
+        const shift = shiftRes.rows[0];
+
+        // Recalcular sistema (Seguridad por si hubo venta milisegundos antes)
+        const salesRes = await client.query(`
+            SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
+            FROM sales WHERE created_at >= $1 AND status != 'ANULADO'
+        `, [shift.opened_at]);
+
+        let sys = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
+        salesRes.rows.forEach(row => {
+            const pm = row.payment_method.toUpperCase();
+            const paid = parseFloat(row.amount_paid_usd);
+            const rate = parseFloat(row.bcv_rate_snapshot);
+
+            if (pm.includes('EFECTIVO REF') || pm.includes('EFECTIVO USD')) sys.cash_usd += paid;
+            else if (pm.includes('EFECTIVO BS')) sys.cash_ves += (paid * rate);
+            else if (pm.includes('ZELLE')) sys.zelle += paid;
+            else if (pm.includes('PAGO MÓVIL') || pm.includes('PAGO MOVIL')) sys.pm += (paid * rate);
+            else if (pm.includes('PUNTO')) sys.punto += (paid * rate);
+        });
+
+        // Totales Esperados (Sistema + Fondo Inicial)
+        const expected_usd = parseFloat(shift.initial_cash_usd) + sys.cash_usd;
+        const expected_ves = parseFloat(shift.initial_cash_ves) + sys.cash_ves;
+
+        // Calcular Diferencias
+        const diff_usd = parseFloat(declared.cash_usd) - expected_usd;
+        const diff_ves = parseFloat(declared.cash_ves) - expected_ves;
+        
+        // VALIDACIÓN: Si la diferencia absoluta es mayor a 1 USD (tolerancia), rechazamos
+        // (Puedes quitar esto si prefieres permitir cierres con descuadre, pero pediste validación)
+        if (Math.abs(diff_usd) > 1.00 || Math.abs(diff_ves) > 40.00) { 
+            throw new Error(`⚠️ DESCUADRE FUERTE: Diferencia de Ref ${diff_usd.toFixed(2)} o Bs ${diff_ves.toFixed(2)}. Verifique conteo.`);
+        }
+
+        // Actualizar tabla
+        await client.query(`
+            UPDATE cash_shifts SET 
+                closed_at = CURRENT_TIMESTAMP, status = 'CERRADA',
+                system_cash_usd=$1, system_cash_ves=$2, system_zelle=$3, system_pago_movil=$4, system_punto=$5,
+                real_cash_usd=$6, real_cash_ves=$7, real_zelle=$8, real_pago_movil=$9, real_punto=$10,
+                diff_usd=$11, diff_ves=$12, notes=$13
+            WHERE id = $14
+        `, [
+            sys.cash_usd, sys.cash_ves, sys.zelle, sys.pm, sys.punto,
+            declared.cash_usd, declared.cash_ves, declared.zelle, declared.pm, declared.punto,
+            diff_usd, diff_ves, notes, shift.id
+        ]);
+
+        await client.query('COMMIT');
+        res.json({ success: true });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(400).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 // --- SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND (REACT) --- //
 // 1. Decirle a Express que busque en la carpeta dist (que se crea en el build)
 // Se asume la estructura: /bms-pos-backend/server (aquí estamos) y /bms-pos-backend/bms-pos-frontend
