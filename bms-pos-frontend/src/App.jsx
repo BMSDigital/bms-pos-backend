@@ -117,6 +117,9 @@ const EMOJI_OPTIONS = [
 ];
 
 function App() {
+	// ... otros estados ...
+	const [cashShift, setCashShift] = useState(null); // null = cargando, 'CERRADA' = no hay turno, Objeto = turno abierto
+	
     // --- ESTADOS PRINCIPALES ---
     const [view, setView] = useState('POS');
     const [products, setProducts] = useState([]);
@@ -258,9 +261,61 @@ function App() {
     const [salesSearch, setSalesSearch] = useState('');       // Exclusivo para Ventas
     const [inventorySearch, setInventorySearch] = useState(''); // Exclusivo para Inventario
     const [isSearchingSales, setIsSearchingSales] = useState(false); // Spinner local
+	
+	const promptOpenCash = async () => {
+        const { value: formValues } = await Swal.fire({
+            title: '☀️ Apertura de Caja',
+            html: `
+                <p class="mb-4 text-sm text-gray-500">Ingresa el fondo de maniobra inicial (Sencillo/Cambio).</p>
+                <div class="space-y-3">
+                    <input id="init-usd" type="number" step="0.01" class="swal2-input" placeholder="Fondo en Divisas ($)">
+                    <input id="init-ves" type="number" step="0.01" class="swal2-input" placeholder="Fondo en Bolívares (Bs)">
+                </div>
+            `,
+            allowOutsideClick: false, // OBLIGATORIO
+            confirmButtonText: 'Abrir Turno',
+            confirmButtonColor: '#0056B3',
+            preConfirm: () => {
+                return {
+                    usd: document.getElementById('init-usd').value,
+                    ves: document.getElementById('init-ves').value
+                }
+            }
+        });
+
+        if (formValues) {
+            try {
+                await axios.post(`${API_URL}/cash/open`, {
+                    initial_cash_usd: formValues.usd,
+                    initial_cash_ves: formValues.ves
+                });
+                Swal.fire('¡Caja Abierta!', 'Que tengas una excelente jornada.', 'success');
+                checkCashStatus(); // Recargar estado
+            } catch (err) {
+                Swal.fire('Error', err.response?.data?.error, 'error');
+            }
+        }
+    };
 
     // 1. Carga inicial de datos al montar el componente
-    useEffect(() => { fetchData(); }, []);
+    useEffect(() => {
+        checkCashStatus(); // <--- AGREGAR ESTO
+        fetchData();
+    }, []);
+
+    const checkCashStatus = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/cash/current-status`);
+            setCashShift(res.data); // Guardamos estado de la caja
+            
+            // SI ESTÁ CERRADA, FORZAR APERTURA (Opcional: Bloquear vista POS)
+            if (res.data.status === 'CERRADA') {
+                 promptOpenCash();
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    };
 
     // 2. Carga de clientes solo al cambiar a la vista CUSTOMERS
     useEffect(() => {
@@ -1887,122 +1942,166 @@ function App() {
         }
     };
 	
-	// --- NUEVO: GESTIÓN DE CIERRE DE CAJA (CUADRE) ---
-    const handleCashClose = () => {
-        // 1. Calcular totales esperados según el sistema
-        let systemTotals = {
-            efectivoRef: 0,
-            zelle: 0,
-            pagoMovil: 0,
-            puntoVenta: 0,
-            otros: 0
-        };
-
-        // Recorremos las ventas del día cargadas en dailySalesList
-        dailySalesList.forEach(sale => {
-            if (sale.status === 'ANULADO') return; // Ignorar anuladas
-
-            // Lógica simple de parsing para detectar métodos (adaptar si tu string es complejo)
-            const pm = sale.payment_method.toLowerCase();
-            const paidUsd = parseFloat(sale.amount_paid_usd);
-            const rate = parseFloat(sale.bcv_rate_snapshot) || bcvRate;
-            
-            // Convertimos todo a su moneda base estimada para el cuadre
-            if (pm.includes('efectivo ref')) systemTotals.efectivoRef += paidUsd;
-            else if (pm.includes('zelle')) systemTotals.zelle += paidUsd;
-            else if (pm.includes('pago móvil') || pm.includes('pago movil')) systemTotals.pagoMovil += (paidUsd * rate);
-            else if (pm.includes('punto')) systemTotals.puntoVenta += (paidUsd * rate);
-            else systemTotals.otros += paidUsd;
-        });
-
-        // 2. Mostrar Modal de Cuadre
-        Swal.fire({
-            title: '🔐 Cierre de Caja y Cuadre',
-            html: `
-                <div class="text-left space-y-4 font-sans">
-                    <p class="text-xs text-gray-400 text-center uppercase font-bold mb-4">Ingrese los montos reales (Cierre de Lote / Arqueo)</p>
-                    
-                    <div class="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                        <div class="flex justify-between text-xs font-bold text-blue-800 mb-1">
-                            <span>💳 Punto de Venta (Bs)</span>
-                            <span>Sistema: Bs ${systemTotals.puntoVenta.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
-                        </div>
-                        <input id="close-pos" type="number" step="0.01" class="w-full p-2 rounded-lg border border-blue-200 outline-none font-bold text-gray-700" placeholder="Monto Cierre de Lote">
-                    </div>
-
-                    <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
-                        <div class="flex justify-between text-xs font-bold text-gray-500 mb-1">
-                            <span>📱 Pago Móvil (Bs)</span>
-                            <span>Sistema: Bs ${systemTotals.pagoMovil.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
-                        </div>
-                        <input id="close-pm" type="number" step="0.01" class="w-full p-2 rounded-lg border border-gray-300 outline-none text-sm" placeholder="Monto Verificado">
-                    </div>
-
-                    <div class="bg-green-50 p-3 rounded-xl border border-green-100">
-                        <div class="flex justify-between text-xs font-bold text-green-700 mb-1">
-                            <span>💵 Efectivo (Ref)</span>
-                            <span>Sistema: $${systemTotals.efectivoRef.toFixed(2)}</span>
-                        </div>
-                        <input id="close-cash" type="number" step="0.01" class="w-full p-2 rounded-lg border border-green-200 outline-none font-bold text-gray-700" placeholder="Conteo de Billetes">
-                    </div>
-                </div>
-            `,
-            confirmButtonText: 'Calcular Diferencias',
-            confirmButtonColor: '#0056B3',
-            showCancelButton: true,
-            cancelButtonText: 'Cancelar',
-            preConfirm: () => {
-                return {
-                    realPos: parseFloat(document.getElementById('close-pos').value) || 0,
-                    realPm: parseFloat(document.getElementById('close-pm').value) || 0,
-                    realCash: parseFloat(document.getElementById('close-cash').value) || 0,
-                    systemTotals
-                };
-            }
-        }).then((result) => {
-            if (result.isConfirmed) {
-                const { realPos, realPm, realCash, systemTotals } = result.value;
-                
-                // Calcular Diferencias
-                const diffPos = realPos - systemTotals.puntoVenta;
-                const diffPm = realPm - systemTotals.pagoMovil;
-                const diffCash = realCash - systemTotals.efectivoRef;
-
-                // Generar reporte de diferencias
-                Swal.fire({
-                    title: '📊 Resultados del Cuadre',
-                    html: `
-                        <div class="space-y-3 text-sm">
-                            <div class="flex justify-between items-center border-b pb-2">
-                                <span>💳 Punto de Venta</span>
-                                <span class="font-bold ${Math.abs(diffPos) < 1 ? 'text-green-600' : 'text-red-600'}">
-                                    ${diffPos >= 0 ? '+' : ''}${diffPos.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
-                                </span>
-                            </div>
-                            <div class="flex justify-between items-center border-b pb-2">
-                                <span>📱 Pago Móvil</span>
-                                <span class="font-bold ${Math.abs(diffPm) < 1 ? 'text-green-600' : 'text-red-600'}">
-                                    ${diffPm >= 0 ? '+' : ''}${diffPm.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
-                                </span>
-                            </div>
-                            <div class="flex justify-between items-center border-b pb-2">
-                                <span>💵 Efectivo Divisa</span>
-                                <span class="font-bold ${Math.abs(diffCash) < 0.1 ? 'text-green-600' : 'text-red-600'}">
-                                    ${diffCash >= 0 ? '+' : ''}${diffCash.toFixed(2)} Ref
-                                </span>
-                            </div>
-                            <p class="text-xs text-gray-400 mt-4 text-center">
-                                ${Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1 
-                                    ? '✅ ¡Caja Cuadrada Perfectamente!' 
-                                    : '⚠️ Existen diferencias. Verifique reportes o realice ajuste.'}
-                            </p>
-                        </div>
-                    `,
-                    icon: (Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1) ? 'success' : 'warning'
-                });
-            }
-        });
+	const handleCashClose = () => {
+    // 1. Calcular totales esperados según el sistema (MANTENIDO DE TU CÓDIGO)
+    let systemTotals = {
+        efectivoRef: 0,
+        zelle: 0,
+        pagoMovil: 0,
+        puntoVenta: 0,
+        otros: 0
     };
+
+    // Recorremos las ventas del día cargadas en dailySalesList
+    dailySalesList.forEach(sale => {
+        if (sale.status === 'ANULADO') return; // Ignorar anuladas
+
+        // Lógica simple de parsing para detectar métodos
+        const pm = sale.payment_method.toLowerCase();
+        const paidUsd = parseFloat(sale.amount_paid_usd);
+        const rate = parseFloat(sale.bcv_rate_snapshot) || bcvRate;
+        
+        // Convertimos todo a su moneda base estimada para el cuadre
+        if (pm.includes('efectivo ref')) systemTotals.efectivoRef += paidUsd;
+        else if (pm.includes('zelle')) systemTotals.zelle += paidUsd;
+        else if (pm.includes('pago móvil') || pm.includes('pago movil')) systemTotals.pagoMovil += (paidUsd * rate);
+        else if (pm.includes('punto')) systemTotals.puntoVenta += (paidUsd * rate);
+        else systemTotals.otros += paidUsd;
+    });
+
+    // 2. Mostrar Modal de Cuadre (TU HTML + Campo Notas Opcional)
+    Swal.fire({
+        title: '🔐 Cierre de Caja y Cuadre',
+        html: `
+            <div class="text-left space-y-4 font-sans">
+                <p class="text-xs text-gray-400 text-center uppercase font-bold mb-4">Ingrese los montos reales (Cierre de Lote / Arqueo)</p>
+                
+                <div class="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                    <div class="flex justify-between text-xs font-bold text-blue-800 mb-1">
+                        <span>💳 Punto de Venta (Bs)</span>
+                        <span>Sistema: Bs ${systemTotals.puntoVenta.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
+                    </div>
+                    <input id="close-pos" type="number" step="0.01" class="w-full p-2 rounded-lg border border-blue-200 outline-none font-bold text-gray-700" placeholder="Monto Cierre de Lote">
+                </div>
+
+                <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
+                    <div class="flex justify-between text-xs font-bold text-gray-500 mb-1">
+                        <span>📱 Pago Móvil (Bs)</span>
+                        <span>Sistema: Bs ${systemTotals.pagoMovil.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
+                    </div>
+                    <input id="close-pm" type="number" step="0.01" class="w-full p-2 rounded-lg border border-gray-300 outline-none text-sm" placeholder="Monto Verificado">
+                </div>
+
+                <div class="bg-green-50 p-3 rounded-xl border border-green-100">
+                    <div class="flex justify-between text-xs font-bold text-green-700 mb-1">
+                        <span>💵 Efectivo (Ref)</span>
+                        <span>Sistema: $${systemTotals.efectivoRef.toFixed(2)}</span>
+                    </div>
+                    <input id="close-cash" type="number" step="0.01" class="w-full p-2 rounded-lg border border-green-200 outline-none font-bold text-gray-700" placeholder="Conteo de Billetes">
+                </div>
+
+                <textarea id="close-notes" class="w-full mt-2 p-2 border border-gray-200 rounded-lg text-xs outline-none" placeholder="Observaciones / Justificación de diferencias (Opcional)"></textarea>
+            </div>
+        `,
+        confirmButtonText: 'Calcular Diferencias',
+        confirmButtonColor: '#0056B3',
+        showCancelButton: true,
+        cancelButtonText: 'Cancelar',
+        preConfirm: () => {
+            return {
+                realPos: parseFloat(document.getElementById('close-pos').value) || 0,
+                realPm: parseFloat(document.getElementById('close-pm').value) || 0,
+                realCash: parseFloat(document.getElementById('close-cash').value) || 0,
+                notes: document.getElementById('close-notes').value, // Capturamos notas
+                systemTotals
+            };
+        }
+    }).then((result) => {
+        if (result.isConfirmed) {
+            const { realPos, realPm, realCash, notes, systemTotals } = result.value;
+            
+            // Calcular Diferencias (TU LÓGICA)
+            const diffPos = realPos - systemTotals.puntoVenta;
+            const diffPm = realPm - systemTotals.pagoMovil;
+            const diffCash = realCash - systemTotals.efectivoRef;
+
+            // Generar reporte de diferencias (TU HTML + BOTÓN DE GUARDAR)
+            Swal.fire({
+                title: '📊 Resultados del Cuadre',
+                html: `
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <span>💳 Punto de Venta</span>
+                            <span class="font-bold ${Math.abs(diffPos) < 1 ? 'text-green-600' : 'text-red-600'}">
+                                ${diffPos >= 0 ? '+' : ''}${diffPos.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
+                            </span>
+                        </div>
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <span>📱 Pago Móvil</span>
+                            <span class="font-bold ${Math.abs(diffPm) < 1 ? 'text-green-600' : 'text-red-600'}">
+                                ${diffPm >= 0 ? '+' : ''}${diffPm.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
+                            </span>
+                        </div>
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <span>💵 Efectivo Divisa</span>
+                            <span class="font-bold ${Math.abs(diffCash) < 0.1 ? 'text-green-600' : 'text-red-600'}">
+                                ${diffCash >= 0 ? '+' : ''}${diffCash.toFixed(2)} Ref
+                            </span>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-4 text-center">
+                            ${Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1 
+                                ? '✅ ¡Caja Cuadrada Perfectamente!' 
+                                : '⚠️ Existen diferencias. Al confirmar se guardará este estado.'}
+                        </p>
+                    </div>
+                `,
+                icon: (Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1) ? 'success' : 'warning',
+                
+                // --- AQUÍ ESTÁ LA INTEGRACIÓN DEL PUNTO D ---
+                showCancelButton: true,
+                confirmButtonText: '🔐 Confirmar y Cerrar Caja', // Botón de acción real
+                cancelButtonText: 'Revisar / Corregir',
+                confirmButtonColor: (Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1) ? '#10B981' : '#E11D2B'
+            }).then(async (finalResult) => {
+                if (finalResult.isConfirmed) {
+                    try {
+                        Swal.fire({ title: 'Guardando Cierre...', didOpen: () => Swal.showLoading() });
+
+                        // Preparamos los datos para el Backend (Adaptando tus inputs al Schema)
+                        const closePayload = {
+                            declared: {
+                                cash_usd: realCash,
+                                cash_ves: 0, // Asumimos 0 ya que no lo pides en tu UI
+                                zelle: systemTotals.zelle, // Asumimos que Zelle cuadra perfecto (o puedes agregar input)
+                                pm: realPm,
+                                punto: realPos
+                            },
+                            notes: notes || "Cierre realizado desde App"
+                        };
+
+                        // LLAMADA AL BACKEND
+                        await axios.post(`${API_URL}/cash/close`, closePayload);
+
+                        Swal.fire({
+                            icon: 'success',
+                            title: '¡Cierre Registrado!',
+                            text: 'La jornada ha sido cerrada exitosamente en la base de datos.',
+                            timer: 3000
+                        });
+                        
+                        // Opcional: Si tienes la función de actualizar estado, llámala aquí
+                        // checkCashStatus();
+
+                    } catch (error) {
+                        console.error(error);
+                        // Mensaje de error (Ej: Descuadre muy grande si activaste esa validación)
+                        Swal.fire('Error', error.response?.data?.error || 'No se pudo guardar el cierre', 'error');
+                    }
+                }
+            });
+        }
+    });
+};
 	
 	// --- NUEVO: FUNCIÓN PARA ANULAR VENTA (NOTA DE CRÉDITO) ---
     const handleVoidSale = async (sale) => {
