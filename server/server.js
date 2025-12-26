@@ -964,13 +964,13 @@ app.post('/api/cash/close', async (req, res) => {
         const diff_usd = parseFloat(declared.cash_usd) - expected_usd;
         const diff_ves = parseFloat(declared.cash_ves) - expected_ves;
         
-        // VALIDACIÓN: Si la diferencia absoluta es mayor a 1 USD (tolerancia), rechazamos
-        // (Puedes quitar esto si prefieres permitir cierres con descuadre, pero pediste validación)
-        if (Math.abs(diff_usd) > 1.00 || Math.abs(diff_ves) > 40.00) { 
-            throw new Error(`⚠️ DESCUADRE FUERTE: Diferencia de Ref ${diff_usd.toFixed(2)} o Bs ${diff_ves.toFixed(2)}. Verifique conteo.`);
-        }
+        // --- 🛑 SECCIÓN DE VALIDACIÓN (DESACTIVADA PARA PERMITIR CIERRE CON FALTANTE) ---
+        // if (Math.abs(diff_usd) > 1.00 || Math.abs(diff_ves) > 40.00) { 
+        //     throw new Error(`⚠️ DESCUADRE FUERTE: Diferencia de Ref ${diff_usd.toFixed(2)} o Bs ${diff_ves.toFixed(2)}. Verifique conteo.`);
+        // }
+        // ---------------------------------------------------------------------------------
 
-        // Actualizar tabla
+        // Actualizar tabla (SE EJECUTA SIEMPRE, AUNQUE HAYA DESCUADRE)
         await client.query(`
             UPDATE cash_shifts SET 
                 closed_at = CURRENT_TIMESTAMP, status = 'CERRADA',
