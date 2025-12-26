@@ -844,18 +844,26 @@ const promptOpenCash = async () => {
             setStats(statsRes.data);
             
             const recentRes = await axios.get(`${API_URL}/reports/recent-sales`);
-            setRecentSales(Array.isArray(recentRes.data) ? recentRes.data : []); // Protección
+            setRecentSales(Array.isArray(recentRes.data) ? recentRes.data : []); 
             
             const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
-            setLowStock(Array.isArray(stockRes.data) ? stockRes.data : []); // Protección
+            setLowStock(Array.isArray(stockRes.data) ? stockRes.data : []); 
 
             // ===========================================================================
-            // --- CORRECCIÓN CRÍTICA AQUÍ: URL CORRECTA (/reports/sales-today) ---
+            // --- CORRECCIÓN CRÍTICA: CONVERSIÓN NUMÉRICA DE VENTAS ---
             // ===========================================================================
-            const salesRes = await axios.get(`${API_URL}/reports/sales-today`); // <--- CAMBIO AQUÍ
+            const salesRes = await axios.get(`${API_URL}/reports/sales-today`);
             
-            // PROTECCIÓN: Si salesRes.data no es un array, usamos [] para evitar el crash
-            const sales = Array.isArray(salesRes.data) ? salesRes.data : [];
+            const rawSales = Array.isArray(salesRes.data) ? salesRes.data : [];
+            
+            // 💡 IMPORTANTE: Convertimos todo a números AQUÍ para evitar el error .toFixed
+            const sales = rawSales.map(sale => ({
+                ...sale,
+                total_usd: parseFloat(sale.total_usd) || 0,
+                amount_paid_usd: parseFloat(sale.amount_paid_usd) || 0,
+                bcv_rate_snapshot: parseFloat(sale.bcv_rate_snapshot) || 0,
+                total_ves: parseFloat(sale.total_ves) || 0
+            }));
             
             setDailySalesList(sales); 
 
@@ -865,7 +873,8 @@ const promptOpenCash = async () => {
             
             sales.forEach(sale => {
                 if (sale.status !== 'ANULADO') {
-                    totalRef += parseFloat(sale.total_usd || 0); // Ojo: backend manda total_usd, no total_amount_usd a veces
+                    // Ahora sale.total_usd es un número, así que suma correctamente
+                    totalRef += sale.amount_paid_usd; 
                     count++;
                 }
             });
@@ -873,11 +882,11 @@ const promptOpenCash = async () => {
             // Actualizamos la tarjeta de "Ventas Hoy"
             setStats(prev => ({
                 ...prev,
-                total_usd: totalRef // Sobrescribimos con el cálculo filtrado real
+                total_usd: totalRef
             }));
             // ===========================================================================
 
-            // 4. Créditos (AHORA SÍ SE EJECUTARÁ ESTA PARTE)
+            // 4. Créditos (AHORA SÍ SE EJECUTARÁ ESTA PARTE SIN ERRORES)
             const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
             const creditsData = Array.isArray(creditsRes.data) ? creditsRes.data : []; 
             setPendingCredits(creditsData);
@@ -888,10 +897,11 @@ const promptOpenCash = async () => {
             const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
             setGroupedCredits(Array.isArray(groupedRes.data) ? groupedRes.data : []); 
 
-            // 5. Analíticas (con manejo de error suave)
+            // 5. Analíticas / Top Deudores
             try {
                 const analyticsRes = await axios.get(`${API_URL}/reports/analytics`);
-                setTopDebtors(analyticsRes.data.topDebtors || []);
+                // Aquí es donde se llenan los "Top Deudores" del Dashboard
+                setTopDebtors(analyticsRes.data.topDebtors || []); 
                 setAnalyticsData(analyticsRes.data);
             } catch (analyticsError) {
                 console.warn("Analytics endpoint not ready yet", analyticsError);
@@ -900,7 +910,6 @@ const promptOpenCash = async () => {
             setLoading(false);
         } catch (error) {
             console.error("Error fetching data:", error);
-            // IMPORTANTE: En caso de error general, inicializar listas vacías para que la UI no rompa
             if (!dailySalesList) setDailySalesList([]);
             setLoading(false);
         }
@@ -2074,7 +2083,7 @@ const promptOpenCash = async () => {
 
         // 2. MODAL INTERACTIVO CON CÁLCULO EN VIVO
         await Swal.fire({
-            title: '<h2 class="text-2xl font-black text-gray-800">📠 Arqueo General de Caja</h2>',
+            title: '<h2 class="text-2xl font-black text-gray-800">📠 Resumen General de Caja</h2>',
             width: '900px', // Más ancho para visualizar todo cómodamente
             html: `
                 <div class="text-left font-sans mb-4 space-y-6">
@@ -2650,90 +2659,183 @@ const handleVoidSale = async (sale) => {
     }
 };
 
-const printClosingReport = (shift) => {
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.width;
+// --- FUNCIÓN REPORTE PDF (UX DETALLADA: BASE + VENTAS) ---
+    const printClosingReport = (shift) => {
+        const doc = new jsPDF();
+        const pageWidth = doc.internal.pageSize.width;
+        const pageHeight = doc.internal.pageSize.height;
 
-    // Encabezado
-    doc.setFillColor(0, 86, 179); // Azul Higea
-    doc.rect(0, 0, pageWidth, 20, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text("REPORTE DE CIERRE DE CAJA", 14, 13);
+        // --- PALETA DE COLORES ---
+        const colors = {
+            header: [0, 86, 179],     // Azul Higea
+            textHeader: [255, 255, 255], 
+            textDark: [0, 0, 0],      // Negro Puro
+            textGray: [80, 80, 80],   // Gris Oscuro
+            success: [22, 163, 74],   // Verde
+            danger: [220, 38, 38],    // Rojo
+            bgTable: [241, 245, 249], // Fondo gris claro
+            line: [226, 232, 240]     // Líneas
+        };
 
-    // Info General
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(10);
-    doc.text(`ID Cierre: #${shift.id}`, 14, 30);
-    doc.text(`Estado: ${shift.status}`, 14, 36);
-    doc.text(`Apertura: ${new Date(shift.opened_at).toLocaleString()}`, 14, 42);
-    doc.text(`Cierre: ${shift.closed_at ? new Date(shift.closed_at).toLocaleString() : 'EN CURSO'}`, 14, 48);
+        // 1. ENCABEZADO
+        doc.setFillColor(...colors.header);
+        doc.rect(0, 0, pageWidth, 26, 'F'); 
 
-    // Tabla de Totales (Diseño manual simple y limpio)
-    let y = 60;
+        doc.setFontSize(18);
+        doc.setTextColor(...colors.textHeader);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Resumen de Caja", 14, 16);
 
-    const drawRow = (label, sistema, real, diff, isHeader = false) => {
-        if (isHeader) {
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`ID #${shift.id}  •  ${new Date(shift.opened_at).toLocaleDateString('es-VE')} - ${new Date().toLocaleTimeString('es-VE')}`, 14, 22);
+
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        const statusText = shift.status === 'ABIERTA' ? "CAJA ABIERTA" : "CAJA CERRADA";
+        doc.text(statusText, pageWidth - 14, 16, { align: 'right' });
+
+        // --- NUEVO: DETALLE DEL FONDO DE CAJA (Base) ---
+        // Esto explica por qué hay dinero aunque no haya ventas
+        doc.setFontSize(9);
+        doc.setTextColor(255, 255, 255); // Texto blanco sobre azul
+        const baseUsd = parseFloat(shift.initial_cash_usd || 0);
+        const baseVes = parseFloat(shift.initial_cash_ves || 0);
+        doc.text(`Fondo Inicial (Base): Ref ${baseUsd.toFixed(2)} / Bs ${baseVes.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, pageWidth - 14, 22, { align: 'right' });
+
+
+        // 2. TABLA DE ARQUEO
+        let y = 45;
+
+        // Encabezados
+        doc.setFillColor(...colors.bgTable);
+        doc.rect(14, y - 6, pageWidth - 28, 10, 'F');
+        
+        doc.setFontSize(9);
+        doc.setTextColor(...colors.textDark);
+        doc.setFont('helvetica', 'bold');
+        
+        const col = { name: 18, sys: 85, real: 135, diff: 190 };
+        
+        doc.text("MÉTODO DE PAGO", col.name, y);
+        doc.text("SISTEMA (Base + Venta)", col.sys, y, { align: 'right' }); // Título más claro
+        doc.text("CONTEO REAL", col.real, y, { align: 'right' });
+        doc.text("DIFERENCIA", col.diff, y, { align: 'right' });
+
+        y += 12;
+
+        // Función Helper para filas
+        const drawStackedRow = (label, sysUsd, sysVes, realUsd, realVes) => {
+            const sUsd = parseFloat(sysUsd || 0);
+            const sVes = parseFloat(sysVes || 0);
+            const rUsd = parseFloat(realUsd || 0);
+            const rVes = parseFloat(realVes || 0);
+            
+            // Calculamos diferencia visual
+            const diffUsd = rUsd - sUsd;
+            const diffVes = rVes - sVes;
+            
+            // Ocultar fila solo si TODO es 0 absoluto
+            if (sUsd === 0 && sVes === 0 && rUsd === 0 && rVes === 0) return;
+
+            // Etiqueta
             doc.setFont('helvetica', 'bold');
-            doc.setFillColor(240, 240, 240);
-            doc.rect(14, y - 5, 180, 8, 'F');
-        } else {
+            doc.setFontSize(10);
+            doc.setTextColor(...colors.textDark);
+            doc.text(label, col.name, y + 2);
+
+            // Fuente igualada (9 pts)
+            const fontSizeVal = 9;
+            const lineHeight = 4.5;
+
+            // --- COLUMNA SISTEMA ---
+            doc.setFontSize(fontSizeVal);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...colors.textDark);
+            doc.text(`Bs ${sVes.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, col.sys, y, { align: 'right' });
+            
             doc.setFont('helvetica', 'normal');
-        }
+            doc.setTextColor(...colors.textGray);
+            doc.text(`Ref ${sUsd.toFixed(2)}`, col.sys, y + lineHeight, { align: 'right' });
 
-        doc.text(label, 16, y);
-        doc.text(sistema, 80, y, { align: 'right' });
-        doc.text(real, 130, y, { align: 'right' });
+            // --- COLUMNA REAL ---
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...colors.textDark);
+            doc.text(`Bs ${rVes.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, col.real, y, { align: 'right' });
+            
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...colors.textGray);
+            doc.text(`Ref ${rUsd.toFixed(2)}`, col.real, y + lineHeight, { align: 'right' });
 
-        // Color para la diferencia
-        if (!isHeader) {
-            const diffVal = parseFloat(diff.replace(/[^0-9.-]+/g,""));
-            if (diffVal !== 0) doc.setTextColor(220, 53, 69); // Rojo
-            else doc.setTextColor(40, 167, 69); // Verde
-        }
-        doc.text(diff, 180, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0); // Reset color
-        y += 10;
+            // --- COLUMNA DIFERENCIA ---
+            doc.setFont('helvetica', 'bold');
+            
+            // Diferencia Bs
+            if (Math.abs(diffVes) < 1) {
+                doc.setTextColor(...colors.success);
+                doc.text("OK", col.diff, y, { align: 'right' });
+            } else {
+                doc.setTextColor(...colors.danger);
+                const sign = diffVes > 0 ? '+' : '';
+                doc.text(`${sign}Bs ${diffVes.toLocaleString('es-VE', {minimumFractionDigits: 2})}`, col.diff, y, { align: 'right' });
+            }
+
+            // Diferencia Ref
+            if (Math.abs(diffUsd) < 0.1) {
+                doc.setTextColor(...colors.success);
+                doc.text("OK", col.diff, y + lineHeight, { align: 'right' });
+            } else {
+                doc.setTextColor(...colors.danger);
+                const sign = diffUsd > 0 ? '+' : '';
+                doc.text(`${sign}Ref ${diffUsd.toFixed(2)}`, col.diff, y + lineHeight, { align: 'right' });
+            }
+
+            // Línea
+            doc.setDrawColor(...colors.line);
+            doc.line(14, y + 9, pageWidth - 14, y + 9);
+            
+            y += 16;
+        };
+
+        // --- FILAS DE DATOS ---
+        // 1. EFECTIVO: Aquí sumamos la BASE al SISTEMA para que cuadre con el conteo total
+        //    (Base Inicial + Ventas Sistema) vs (Conteo Total)
+        drawStackedRow(
+            "Efectivo (Gaveta)", 
+            parseFloat(shift.system_cash_usd || 0) + parseFloat(shift.initial_cash_usd || 0), 
+            parseFloat(shift.system_cash_ves || 0) + parseFloat(shift.initial_cash_ves || 0), 
+            shift.real_cash_usd, 
+            shift.real_cash_ves
+        );
+
+        // Los demás métodos no tienen base inicial, se pasan directo
+        drawStackedRow("Zelle", shift.system_zelle, 0, shift.real_zelle, 0);
+        drawStackedRow("Pago Móvil", 0, shift.system_pago_movil, 0, shift.real_pago_movil);
+        drawStackedRow("Punto de Venta", 0, shift.system_punto, 0, shift.real_punto);
+
+        // 3. OBSERVACIONES
+        y += 5;
+        doc.setFillColor(...colors.bgTable);
+        doc.roundedRect(14, y, pageWidth - 28, 20, 2, 2, 'F');
+        
+        doc.setFontSize(9);
+        doc.setTextColor(...colors.textDark);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Observaciones:", 16, y + 6);
+        
+        doc.setFont('helvetica', 'normal');
+        const notes = shift.notes || "Sin observaciones registradas.";
+        const splitNotes = doc.splitTextToSize(notes, pageWidth - 40);
+        doc.text(splitNotes, 16, y + 11);
+
+        // 4. PIE DE PÁGINA
+        doc.setFontSize(8);
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Reporte generado automáticamente por Higea POS", 14, pageHeight - 10);
+
+        doc.save(`Resumen_Caja_${shift.id}.pdf`);
     };
-
-    drawRow("CONCEPTO", "SISTEMA", "REAL (ARQUEO)", "DIFERENCIA", true);
-
-    // Filas de datos
-    drawRow("Efectivo USD", 
-        `$${parseFloat(shift.system_cash_usd || 0).toFixed(2)}`, 
-        `$${parseFloat(shift.real_cash_usd || 0).toFixed(2)}`, 
-        `$${parseFloat(shift.diff_usd || 0).toFixed(2)}`
-    );
-
-    drawRow("Zelle", 
-        `$${parseFloat(shift.system_zelle || 0).toFixed(2)}`, 
-        `$${parseFloat(shift.real_zelle || 0).toFixed(2)}`, 
-        `$${(parseFloat(shift.real_zelle || 0) - parseFloat(shift.system_zelle || 0)).toFixed(2)}`
-    );
-
-    // Agregar Bolívares si es necesario
-    drawRow("Efectivo Bs", 
-        `Bs ${parseFloat(shift.system_cash_ves || 0).toFixed(2)}`, 
-        `Bs ${parseFloat(shift.real_cash_ves || 0).toFixed(2)}`, 
-        `Bs ${parseFloat(shift.diff_ves || 0).toFixed(2)}`
-    );
-
-    // Notas
-    y += 10;
-    doc.setFont('helvetica', 'bold');
-    doc.text("Observaciones / Notas:", 14, y);
-    doc.setFont('helvetica', 'normal');
-    const splitNotes = doc.splitTextToSize(shift.notes || "Sin observaciones.", 180);
-    doc.text(splitNotes, 14, y + 6);
-
-    // Pie de página
-    doc.setFontSize(8);
-    doc.setTextColor(150);
-    doc.text("Generado por Sistema Higea POS", 14, 280);
-
-    doc.save(`Cierre_Caja_${shift.id}.pdf`);
-};
 
     return (
         <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
@@ -4451,73 +4553,98 @@ const printClosingReport = (shift) => {
                         </div>
                     )}
 
-                    {/* PESTAÑA 4: CIERRES (NUEVO) */}
-                    {reportTab === 'CLOSINGS' && (
-                        <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
-                            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                                <div>
-                                    <h3 className="font-bold text-slate-800 text-lg">Historial de Cierres de Caja</h3>
-                                    <p className="text-xs text-slate-500">Registro inmutable de arqueos</p>
-                                </div>
-                                <button onClick={fetchClosingsHistory} className="text-higea-blue hover:underline text-sm font-bold flex items-center gap-1">
-                                    <span>🔄</span> Actualizar Lista
-                                </button>
-                            </div>
+{/* PESTAÑA 4: CIERRES (VENEZUELA: BS PREDOMINANTE) */}
+{reportTab === 'CLOSINGS' && (
+    <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <div>
+                <h3 className="font-bold text-slate-800 text-lg">Historial de Cierres de Caja</h3>
+                <p className="text-xs text-slate-500">Registro inmutable de arqueos (Multimoneda)</p>
+            </div>
+            <button onClick={fetchClosingsHistory} className="text-higea-blue hover:underline text-sm font-bold flex items-center gap-1">
+                <span>🔄</span> Actualizar Lista
+            </button>
+        </div>
+        
+        <div className="overflow-x-auto flex-1 custom-scrollbar">
+            <table className="w-full text-left text-sm text-slate-600">
+                <thead className="text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                    <tr>
+                        <th className="px-6 py-4">ID / Fecha</th>
+                        <th className="px-6 py-4">Apertura</th>
+                        <th className="px-6 py-4">Cierre</th>
+                        <th className="px-6 py-4 text-right">Sistema (Bs / Ref)</th>
+                        <th className="px-6 py-4 text-right">Real (Bs / Ref)</th>
+                        <th className="px-6 py-4 text-center">Diferencia</th>
+                        <th className="px-6 py-4 text-center">Acción</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                    {closingsHistory.map((shift) => (
+                        <tr key={shift.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-6 py-4 font-bold text-higea-blue">#{shift.id}</td>
+                            <td className="px-6 py-4 text-xs">{new Date(shift.opened_at).toLocaleString()}</td>
+                            <td className="px-6 py-4 font-bold text-xs">
+                                {shift.status === 'ABIERTA' 
+                                    ? <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-[10px]">EN CURSO</span> 
+                                    : new Date(shift.closed_at).toLocaleString()}
+                            </td>
                             
-                            <div className="overflow-x-auto flex-1 custom-scrollbar">
-                                <table className="w-full text-left text-sm text-slate-600">
-                                    <thead className="text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
-                                        <tr>
-                                            <th className="px-6 py-4">ID / Fecha</th>
-                                            <th className="px-6 py-4">Apertura</th>
-                                            <th className="px-6 py-4">Cierre</th>
-                                            <th className="px-6 py-4 text-right">Sistema ($)</th>
-                                            <th className="px-6 py-4 text-right">Real ($)</th>
-                                            <th className="px-6 py-4 text-center">Diferencia</th>
-                                            <th className="px-6 py-4 text-center">Acción</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50">
-                                        {closingsHistory.map((shift) => (
-                                            <tr key={shift.id} className="hover:bg-slate-50 transition-colors">
-                                                <td className="px-6 py-4 font-bold text-higea-blue">#{shift.id}</td>
-                                                <td className="px-6 py-4 text-xs">{new Date(shift.opened_at).toLocaleString()}</td>
-                                                <td className="px-6 py-4 font-bold text-xs">
-                                                    {shift.status === 'ABIERTA' 
-                                                        ? <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-[10px]">EN CURSO</span> 
-                                                        : new Date(shift.closed_at).toLocaleString()}
-                                                </td>
-                                                <td className="px-6 py-4 text-right text-slate-500">Ref {parseFloat(shift.system_cash_usd || 0).toFixed(2)}</td>
-                                                <td className="px-6 py-4 text-right font-black text-slate-700">Ref {parseFloat(shift.real_cash_usd || 0).toFixed(2)}</td>
-                                                <td className="px-6 py-4 text-center">
-                                                    {Math.abs(parseFloat(shift.diff_usd)) < 0.5 
-                                                        ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Cuadrado</span>
-                                                        : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Dif: {parseFloat(shift.diff_usd).toFixed(2)}</span>
-                                                    }
-                                                </td>
-                                                <td className="px-6 py-4 text-center">
-                                                    <button 
-                                                        onClick={() => printClosingReport(shift)}
-                                                        className="text-slate-400 hover:text-higea-blue transition-colors"
-                                                        title="Imprimir Reporte"
-                                                    >
-                                                        🖨️
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                        {closingsHistory.length === 0 && (
-                                            <tr>
-                                                <td colSpan="7" className="px-6 py-10 text-center text-slate-400">
-                                                    No hay cierres registrados aún.
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                            {/* COLUMNA SISTEMA (Bs Predomina) */}
+                            <td className="px-6 py-4 text-right">
+                                <div className="flex flex-col">
+                                    <span className="text-slate-600 font-bold">Bs {parseFloat(shift.system_cash_ves || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                                    <span className="text-xs text-gray-400">Ref {parseFloat(shift.system_cash_usd || 0).toFixed(2)}</span>
+                                </div>
+                            </td>
+
+                            {/* COLUMNA REAL (Bs Predomina) */}
+                            <td className="px-6 py-4 text-right">
+                                <div className="flex flex-col">
+                                    <span className="font-black text-slate-800">Bs {parseFloat(shift.real_cash_ves || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                                    <span className="text-xs font-bold text-gray-500">Ref {parseFloat(shift.real_cash_usd || 0).toFixed(2)}</span>
+                                </div>
+                            </td>
+
+                            {/* COLUMNA DIFERENCIA (Bs Arriba) */}
+                            <td className="px-6 py-4 text-center">
+                                <div className="flex flex-col gap-1 items-center">
+                                    {/* Diferencia BS */}
+                                    {Math.abs(parseFloat(shift.diff_ves)) < 1
+                                        ? <span className="text-[10px] text-green-600 font-bold">Bs OK</span>
+                                        : <span className="text-[10px] text-red-500 font-bold">Bs {parseFloat(shift.diff_ves).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                                    }
+                                    {/* Diferencia USD */}
+                                    {Math.abs(parseFloat(shift.diff_usd)) < 0.5 
+                                        ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Ref OK</span>
+                                        : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Ref {parseFloat(shift.diff_usd).toFixed(2)}</span>
+                                    }
+                                </div>
+                            </td>
+
+                            <td className="px-6 py-4 text-center">
+                                <button 
+                                    onClick={() => printClosingReport(shift)}
+                                    className="text-slate-400 hover:text-higea-blue transition-colors"
+                                    title="Imprimir Reporte"
+                                >
+                                    🖨️
+                                </button>
+                            </td>
+                        </tr>
+                    ))}
+                    {closingsHistory.length === 0 && (
+                        <tr>
+                            <td colSpan="7" className="px-6 py-10 text-center text-slate-400">
+                                No hay cierres registrados aún.
+                            </td>
+                        </tr>
                     )}
+                </tbody>
+            </table>
+        </div>
+    </div>
+)}
 
                     {/* MODAL DETALLE PRODUCTO (INVENTARIO) */}
                     {selectedAuditProduct && (
