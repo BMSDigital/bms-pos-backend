@@ -850,39 +850,43 @@ const promptOpenCash = async () => {
             setLowStock(Array.isArray(stockRes.data) ? stockRes.data : []); // Protección
 
             // ===========================================================================
-            // --- CORRECCIÓN CRÍTICA (EL ERROR QUE TIENES) ---
+            // --- CORRECCIÓN CRÍTICA AQUÍ: URL CORRECTA (/reports/sales-today) ---
             // ===========================================================================
-            const salesRes = await axios.get(`${API_URL}/sales/report/daily`);
+            const salesRes = await axios.get(`${API_URL}/reports/sales-today`); // <--- CAMBIO AQUÍ
             
             // PROTECCIÓN: Si salesRes.data no es un array, usamos [] para evitar el crash
             const sales = Array.isArray(salesRes.data) ? salesRes.data : [];
             
             setDailySalesList(sales); 
 
-            // Recalculamos totales (Ahora es seguro porque 'sales' siempre será array)
+            // Recalculamos totales del Dashboard (Dinero en Mano)
             let totalRef = 0;
             let count = 0;
             
             sales.forEach(sale => {
                 if (sale.status !== 'ANULADO') {
-                    totalRef += parseFloat(sale.total_amount_usd || 0);
+                    totalRef += parseFloat(sale.total_usd || 0); // Ojo: backend manda total_usd, no total_amount_usd a veces
                     count++;
                 }
             });
 
-            setDailySalesTotals({ totalUSD: totalRef, count: count });
+            // Actualizamos la tarjeta de "Ventas Hoy"
+            setStats(prev => ({
+                ...prev,
+                total_usd: totalRef // Sobrescribimos con el cálculo filtrado real
+            }));
             // ===========================================================================
 
-            // 4. Créditos
+            // 4. Créditos (AHORA SÍ SE EJECUTARÁ ESTA PARTE)
             const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
-            const creditsData = Array.isArray(creditsRes.data) ? creditsRes.data : []; // Protección
+            const creditsData = Array.isArray(creditsRes.data) ? creditsRes.data : []; 
             setPendingCredits(creditsData);
 
             const overdue = creditsData.filter(c => c.is_overdue).length;
             setOverdueCount(overdue);
 
             const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
-            setGroupedCredits(Array.isArray(groupedRes.data) ? groupedRes.data : []); // Protección
+            setGroupedCredits(Array.isArray(groupedRes.data) ? groupedRes.data : []); 
 
             // 5. Analíticas (con manejo de error suave)
             try {
@@ -4018,649 +4022,570 @@ const printClosingReport = (shift) => {
                         )}
                     </div>
                 ) : view === 'ADVANCED_REPORTS' ? (
-                    /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO + DRILL DOWN) --- */
-                    <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50">
+                /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO + DRILL DOWN + CIERRES) --- */
+                <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50">
 
-                        {/* CABECERA Y NAVEGACIÓN */}
-                        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-6">
-                            <div>
-                                <h2 className="text-3xl font-black text-slate-800 tracking-tight">Inteligencia de Negocios</h2>
-                                <p className="text-slate-500 mt-1 font-medium">
-                                    {reportTab === 'DASHBOARD' ? 'Análisis de rendimiento y KPIs' :
-                                        reportTab === 'SALES' ? 'Explorador Detallado de Transacciones' : 'Auditoría Completa de Inventario'}
-                                </p>
-                            </div>
-
-                            {/* BARRA DE PESTAÑAS (TABS) */}
-                            <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200">
-                                <button
-                                    onClick={() => setReportTab('DASHBOARD')}
-                                    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'DASHBOARD' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                                >
-                                    <span>📊</span> Dashboard
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setReportTab('SALES');
-                                        fetchSalesDetail(); // <--- ¡ESTO ES LO QUE FALTABA!
-                                    }}
-                                    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'SALES' ? 'bg-higea-blue text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                                >
-                                    <span>📑</span> Ventas
-                                </button>
-                                <button
-                                    onClick={fetchInventoryDetail}
-                                    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'INVENTORY' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                                >
-                                    <span>📦</span> Inventario
-                                </button>
-								<button
-									onClick={fetchClosingsHistory}
-									className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'CLOSINGS' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-								>
-									<span>🔐</span> Cierres
-								</button>
-                            </div>
+                    {/* CABECERA Y NAVEGACIÓN */}
+                    <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-6">
+                        <div>
+                            <h2 className="text-3xl font-black text-slate-800 tracking-tight">Inteligencia de Negocios</h2>
+                            <p className="text-slate-500 mt-1 font-medium">
+                                {reportTab === 'DASHBOARD' ? 'Análisis de rendimiento y KPIs' :
+                                 reportTab === 'SALES' ? 'Explorador Detallado de Transacciones' :
+                                 reportTab === 'INVENTORY' ? 'Auditoría Completa de Inventario' : 'Historial de Cierres de Caja'}
+                            </p>
                         </div>
 
-                        {/* --- CONTENIDO DINÁMICO (PESTAÑAS) --- */}
+                        {/* BARRA DE PESTAÑAS (TABS) */}
+                        <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 overflow-x-auto max-w-full">
+                            <button
+                                onClick={() => setReportTab('DASHBOARD')}
+                                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap ${reportTab === 'DASHBOARD' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <span>📊</span> Dashboard
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setReportTab('SALES');
+                                    fetchSalesDetail(); 
+                                }}
+                                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap ${reportTab === 'SALES' ? 'bg-higea-blue text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <span>📑</span> Ventas
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setReportTab('INVENTORY');
+                                    fetchInventoryDetail();
+                                }}
+                                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap ${reportTab === 'INVENTORY' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <span>📦</span> Inventario
+                            </button>
+                            {/* NUEVO BOTÓN DE CIERRES */}
+                            <button
+                                onClick={fetchClosingsHistory}
+                                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap ${reportTab === 'CLOSINGS' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                <span>🔐</span> Cierres
+                            </button>
+                        </div>
+                    </div>
 
-                        {/* PESTAÑA 1: DASHBOARD (TU DISEÑO PRO) */}
-                        {reportTab === 'DASHBOARD' && (
-                            <>
-                                {/* CONTROL DE FECHAS */}
-                                <div className="flex flex-wrap items-center gap-3 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 mb-8 w-fit ml-auto">
-                                    <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
-                                        <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Desde</span>
-                                        <input type="date" value={reportDateRange.start} onChange={(e) => setReportDateRange(prev => ({ ...prev, start: e.target.value }))} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer" />
-                                    </div>
-                                    <div className="text-slate-300 font-bold">→</div>
-                                    <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
-                                        <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Hasta</span>
-                                        <input type="date" value={reportDateRange.end} onChange={(e) => setReportDateRange(prev => ({ ...prev, end: e.target.value }))} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer" />
-                                    </div>
-                                    {/* Separador vertical */}
-                                    <div className="h-8 w-px bg-slate-200 mx-1"></div>
-                                    
-                                    {/* Botón Actualizar (Estilo Refinado) */}
-                                    <button onClick={fetchAdvancedReport} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-95 flex items-center gap-2">
-                                        <span>🔄</span> <span className="hidden sm:inline">Actualizar</span>
-                                    </button>
+                    {/* --- CONTENIDO DINÁMICO (PESTAÑAS) --- */}
 
-                                    {/* 🔥 NUEVO: BOTÓN PDF REPORTE */}
-                                    <button onClick={exportReportToPDF} className="bg-higea-red hover:bg-red-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95 flex items-center gap-2">
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                                        <span>PDF Reporte</span>
-                                    </button>
-
-                                    {/* Botón Excel (Mantenido) */}
-                                    <button onClick={() => downloadCSV(analyticsData.salesOverTime, 'Resumen_Gerencial')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95 flex items-center gap-2">
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                                        <span className="hidden sm:inline">Excel</span>
-                                    </button>
+                    {/* PESTAÑA 1: DASHBOARD */}
+                    {reportTab === 'DASHBOARD' && (
+                        <>
+                            {/* CONTROL DE FECHAS */}
+                            <div className="flex flex-wrap items-center gap-3 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 mb-8 w-fit ml-auto">
+                                <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
+                                    <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Desde</span>
+                                    <input type="date" value={reportDateRange.start} onChange={(e) => setReportDateRange(prev => ({ ...prev, start: e.target.value }))} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer" />
                                 </div>
-
-                                {analyticsData ? (
-                                    <div className="space-y-8 pb-20">
-
-                                        {/* 1. SECCIÓN KPI (CLICKABLES) */}
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                            {/* KPI 1: Ingresos -> Clic lleva a Ventas */}
-                                            <div onClick={fetchSalesDetail} className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-200 relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
-                                                <div className="absolute right-0 top-0 h-32 w-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
-                                                <div className="relative z-10">
-                                                    <div className="flex justify-between items-start mb-4">
-                                                        <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm">
-                                                            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                                            </svg>
-                                                        </div>
-                                                        <span className="text-blue-200 text-xs font-bold bg-blue-900/30 px-2 py-1 rounded-lg flex items-center gap-1">Ver Detalle <span className="text-lg">→</span></span>
-                                                    </div>
-                                                    <p className="text-4xl font-black tracking-tight mb-1">
-                                                        Ref {analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                                                    </p>
-                                                    {/* 💡 ETIQUETA ACTUALIZADA PARA REFLEJAR FLUJO DE CAJA REAL */}
-                                                    <p className="text-blue-200 text-sm font-medium">Dinero Recaudado (Caja)</p>
-                                                </div>
-                                            </div>
-
-                                            {/* KPI 2: Transacciones -> Clic lleva a Ventas */}
-                                            <div onClick={fetchSalesDetail} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
-                                                <div className="absolute right-0 bottom-0 h-24 w-24 bg-purple-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
-                                                <div className="relative z-10">
-                                                    <div className="flex justify-between items-start mb-4">
-                                                        <div className="bg-purple-100 p-3 rounded-2xl"><svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg></div>
-                                                        <span className="text-purple-600 text-xs font-bold bg-purple-50 px-2 py-1 rounded-lg">Ver Operaciones →</span>
-                                                    </div>
-                                                    <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">{analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0)}</p>
-                                                    <p className="text-slate-400 text-sm font-medium">Operaciones Realizadas</p>
-                                                </div>
-                                            </div>
-
-                                            {/* KPI 3: Promedio (Informativo) */}
-                                            <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group">
-                                                <div className="absolute right-0 bottom-0 h-24 w-24 bg-emerald-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
-                                                <div className="relative z-10">
-                                                    <div className="flex justify-between items-start mb-4">
-                                                        <div className="bg-emerald-100 p-3 rounded-2xl"><svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg></div>
-                                                        <span className="text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">KPI Clave</span>
-                                                    </div>
-                                                    <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">
-                                                        Ref {(() => {
-                                                            const total = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
-                                                            const count = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0);
-                                                            return count > 0 ? (total / count).toLocaleString('es-VE', { minimumFractionDigits: 2 }) : '0.00';
-                                                        })()}
-                                                    </p>
-                                                    <p className="text-slate-400 text-sm font-medium">Promedio por Venta</p>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* 2. GRÁFICAS COMPARATIVAS */}
-                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                            {/* Productos Estrella -> Clic lleva a Inventario */}
-                                            <div onClick={fetchInventoryDetail} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 cursor-pointer hover:border-blue-200 transition-colors group">
-                                                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
-                                                    <div className="bg-yellow-100 p-2 rounded-xl text-yellow-600 text-xl">🏆</div>
-                                                    <div>
-                                                        <h3 className="font-bold text-slate-800 text-lg group-hover:text-blue-600 transition-colors">Productos Estrella</h3>
-                                                        <p className="text-xs text-slate-400">Clic para ver Inventario Completo</p>
-                                                    </div>
-                                                </div>
-                                                <SimpleBarChart data={analyticsData.topProducts} labelKey="name" valueKey="total_qty" colorClass="bg-yellow-400" formatMoney={false} />
-                                            </div>
-
-                                            {/* Categorías */}
-                                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-                                                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
-                                                    <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600 text-xl">🏷️</div>
-                                                    <div><h3 className="font-bold text-slate-800 text-lg">Rendimiento por Categoría</h3><p className="text-xs text-slate-400">Ingresos generados (Ref)</p></div>
-                                                </div>
-                                                <SimpleBarChart data={analyticsData.salesByCategory} labelKey="category" valueKey="total_usd" colorClass="bg-indigo-500" formatMoney={true} />
-                                            </div>
-                                        </div>
-
-                                        {/* 3. DEUDORES Y EVOLUCIÓN */}
-                                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-1">
-                                                <div className="flex items-center gap-3 mb-4">
-                                                    <div className="bg-red-100 p-2 rounded-xl text-red-600 text-lg">📉</div>
-                                                    <h3 className="font-bold text-slate-800">Top Deudores</h3>
-                                                </div>
-                                                <div className="space-y-4">
-                                                    {topDebtors.slice(0, 5).map((debtor, idx) => (
-                                                        <div key={idx} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-500">{debtor.full_name.charAt(0)}</div>
-                                                                <div><p className="text-xs font-bold text-slate-700 truncate w-24">{debtor.full_name}</p><p className="text-[10px] text-slate-400">Pendiente</p></div>
-                                                            </div>
-                                                            <span className="font-black text-red-500 text-sm">Ref {parseFloat(debtor.debt).toFixed(2)}</span>
-                                                        </div>
-                                                    ))}
-                                                    {topDebtors.length === 0 && <p className="text-center text-slate-400 text-sm py-4">Sin deudas pendientes 🎉</p>}
-                                                </div>
-                                            </div>
-
-                                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-2 overflow-hidden flex flex-col">
-                                                <div className="flex items-center gap-3 mb-6">
-                                                    <div className="bg-slate-100 p-2 rounded-xl text-slate-600 text-lg">📅</div>
-                                                    <h3 className="font-bold text-slate-800 text-lg">Evolución Diaria Detallada</h3>
-                                                </div>
-                                                <div className="overflow-x-auto custom-scrollbar flex-1">
-                                                    <table className="w-full text-left text-sm text-slate-600">
-                                                        <thead>
-                                                            <tr className="border-b-2 border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                                                                <th className="px-4 py-3">Fecha</th>
-                                                                <th className="px-4 py-3 text-center">Ops</th>
-                                                                <th className="px-4 py-3 text-right">Total Ref</th>
-                                                                <th className="px-4 py-3 text-right">Total Bs</th>
-                                                                <th className="px-4 py-3 text-center hidden sm:table-cell">Volumen</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-slate-50">
-                                                            {analyticsData.salesOverTime.map((day, idx) => {
-                                                                const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
-                                                                const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
-                                                                return (
-                                                                    <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
-                                                                        <td className="px-4 py-3 font-medium text-slate-800">{new Date(day.sale_date).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                                                                        <td className="px-4 py-3 text-center"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-xs font-bold">{day.tx_count}</span></td>
-                                                                        <td className="px-4 py-3 text-right font-black text-higea-blue">Ref {parseFloat(day.total_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                                                                        <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">Bs {parseFloat(day.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</td>
-                                                                        <td className="px-4 py-3 align-middle hidden sm:table-cell w-32">
-                                                                            <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                                                                                <div className={`h-full rounded-full ${percent > 80 ? 'bg-green-500' : percent > 40 ? 'bg-blue-500' : 'bg-slate-400'}`} style={{ width: `${percent}%` }}></div>
-                                                                            </div>
-                                                                        </td>
-                                                                    </tr>
-                                                                )
-                                                            })}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center h-96 text-slate-400">
-                                        <div className="w-16 h-16 border-4 border-slate-200 border-t-higea-blue rounded-full animate-spin mb-6"></div>
-                                        <p className="font-bold text-lg text-slate-500 animate-pulse">Procesando Inteligencia de Negocios...</p>
-                                    </div>
-                                )}
-                            </>
-                        )}
-
-                        {/* PESTAÑA 2: DETALLE DE VENTAS (TABLA AUDITORÍA PRO) */}
-                        {reportTab === 'SALES' && (
-                            <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
-
-                                {/* --- BARRA DE HERRAMIENTAS MEJORADA (FILTRO DE FECHAS) --- */}
-                                <div className="p-4 border-b border-slate-100 flex flex-col xl:flex-row justify-between items-center gap-4 bg-slate-50">
-
-                                    {/* 1. FILTRO DE RANGO DE FECHAS */}
-                                    <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm w-full md:w-auto">
-                                        <span className="text-xs font-bold text-gray-400 pl-2">Rango:</span>
-                                        <input
-                                            type="date"
-                                            value={reportDateRange.start}
-                                            onChange={(e) => setReportDateRange(prev => ({ ...prev, start: e.target.value }))}
-                                            className="text-xs font-bold text-gray-700 outline-none bg-transparent px-1 py-1 cursor-pointer"
-                                        />
-                                        <span className="text-gray-400 font-bold">→</span>
-                                        <input
-                                            type="date"
-                                            value={reportDateRange.end}
-                                            min={reportDateRange.start} // <--- UX: Bloquea fechas anteriores en el calendario visual
-                                            onChange={(e) => setReportDateRange(prev => ({ ...prev, end: e.target.value }))}
-                                            className="text-xs font-bold text-gray-700 outline-none bg-transparent px-1 py-1 cursor-pointer"
-                                        />
-                                        {/* Botón para aplicar el filtro (Fetch) */}
-                                        <button
-                                            onClick={() => fetchSalesDetail()} // Aseguramos que llame a la función corregida
-                                            className="bg-higea-blue text-white p-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-                                            title="Buscar ventas en este rango"
-                                        >
-                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                                        </button>
-                                    </div>
-
-                                    {/* INPUT DE BÚSQUEDA DE VENTAS */}
-                                    <div className="relative w-full md:w-80">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-                                        <input
-                                            type="text"
-                                            placeholder="Buscar (Cliente, ID, Ref)..."
-                                            value={salesSearch} // ✅ Usamos salesSearch
-                                            onChange={(e) => setSalesSearch(e.target.value)}
-                                            className="w-full border p-2.5 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm bg-white"
-                                        />
-                                        {isSearchingSales && (
-                                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                                <div className="w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* 3. BOTÓN EXPORTAR */}
-                                    <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-                                        <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200 hidden md:block">
-                                            {detailedSales.length} Reg
-                                        </span>
-                                        <button
-                                            onClick={() => downloadCSV(detailedSales, 'Reporte_Ventas')}
-                                            className="bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-green-700 shadow-md flex items-center gap-2 transition-all active:scale-95 whitespace-nowrap w-full md:w-auto justify-center"
-                                        >
-                                            <span>📥</span> Exportar Excel (.csv)
-                                        </button>
-                                    </div>
+                                <div className="text-slate-300 font-bold">→</div>
+                                <div className="flex items-center bg-slate-100 rounded-xl px-4 py-2 border border-slate-200">
+                                    <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Hasta</span>
+                                    <input type="date" value={reportDateRange.end} onChange={(e) => setReportDateRange(prev => ({ ...prev, end: e.target.value }))} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer" />
                                 </div>
-
-                                {/* TABLA DE DATOS (Sin cambios en la estructura, solo renderiza lo que ya tenías) */}
-                                <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
-                                    {/* ... (Aquí va tu tabla <table> actual) ... */}
-                                    <table className="w-full text-left text-xs text-gray-600">
-                                        {/* ... el resto de tu tabla ... */}
-                                        <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
-                                            <tr>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Fecha / Hora</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">N° Control</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Cliente</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Método</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Total Bs</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Total Ref</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Estado</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100 bg-white">
-                                            {(() => {
-                                                const ITEMS_PER_PAGE = 50;
-
-                                                // OPTIMIZACIÓN: Usamos 'detailedSales' directamente.
-                                                // El backend ya hizo el trabajo sucio de filtrar por fecha y texto.
-                                                const filteredData = detailedSales;
-
-                                                const indexOfLast = salesReportPage * ITEMS_PER_PAGE;
-                                                const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
-
-                                                const currentData = filteredData.slice(indexOfFirst, indexOfLast);
-                                                const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
-
-                                                if (currentData.length === 0) return <tr><td colSpan="7" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
-
-                                                return (
-                                                    <>
-                                                        {currentData.map((sale) => (
-                                                            <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
-                                                                <td className="px-6 py-4 whitespace-nowrap text-gray-500">
-                                                                    {/* IMPORTANTE: Usar las claves que vienen del Backend (Nro Factura, etc) o las que definiste en server.js */}
-                                                                    {/* Si aplicaste mi corrección de server.js anterior, las claves pueden haber cambiado a español. 
-                                                                Si NO cambiaste el server.js, mantén sale.created_at. 
-                                                                Asumo que usas el mapeo original o el que tenías en App.jsx: */}
-                                                                    {new Date(sale.created_at || sale["Fecha Hora"]).toLocaleDateString()} <span className="text-[10px] text-gray-400 ml-1">{new Date(sale.created_at || sale["Fecha Hora"]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                                                </td>
-                                                                <td className="px-6 py-4 font-mono font-bold text-higea-blue">#{sale.id || sale["Nro Factura"]}</td>
-                                                                <td className="px-6 py-4">
-                                                                    <div className="font-bold text-gray-700 text-sm">{sale.client_name || sale["Cliente"]}</div>
-                                                                    <div className="text-[10px] text-gray-400">{sale.client_id || sale["Documento"]}</div>
-                                                                </td>
-                                                                <td className="px-6 py-4 text-center">
-                                                                    <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded text-[10px] font-medium text-gray-500 truncate max-w-[100px] inline-block">
-                                                                        {sale.payment_method || sale["Metodo Pago"]}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-6 py-4 text-right font-medium text-gray-500">Bs {parseFloat(sale.total_ves || sale["Total Bs"]).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                                                                <td className="px-6 py-4 text-right"><span className="font-black text-slate-800 text-sm bg-slate-100 px-2 py-1 rounded">Ref {parseFloat(sale.total_usd || sale["Total USD"]).toFixed(2)}</span></td>
-                                                                <td className="px-6 py-4 text-center">
-                                                                    <span className={`px-2 py-1 rounded text-[10px] font-bold ${(sale.status || sale["Estado"]) === 'PAGADO' ? 'bg-green-100 text-green-700' :
-                                                                            (sale.status || sale["Estado"]) === 'PENDIENTE' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'
-                                                                        }`}>{sale.status || sale["Estado"]}</span>
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                        {/* Paginación... */}
-                                                        {totalPages > 1 && (
-                                                            <tr>
-                                                                <td colSpan="7" className="p-4 bg-slate-50 border-t border-slate-200">
-                                                                    <div className="flex justify-center items-center gap-4">
-                                                                        <button onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.max(1, p - 1)); }} disabled={salesReportPage === 1} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Anterior</button>
-                                                                        <span className="text-xs font-bold text-gray-600">Página {salesReportPage} de {totalPages}</span>
-                                                                        <button onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.min(totalPages, p + 1)); }} disabled={salesReportPage === totalPages} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Siguiente</button>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        )}
-                                                    </>
-                                                );
-                                            })()}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-
-                        {reportTab === 'INVENTORY' && (
-                            <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
-                                {/* BARRA DE HERRAMIENTAS */}
-                                <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
-                                    <div className="relative w-full md:w-96">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-                                        <input
-                                            type="text"
-                                            placeholder="Buscar producto, categoría..."
-                                            value={inventorySearch}
-                                            onChange={(e) => { setInventorySearch(e.target.value); setInventoryReportPage(1); }}
-                                            className="w-full border p-3 pl-10 rounded-xl text-sm outline-none focus:border-indigo-500 shadow-sm"
-                                        />
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200">
-                                            {/* CORRECCIÓN VISUAL: Mostramos cuántos hay filtrados vs total */}
-                                            {inventoryFilteredData.length} / {detailedInventory.length} Artículos
-                                        </span>
-
-                                        {/* --- AQUÍ LA MAGIA: Usamos inventoryFilteredData para exportar --- */}
-                                        <button
-                                            onClick={() => downloadCSV(inventoryFilteredData, 'Reporte_Inventario_Higea')}
-                                            className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-md flex items-center gap-2 transition-all active:scale-95"
-                                        >
-                                            <span>📥</span> Exportar CSV
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* TABLA DE DATOS */}
-                                <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
-                                    <table className="w-full text-left text-xs text-gray-600">
-                                        <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
-                                            <tr>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Producto</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Categoría</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Estatus</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Ref)</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Bs)</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Stock</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Ref)</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Bs)</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100 bg-white">
-                                            {(() => {
-                                                const ITEMS_PER_PAGE = 50;
-
-                                                // --- USAMOS LA VARIABLE YA FILTRADA ---
-                                                const filteredData = inventoryFilteredData;
-
-                                                const indexOfLast = inventoryReportPage * ITEMS_PER_PAGE;
-                                                const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
-                                                const currentData = filteredData.slice(indexOfFirst, indexOfLast);
-                                                const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
-
-                                                if (currentData.length === 0) return <tr><td colSpan="8" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
-
-                                                return (
-                                                    <>
-                                                        {currentData.map((prod) => (
-                                                            <tr
-                                                                key={prod.id}
-                                                                onClick={() => setSelectedAuditProduct(prod)}
-                                                                className="hover:bg-indigo-50 transition-colors cursor-pointer group"
-                                                            >
-                                                                <td className="px-6 py-4 font-bold text-gray-700 flex items-center gap-2">
-                                                                    {prod.barcode && <span className="text-[9px] bg-gray-100 px-1 border rounded text-gray-400 font-mono">|||</span>}
-                                                                    {prod.name}
-                                                                </td>
-                                                                <td className="px-6 py-4">{prod.category}</td>
-                                                                <td className="px-6 py-4 text-center">
-                                                                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${prod.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
-                                                                        {prod.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-6 py-4 text-right font-medium">Ref {parseFloat(prod.price_usd).toFixed(2)}</td>
-                                                                <td className="px-6 py-4 text-right text-gray-500">Bs {(parseFloat(prod.price_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</td>
-                                                                <td className={`px-6 py-4 text-center font-bold ${prod.stock < 5 ? 'text-red-500 bg-red-50 rounded' : ''}`}>{prod.stock}</td>
-                                                                <td className="px-6 py-4 text-right font-black text-indigo-900">Ref {parseFloat(prod.total_value_usd).toFixed(2)}</td>
-                                                                <td className="px-6 py-4 text-right text-indigo-600 font-bold">Bs {(parseFloat(prod.total_value_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</td>
-                                                            </tr>
-                                                        ))}
-
-                                                        {/* CONTROLES PAGINACIÓN */}
-                                                        {totalPages > 1 && (
-                                                            <tr>
-                                                                <td colSpan="8" className="p-4 bg-slate-50 border-t border-slate-200">
-                                                                    <div className="flex justify-center items-center gap-4">
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.max(1, p - 1)); }}
-                                                                            disabled={inventoryReportPage === 1}
-                                                                            className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
-                                                                        >
-                                                                            Anterior
-                                                                        </button>
-                                                                        <span className="text-xs font-bold text-gray-600">
-                                                                            Página {inventoryReportPage} de {totalPages}
-                                                                        </span>
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.min(totalPages, p + 1)); }}
-                                                                            disabled={inventoryReportPage === totalPages}
-                                                                            className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50"
-                                                                        >
-                                                                            Siguiente
-                                                                        </button>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        )}
-                                                    </>
-                                                );
-                                            })()}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-						
-						{/* --- CONTENIDO DE LA PESTAÑA CIERRES --- */}
-{reportTab === 'CLOSINGS' && (
-    <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
-        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-            <h3 className="font-bold text-slate-700 text-lg">Historial de Cortes de Caja</h3>
-            <button onClick={fetchClosingsHistory} className="text-sm text-higea-blue font-bold hover:underline">Actualizar Lista</button>
-        </div>
-        
-        <div className="overflow-x-auto flex-1 custom-scrollbar">
-            <table className="w-full text-left text-xs text-gray-600">
-                <thead className="bg-slate-50 text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
-                    <tr>
-                        <th className="px-6 py-4">ID / Fecha</th>
-                        <th className="px-6 py-4">Apertura</th>
-                        <th className="px-6 py-4">Cierre</th>
-                        <th className="px-6 py-4 text-right">Sistema ($)</th>
-                        <th className="px-6 py-4 text-right">Real ($)</th>
-                        <th className="px-6 py-4 text-center">Diferencia</th>
-                        <th className="px-6 py-4 text-center">Acción</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                    {closingsHistory.map((shift) => (
-                        <tr key={shift.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-6 py-4 font-bold text-higea-blue">#{shift.id}</td>
-                            <td className="px-6 py-4">{new Date(shift.opened_at).toLocaleString()}</td>
-                            <td className="px-6 py-4 font-bold">
-                                {shift.status === 'ABIERTA' 
-                                    ? <span className="text-green-600 bg-green-50 px-2 py-1 rounded">EN CURSO</span> 
-                                    : new Date(shift.closed_at).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-4 text-right">Ref {parseFloat(shift.system_cash_usd || 0).toFixed(2)}</td>
-                            <td className="px-6 py-4 text-right font-black text-slate-800">Ref {parseFloat(shift.real_cash_usd || 0).toFixed(2)}</td>
-                            <td className="px-6 py-4 text-center">
-                                {Math.abs(parseFloat(shift.diff_usd)) < 0.5 
-                                    ? <span className="bg-green-100 text-green-700 px-2 py-1 rounded font-bold">OK</span>
-                                    : <span className="bg-red-100 text-red-700 px-2 py-1 rounded font-bold">{parseFloat(shift.diff_usd).toFixed(2)}</span>
-                                }
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                                <button 
-                                    onClick={() => printClosingReport(shift)}
-                                    className="bg-white border border-slate-200 text-slate-600 hover:text-higea-blue hover:border-higea-blue p-2 rounded-lg transition-all shadow-sm"
-                                    title="Imprimir Reporte"
-                                >
-                                    🖨️
+                                <div className="h-8 w-px bg-slate-200 mx-1"></div>
+                                
+                                <button onClick={fetchAdvancedReport} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-95 flex items-center gap-2">
+                                    <span>🔄</span> <span className="hidden sm:inline">Actualizar</span>
                                 </button>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    </div>
-)}
 
+                                <button onClick={exportReportToPDF} className="bg-higea-red hover:bg-red-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95 flex items-center gap-2">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                                    <span>PDF Reporte</span>
+                                </button>
 
-                        {/* --- MODAL DETALLE DE AUDITORÍA (PRODUCTO) --- */}
-                        {selectedAuditProduct && (
-                            <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                                <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative animate-scale-up border-t-4 border-indigo-600">
-                                    <button onClick={() => setSelectedAuditProduct(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
+                                <button onClick={() => downloadCSV(analyticsData.salesOverTime, 'Resumen_Gerencial')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all active:scale-95 flex items-center gap-2">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                    <span className="hidden sm:inline">Excel</span>
+                                </button>
+                            </div>
 
-                                    <div className="p-6 bg-slate-50 border-b border-slate-100">
-                                        <div className="flex items-start gap-4">
-                                            {/* Ícono Grande */}
-                                            <div className="h-16 w-16 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-4xl shadow-sm">
-                                                {products.find(p => p.id === selectedAuditProduct.id)?.icon_emoji || '📦'}
-                                            </div>
-                                            <div>
-                                                <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-1">Ficha Técnica</p>
-                                                <h3 className="font-black text-2xl text-slate-800 leading-tight">{selectedAuditProduct.name}</h3>
-                                                <p className="text-sm text-slate-500 mt-1 font-medium">{selectedAuditProduct.category}</p>
-
-                                                {/* --- AQUÍ LA MAGIA UX: FECHA DE ÚLTIMO MOVIMIENTO --- */}
-                                                <div className="mt-2 inline-flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                                                    <span className="text-xs">🕒</span>
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Modificado:</span>
-                                                    <span className="text-[10px] font-mono font-bold text-slate-700">
-                                                        {selectedAuditProduct.last_stock_update
-                                                            ? new Date(selectedAuditProduct.last_stock_update).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-                                                            : 'Sin cambios recientes'}
-                                                    </span>
+                            {analyticsData ? (
+                                <div className="space-y-8 pb-20">
+                                    {/* 1. SECCIÓN KPI */}
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                        {/* KPI 1: Ingresos */}
+                                        <div onClick={fetchSalesDetail} className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-200 relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
+                                            <div className="absolute right-0 top-0 h-32 w-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+                                            <div className="relative z-10">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-sm">
+                                                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                    </div>
+                                                    <span className="text-blue-200 text-xs font-bold bg-blue-900/30 px-2 py-1 rounded-lg flex items-center gap-1">Ver Detalle <span className="text-lg">→</span></span>
                                                 </div>
-                                                {/* --------------------------------------------------- */}
+                                                <p className="text-4xl font-black tracking-tight mb-1">
+                                                    Ref {analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                                                </p>
+                                                <p className="text-blue-200 text-sm font-medium">Dinero Recaudado (Caja)</p>
+                                            </div>
+                                        </div>
+
+                                        {/* KPI 2: Transacciones */}
+                                        <div onClick={fetchSalesDetail} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group cursor-pointer active:scale-95 transition-all">
+                                            <div className="absolute right-0 bottom-0 h-24 w-24 bg-purple-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
+                                            <div className="relative z-10">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div className="bg-purple-100 p-3 rounded-2xl"><svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg></div>
+                                                    <span className="text-purple-600 text-xs font-bold bg-purple-50 px-2 py-1 rounded-lg">Ver Operaciones →</span>
+                                                </div>
+                                                <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">{analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0)}</p>
+                                                <p className="text-slate-400 text-sm font-medium">Operaciones Realizadas</p>
+                                            </div>
+                                        </div>
+
+                                        {/* KPI 3: Promedio */}
+                                        <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-lg relative overflow-hidden group">
+                                            <div className="absolute right-0 bottom-0 h-24 w-24 bg-emerald-50 rounded-full -mr-5 -mb-5 group-hover:scale-110 transition-transform"></div>
+                                            <div className="relative z-10">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div className="bg-emerald-100 p-3 rounded-2xl"><svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg></div>
+                                                    <span className="text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">KPI Clave</span>
+                                                </div>
+                                                <p className="text-4xl font-black text-slate-800 tracking-tight mb-1">
+                                                    Ref {(() => {
+                                                        const total = analyticsData.salesOverTime.reduce((acc, day) => acc + parseFloat(day.total_usd), 0);
+                                                        const count = analyticsData.salesOverTime.reduce((acc, day) => acc + parseInt(day.tx_count || 0), 0);
+                                                        return count > 0 ? (total / count).toLocaleString('es-VE', { minimumFractionDigits: 2 }) : '0.00';
+                                                    })()}
+                                                </p>
+                                                <p className="text-slate-400 text-sm font-medium">Promedio por Venta</p>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div className="p-6 space-y-6">
-                                        {/* ... (El resto del contenido del modal sigue igual: Estado, Costos, Valoración) ... */}
-                                        <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                                            <div>
-                                                <p className="text-[10px] text-gray-400 uppercase font-bold">Código Barras</p>
-                                                <p className="font-mono text-sm font-bold text-slate-700">{selectedAuditProduct.barcode || 'N/A'}</p>
+                                    {/* 2. GRÁFICAS */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                        <div onClick={fetchInventoryDetail} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 cursor-pointer hover:border-blue-200 transition-colors group">
+                                            <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
+                                                <div className="bg-yellow-100 p-2 rounded-xl text-yellow-600 text-xl">🏆</div>
+                                                <div>
+                                                    <h3 className="font-bold text-slate-800 text-lg group-hover:text-blue-600 transition-colors">Productos Estrella</h3>
+                                                    <p className="text-xs text-slate-400">Clic para ver Inventario Completo</p>
+                                                </div>
                                             </div>
-                                            <div className="text-right">
-                                                <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedAuditProduct.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
-                                                    {selectedAuditProduct.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
+                                            <SimpleBarChart data={analyticsData.topProducts} labelKey="name" valueKey="total_qty" colorClass="bg-yellow-400" formatMoney={false} />
+                                        </div>
+
+                                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                                            <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-50">
+                                                <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600 text-xl">🏷️</div>
+                                                <div><h3 className="font-bold text-slate-800 text-lg">Rendimiento por Categoría</h3><p className="text-xs text-slate-400">Ingresos generados (Ref)</p></div>
+                                            </div>
+                                            <SimpleBarChart data={analyticsData.salesByCategory} labelKey="category" valueKey="total_usd" colorClass="bg-indigo-500" formatMoney={true} />
+                                        </div>
+                                    </div>
+
+                                    {/* 3. DEUDORES Y EVOLUCIÓN */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-1">
+                                            <div className="flex items-center gap-3 mb-4">
+                                                <div className="bg-red-100 p-2 rounded-xl text-red-600 text-lg">📉</div>
+                                                <h3 className="font-bold text-slate-800">Top Deudores</h3>
+                                            </div>
+                                            <div className="space-y-4">
+                                                {topDebtors.slice(0, 5).map((debtor, idx) => (
+                                                    <div key={idx} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-500">{debtor.full_name.charAt(0)}</div>
+                                                            <div><p className="text-xs font-bold text-slate-700 truncate w-24">{debtor.full_name}</p><p className="text-[10px] text-slate-400">Pendiente</p></div>
+                                                        </div>
+                                                        <span className="font-black text-red-500 text-sm">Ref {parseFloat(debtor.debt).toFixed(2)}</span>
+                                                    </div>
+                                                ))}
+                                                {topDebtors.length === 0 && <p className="text-center text-slate-400 text-sm py-4">Sin deudas pendientes 🎉</p>}
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-2 overflow-hidden flex flex-col">
+                                            <div className="flex items-center gap-3 mb-6">
+                                                <div className="bg-slate-100 p-2 rounded-xl text-slate-600 text-lg">📅</div>
+                                                <h3 className="font-bold text-slate-800 text-lg">Evolución Diaria Detallada</h3>
+                                            </div>
+                                            <div className="overflow-x-auto custom-scrollbar flex-1">
+                                                <table className="w-full text-left text-sm text-slate-600">
+                                                    <thead>
+                                                        <tr className="border-b-2 border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                                            <th className="px-4 py-3">Fecha</th>
+                                                            <th className="px-4 py-3 text-center">Ops</th>
+                                                            <th className="px-4 py-3 text-right">Total Ref</th>
+                                                            <th className="px-4 py-3 text-right">Total Bs</th>
+                                                            <th className="px-4 py-3 text-center hidden sm:table-cell">Volumen</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-50">
+                                                        {analyticsData.salesOverTime.map((day, idx) => {
+                                                            const maxDay = Math.max(...analyticsData.salesOverTime.map(d => parseFloat(d.total_usd)));
+                                                            const percent = maxDay > 0 ? (parseFloat(day.total_usd) / maxDay) * 100 : 0;
+                                                            return (
+                                                                <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
+                                                                    <td className="px-4 py-3 font-medium text-slate-800">{new Date(day.sale_date).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                                                    <td className="px-4 py-3 text-center"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-xs font-bold">{day.tx_count}</span></td>
+                                                                    <td className="px-4 py-3 text-right font-black text-higea-blue">Ref {parseFloat(day.total_usd).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
+                                                                    <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">Bs {parseFloat(day.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</td>
+                                                                    <td className="px-4 py-3 align-middle hidden sm:table-cell w-32">
+                                                                        <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                                                            <div className={`h-full rounded-full ${percent > 80 ? 'bg-green-500' : percent > 40 ? 'bg-blue-500' : 'bg-slate-400'}`} style={{ width: `${percent}%` }}></div>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            )
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-96 text-slate-400">
+                                    <div className="w-16 h-16 border-4 border-slate-200 border-t-higea-blue rounded-full animate-spin mb-6"></div>
+                                    <p className="font-bold text-lg text-slate-500 animate-pulse">Procesando Inteligencia de Negocios...</p>
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {/* PESTAÑA 2: DETALLE DE VENTAS */}
+                    {reportTab === 'SALES' && (
+                        <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+                            {/* BARRA DE HERRAMIENTAS */}
+                            <div className="p-4 border-b border-slate-100 flex flex-col xl:flex-row justify-between items-center gap-4 bg-slate-50">
+                                <div className="flex items-center gap-2 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm w-full md:w-auto">
+                                    <span className="text-xs font-bold text-gray-400 pl-2">Rango:</span>
+                                    <input type="date" value={reportDateRange.start} onChange={(e) => setReportDateRange(prev => ({ ...prev, start: e.target.value }))} className="text-xs font-bold text-gray-700 outline-none bg-transparent px-1 py-1 cursor-pointer" />
+                                    <span className="text-gray-400 font-bold">→</span>
+                                    <input type="date" value={reportDateRange.end} min={reportDateRange.start} onChange={(e) => setReportDateRange(prev => ({ ...prev, end: e.target.value }))} className="text-xs font-bold text-gray-700 outline-none bg-transparent px-1 py-1 cursor-pointer" />
+                                    <button onClick={() => fetchSalesDetail()} className="bg-higea-blue text-white p-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm" title="Buscar ventas en este rango">
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                    </button>
+                                </div>
+
+                                <div className="relative w-full md:w-80">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                                    <input type="text" placeholder="Buscar (Cliente, ID, Ref)..." value={salesSearch} onChange={(e) => setSalesSearch(e.target.value)} className="w-full border p-2.5 pl-10 rounded-xl text-sm outline-none focus:border-higea-blue shadow-sm bg-white" />
+                                    {isSearchingSales && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                            <div className="w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                                    <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200 hidden md:block">
+                                        {detailedSales.length} Reg
+                                    </span>
+                                    <button onClick={() => downloadCSV(detailedSales, 'Reporte_Ventas')} className="bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-green-700 shadow-md flex items-center gap-2 transition-all active:scale-95 whitespace-nowrap w-full md:w-auto justify-center">
+                                        <span>📥</span> Exportar Excel (.csv)
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* TABLA DE VENTAS */}
+                            <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
+                                <table className="w-full text-left text-xs text-gray-600">
+                                    <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
+                                        <tr>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Fecha / Hora</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">N° Control</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Cliente</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Método</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Total Bs</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Total Ref</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Estado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100 bg-white">
+                                        {(() => {
+                                            const ITEMS_PER_PAGE = 50;
+                                            const filteredData = detailedSales;
+                                            const indexOfLast = salesReportPage * ITEMS_PER_PAGE;
+                                            const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
+                                            const currentData = filteredData.slice(indexOfFirst, indexOfLast);
+                                            const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+
+                                            if (currentData.length === 0) return <tr><td colSpan="7" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
+
+                                            return (
+                                                <>
+                                                    {currentData.map((sale) => (
+                                                        <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
+                                                            <td className="px-6 py-4 whitespace-nowrap text-gray-500">
+                                                                {new Date(sale.created_at || sale["Fecha Hora"]).toLocaleDateString()} <span className="text-[10px] text-gray-400 ml-1">{new Date(sale.created_at || sale["Fecha Hora"]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                                            </td>
+                                                            <td className="px-6 py-4 font-mono font-bold text-higea-blue">#{sale.id || sale["Nro Factura"]}</td>
+                                                            <td className="px-6 py-4">
+                                                                <div className="font-bold text-gray-700 text-sm">{sale.client_name || sale["Cliente"]}</div>
+                                                                <div className="text-[10px] text-gray-400">{sale.client_id || sale["Documento"]}</div>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-center">
+                                                                <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded text-[10px] font-medium text-gray-500 truncate max-w-[100px] inline-block">
+                                                                    {sale.payment_method || sale["Metodo Pago"]}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-right font-medium text-gray-500">Bs {parseFloat(sale.total_ves || sale["Total Bs"]).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
+                                                            <td className="px-6 py-4 text-right"><span className="font-black text-slate-800 text-sm bg-slate-100 px-2 py-1 rounded">Ref {parseFloat(sale.total_usd || sale["Total USD"]).toFixed(2)}</span></td>
+                                                            <td className="px-6 py-4 text-center">
+                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${(sale.status || sale["Estado"]) === 'PAGADO' ? 'bg-green-100 text-green-700' : (sale.status || sale["Estado"]) === 'PENDIENTE' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                                    {sale.status || sale["Estado"]}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {totalPages > 1 && (
+                                                        <tr>
+                                                            <td colSpan="7" className="p-4 bg-slate-50 border-t border-slate-200">
+                                                                <div className="flex justify-center items-center gap-4">
+                                                                    <button onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.max(1, p - 1)); }} disabled={salesReportPage === 1} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Anterior</button>
+                                                                    <span className="text-xs font-bold text-gray-600">Página {salesReportPage} de {totalPages}</span>
+                                                                    <button onClick={(e) => { e.stopPropagation(); setSalesReportPage(p => Math.min(totalPages, p + 1)); }} disabled={salesReportPage === totalPages} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Siguiente</button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* PESTAÑA 3: INVENTARIO (AUDITORÍA) */}
+                    {reportTab === 'INVENTORY' && (
+                        <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+                            <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
+                                <div className="relative w-full md:w-96">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                                    <input type="text" placeholder="Buscar producto, categoría..." value={inventorySearch} onChange={(e) => { setInventorySearch(e.target.value); setInventoryReportPage(1); }} className="w-full border p-3 pl-10 rounded-xl text-sm outline-none focus:border-indigo-500 shadow-sm" />
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                                        {inventoryFilteredData.length} / {detailedInventory.length} Artículos
+                                    </span>
+                                    <button onClick={() => downloadCSV(inventoryFilteredData, 'Reporte_Inventario_Higea')} className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-md flex items-center gap-2 transition-all active:scale-95">
+                                        <span>📥</span> Exportar CSV
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
+                                <table className="w-full text-left text-xs text-gray-600">
+                                    <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
+                                        <tr>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Producto</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Categoría</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Estatus</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Ref)</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Bs)</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Stock</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Ref)</th>
+                                            <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Bs)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100 bg-white">
+                                        {(() => {
+                                            const ITEMS_PER_PAGE = 50;
+                                            const filteredData = inventoryFilteredData;
+                                            const indexOfLast = inventoryReportPage * ITEMS_PER_PAGE;
+                                            const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
+                                            const currentData = filteredData.slice(indexOfFirst, indexOfLast);
+                                            const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+
+                                            if (currentData.length === 0) return <tr><td colSpan="8" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
+
+                                            return (
+                                                <>
+                                                    {currentData.map((prod) => (
+                                                        <tr key={prod.id} onClick={() => setSelectedAuditProduct(prod)} className="hover:bg-indigo-50 transition-colors cursor-pointer group">
+                                                            <td className="px-6 py-4 font-bold text-gray-700 flex items-center gap-2">
+                                                                {prod.barcode && <span className="text-[9px] bg-gray-100 px-1 border rounded text-gray-400 font-mono">|||</span>}
+                                                                {prod.name}
+                                                            </td>
+                                                            <td className="px-6 py-4">{prod.category}</td>
+                                                            <td className="px-6 py-4 text-center">
+                                                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${prod.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                                                                    {prod.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-right font-medium">Ref {parseFloat(prod.price_usd).toFixed(2)}</td>
+                                                            <td className="px-6 py-4 text-right text-gray-500">Bs {(parseFloat(prod.price_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</td>
+                                                            <td className={`px-6 py-4 text-center font-bold ${prod.stock < 5 ? 'text-red-500 bg-red-50 rounded' : ''}`}>{prod.stock}</td>
+                                                            <td className="px-6 py-4 text-right font-black text-indigo-900">Ref {parseFloat(prod.total_value_usd).toFixed(2)}</td>
+                                                            <td className="px-6 py-4 text-right text-indigo-600 font-bold">Bs {(parseFloat(prod.total_value_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</td>
+                                                        </tr>
+                                                    ))}
+                                                    {totalPages > 1 && (
+                                                        <tr>
+                                                            <td colSpan="8" className="p-4 bg-slate-50 border-t border-slate-200">
+                                                                <div className="flex justify-center items-center gap-4">
+                                                                    <button onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.max(1, p - 1)); }} disabled={inventoryReportPage === 1} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Anterior</button>
+                                                                    <span className="text-xs font-bold text-gray-600">Página {inventoryReportPage} de {totalPages}</span>
+                                                                    <button onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.min(totalPages, p + 1)); }} disabled={inventoryReportPage === totalPages} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Siguiente</button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* PESTAÑA 4: CIERRES (NUEVO) */}
+                    {reportTab === 'CLOSINGS' && (
+                        <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+                            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                                <div>
+                                    <h3 className="font-bold text-slate-800 text-lg">Historial de Cierres de Caja</h3>
+                                    <p className="text-xs text-slate-500">Registro inmutable de arqueos</p>
+                                </div>
+                                <button onClick={fetchClosingsHistory} className="text-higea-blue hover:underline text-sm font-bold flex items-center gap-1">
+                                    <span>🔄</span> Actualizar Lista
+                                </button>
+                            </div>
+                            
+                            <div className="overflow-x-auto flex-1 custom-scrollbar">
+                                <table className="w-full text-left text-sm text-slate-600">
+                                    <thead className="text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                                        <tr>
+                                            <th className="px-6 py-4">ID / Fecha</th>
+                                            <th className="px-6 py-4">Apertura</th>
+                                            <th className="px-6 py-4">Cierre</th>
+                                            <th className="px-6 py-4 text-right">Sistema ($)</th>
+                                            <th className="px-6 py-4 text-right">Real ($)</th>
+                                            <th className="px-6 py-4 text-center">Diferencia</th>
+                                            <th className="px-6 py-4 text-center">Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {closingsHistory.map((shift) => (
+                                            <tr key={shift.id} className="hover:bg-slate-50 transition-colors">
+                                                <td className="px-6 py-4 font-bold text-higea-blue">#{shift.id}</td>
+                                                <td className="px-6 py-4 text-xs">{new Date(shift.opened_at).toLocaleString()}</td>
+                                                <td className="px-6 py-4 font-bold text-xs">
+                                                    {shift.status === 'ABIERTA' 
+                                                        ? <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-[10px]">EN CURSO</span> 
+                                                        : new Date(shift.closed_at).toLocaleString()}
+                                                </td>
+                                                <td className="px-6 py-4 text-right text-slate-500">Ref {parseFloat(shift.system_cash_usd || 0).toFixed(2)}</td>
+                                                <td className="px-6 py-4 text-right font-black text-slate-700">Ref {parseFloat(shift.real_cash_usd || 0).toFixed(2)}</td>
+                                                <td className="px-6 py-4 text-center">
+                                                    {Math.abs(parseFloat(shift.diff_usd)) < 0.5 
+                                                        ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Cuadrado</span>
+                                                        : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Dif: {parseFloat(shift.diff_usd).toFixed(2)}</span>
+                                                    }
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    <button 
+                                                        onClick={() => printClosingReport(shift)}
+                                                        className="text-slate-400 hover:text-higea-blue transition-colors"
+                                                        title="Imprimir Reporte"
+                                                    >
+                                                        🖨️
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {closingsHistory.length === 0 && (
+                                            <tr>
+                                                <td colSpan="7" className="px-6 py-10 text-center text-slate-400">
+                                                    No hay cierres registrados aún.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL DETALLE PRODUCTO (INVENTARIO) */}
+                    {selectedAuditProduct && (
+                        <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                            <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative animate-scale-up border-t-4 border-indigo-600">
+                                <button onClick={() => setSelectedAuditProduct(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
+
+                                <div className="p-6 bg-slate-50 border-b border-slate-100">
+                                    <div className="flex items-start gap-4">
+                                        <div className="h-16 w-16 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-4xl shadow-sm">
+                                            {products.find(p => p.id === selectedAuditProduct.id)?.icon_emoji || '📦'}
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-1">Ficha Técnica</p>
+                                            <h3 className="font-black text-2xl text-slate-800 leading-tight">{selectedAuditProduct.name}</h3>
+                                            <p className="text-sm text-slate-500 mt-1 font-medium">{selectedAuditProduct.category}</p>
+                                            <div className="mt-2 inline-flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
+                                                <span className="text-xs">🕒</span>
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase">Modificado:</span>
+                                                <span className="text-[10px] font-mono font-bold text-slate-700">
+                                                    {selectedAuditProduct.last_stock_update
+                                                        ? new Date(selectedAuditProduct.last_stock_update).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                                                        : 'Sin cambios recientes'}
                                                 </span>
                                             </div>
                                         </div>
+                                    </div>
+                                </div>
 
-                                        {/* Costos Unitarios */}
+                                <div className="p-6 space-y-6">
+                                    <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
                                         <div>
-                                            <p className="text-xs font-bold text-slate-400 uppercase mb-2">Costo Unitario</p>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                                                    <p className="text-[10px] text-blue-400 font-bold">REFERENCIAL</p>
-                                                    <p className="text-xl font-black text-blue-700">Ref {parseFloat(selectedAuditProduct.price_usd).toFixed(2)}</p>
-                                                </div>
-                                                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                                                    <p className="text-[10px] text-slate-400 font-bold">BOLÍVARES</p>
-                                                    <p className="text-xl font-black text-slate-700">Bs {(parseFloat(selectedAuditProduct.price_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
-                                                </div>
+                                            <p className="text-[10px] text-gray-400 uppercase font-bold">Código Barras</p>
+                                            <p className="font-mono text-sm font-bold text-slate-700">{selectedAuditProduct.barcode || 'N/A'}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedAuditProduct.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                                                {selectedAuditProduct.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <p className="text-xs font-bold text-slate-400 uppercase mb-2">Costo Unitario</p>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                                                <p className="text-[10px] text-blue-400 font-bold">REFERENCIAL</p>
+                                                <p className="text-xl font-black text-blue-700">Ref {parseFloat(selectedAuditProduct.price_usd).toFixed(2)}</p>
+                                            </div>
+                                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                                <p className="text-[10px] text-slate-400 font-bold">BOLÍVARES</p>
+                                                <p className="text-xl font-black text-slate-700">Bs {(parseFloat(selectedAuditProduct.price_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
                                             </div>
                                         </div>
+                                    </div>
 
-                                        {/* Valoración Total (Auditoría) */}
-                                        <div>
-                                            <div className="flex justify-between items-end mb-2">
-                                                <p className="text-xs font-bold text-slate-400 uppercase">Valoración de Inventario</p>
-                                                <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">Stock: {selectedAuditProduct.stock} uds</span>
+                                    <div>
+                                        <div className="flex justify-between items-end mb-2">
+                                            <p className="text-xs font-bold text-slate-400 uppercase">Valoración de Inventario</p>
+                                            <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">Stock: {selectedAuditProduct.stock} uds</span>
+                                        </div>
+                                        <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg shadow-indigo-200">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="text-indigo-200 text-xs font-bold">TOTAL REF</span>
+                                                <span className="text-2xl font-black">Ref {parseFloat(selectedAuditProduct.total_value_usd).toFixed(2)}</span>
                                             </div>
-                                            <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg shadow-indigo-200">
-                                                <div className="flex justify-between items-center mb-2">
-                                                    <span className="text-indigo-200 text-xs font-bold">TOTAL REF</span>
-                                                    <span className="text-2xl font-black">Ref {parseFloat(selectedAuditProduct.total_value_usd).toFixed(2)}</span>
-                                                </div>
-                                                <div className="h-px bg-indigo-500 my-2"></div>
-                                                <div className="flex justify-between items-center">
-                                                    <span className="text-indigo-200 text-xs font-bold">TOTAL BS</span>
-                                                    <span className="text-lg font-bold">Bs {(parseFloat(selectedAuditProduct.total_value_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
-                                                </div>
+                                            <div className="h-px bg-indigo-500 my-2"></div>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-indigo-200 text-xs font-bold">TOTAL BS</span>
+                                                <span className="text-lg font-bold">Bs {(parseFloat(selectedAuditProduct.total_value_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                        )}
-                    </div>
+                        </div>
+                    )}
+                </div>
 
                 ) : (
                     <div className="h-full p-8 text-center text-red-500">Vista no encontrada.</div>
@@ -5132,30 +5057,45 @@ const printClosingReport = (shift) => {
                 </table>
             </div>
 
-            {/* Footer con Totales (CORREGIDO: MUESTRA FLUJO DE CAJA REAL Y FALLBACK PARA BS) */}
+            {/* Footer con Totales (CORREGIDO: FILTRA ANULADOS REALMENTE) */}
             <div className="p-5 border-t bg-white flex flex-col md:flex-row justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20 gap-4">
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-wide self-start md:self-center">
-                    Transacciones: <span className="text-gray-800 text-lg ml-1">{dailySalesList.length}</span>
+                    {/* Solo cuenta las ventas válidas */}
+                    Transacciones: <span className="text-gray-800 text-lg ml-1">{dailySalesList.filter(s => s.status !== 'ANULADO').length}</span>
+                    
+                    {/* Opcional: Muestra cuántas anuladas hay por separado */}
+                    {dailySalesList.some(s => s.status === 'ANULADO') && (
+                        <span className="ml-2 text-red-400 font-medium text-[10px]">
+                            ({dailySalesList.filter(s => s.status === 'ANULADO').length} Anuladas)
+                        </span>
+                    )}
                 </div>
 
                 <div className="flex flex-col items-end">
                     <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado (Dinero en Mano)</p>
 
                     <div className="flex items-end gap-4">
-                        {/* TOTAL EN BS (CALCULADO REAL CON FALLBACK) */}
+                        {/* TOTAL EN BS (FILTRANDO ANULADOS) */}
                         <div className="text-right">
                             <span className="text-[10px] font-bold text-gray-400 block">EN BOLÍVARES</span>
                             <span className="text-xl font-bold text-gray-600">
-                                {/* AQUÍ ESTÁ LA CORRECCIÓN: Si bcv_rate_snapshot es 0, usa bcvRate */}
-                                Bs {dailySalesList.reduce((acc, curr) => acc + (curr.amount_paid_usd * (curr.bcv_rate_snapshot || bcvRate)), 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
+                                Bs {dailySalesList.reduce((acc, curr) => {
+                                    // SI ESTÁ ANULADO, NO SUMA NADA
+                                    if (curr.status === 'ANULADO') return acc;
+                                    return acc + (curr.amount_paid_usd * (curr.bcv_rate_snapshot || bcvRate));
+                                }, 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
                             </span>
                         </div>
 
-                        {/* TOTAL EN USD (CALCULADO REAL) */}
+                        {/* TOTAL EN USD (FILTRANDO ANULADOS) */}
                         <div className="text-right border-l pl-4 border-gray-200">
                             <span className="text-[10px] font-bold text-higea-blue block">EN DÓLARES (REF)</span>
                             <span className="text-3xl font-black text-higea-blue leading-none">
-                                Ref {dailySalesList.reduce((acc, curr) => acc + curr.amount_paid_usd, 0).toFixed(2)}
+                                Ref {dailySalesList.reduce((acc, curr) => {
+                                    // SI ESTÁ ANULADO, NO SUMA NADA
+                                    if (curr.status === 'ANULADO') return acc;
+                                    return acc + curr.amount_paid_usd;
+                                }, 0).toFixed(2)}
                             </span>
                         </div>
                     </div>
