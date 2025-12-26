@@ -2042,10 +2042,10 @@ const promptOpenCash = async () => {
         }
     };
 	
-	// --- 💰 FUNCIÓN MAESTRA DE CIERRE DE CAJA (UX EN TIEMPO REAL) ---
+	// --- 💰 FUNCIÓN MAESTRA DE CIERRE DE CAJA (UX EN TIEMPO REAL & MULTI-MÉTODO) ---
     const handleCashClose = async () => {
         // 1. Obtener datos del backend
-        Swal.fire({ title: 'Calculando totales...', didOpen: () => Swal.showLoading() });
+        Swal.fire({ title: 'Auditando transacciones...', didOpen: () => Swal.showLoading() });
         let statusData;
         try {
             const res = await axios.get(`${API_URL}/cash/current-status`);
@@ -2059,128 +2059,138 @@ const promptOpenCash = async () => {
         const sys = statusData.system_totals;
         const initial = statusData.shift_info;
 
-        // Totales Esperados
-        const expCash = parseFloat(initial.initial_cash_usd) + sys.cash_usd;
-        const expBs = parseFloat(initial.initial_cash_ves) + sys.cash_ves;
+        // --- CÁLCULOS DE TOTALES ESPERADOS ---
+        // Efectivo (Base + Ventas)
+        const expCashUSD = parseFloat(initial.initial_cash_usd) + sys.cash_usd;
+        const expCashBs = parseFloat(initial.initial_cash_ves) + sys.cash_ves;
+        
+        // Bancos y Digitales (Solo Ventas)
         const expZelle = sys.zelle;
+        const expPunto = sys.punto;
+        const expPagoMovil = sys.pm;
+
+        // No Monetarios (Informativo: Salidas de inventario sin ingreso de dinero)
+        const totalDonations = sys.donations || 0;
 
         // 2. MODAL INTERACTIVO CON CÁLCULO EN VIVO
         await Swal.fire({
-            title: '<h2 class="text-2xl font-black text-gray-800">📠 Arqueo de Caja</h2>',
-            width: '800px',
+            title: '<h2 class="text-2xl font-black text-gray-800">📠 Arqueo General de Caja</h2>',
+            width: '900px', // Más ancho para visualizar todo cómodamente
             html: `
-                <div class="grid grid-cols-3 gap-4 text-left font-sans mb-4">
-                    <div class="font-bold text-gray-400 text-xs uppercase tracking-widest text-center">Método</div>
-                    <div class="font-bold text-gray-400 text-xs uppercase tracking-widest text-center">Sistema Espera</div>
-                    <div class="font-bold text-higea-blue text-xs uppercase tracking-widest text-center">Tú Cuentas (Real)</div>
+                <div class="text-left font-sans mb-4 space-y-6">
+                    
+                    <div class="bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-sm">
+                        <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 border-b pb-1 flex items-center gap-2">
+                            <span>💵</span> Dinero en Efectivo (Gaveta)
+                        </h4>
+                        <div class="grid grid-cols-3 gap-4 items-center">
+                            <div class="text-center pb-2"><span class="text-[10px] font-bold text-gray-400">MONEDA</span></div>
+                            <div class="text-center pb-2"><span class="text-[10px] font-bold text-gray-400">SISTEMA (BASE + VENTA)</span></div>
+                            <div class="text-center pb-2"><span class="text-[10px] font-bold text-higea-blue">CONTEO REAL (TU CUENTAS)</span></div>
 
-                    <div class="flex items-center gap-2 border-b pb-2">
-                        <div class="p-2 bg-green-100 rounded-lg text-green-700">💵</div>
-                        <div>
-                            <p class="font-bold text-gray-700">Efectivo ($)</p>
-                            <span id="diff-tag-cash" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-400">Cuadrado</span>
+                            <div class="flex items-center gap-2 pl-2"><span class="text-xl">🇺🇸</span> <span class="font-bold text-gray-700 text-sm">Dólares ($)</span></div>
+                            <div class="flex items-center justify-center bg-white rounded border border-gray-100 py-1"><span class="text-lg font-bold text-gray-500">$${expCashUSD.toFixed(2)}</span></div>
+                            <div>
+                                <input id="swal-input-cash" type="number" step="0.01" class="w-full text-center text-xl font-bold text-higea-blue border-2 border-gray-200 rounded-lg focus:border-higea-blue outline-none p-1 transition-all" placeholder="0.00">
+                            </div>
+
+                            <div class="flex items-center gap-2 pl-2"><span class="text-xl">🇻🇪</span> <span class="font-bold text-gray-700 text-sm">Bolívares (Bs)</span></div>
+                            <div class="flex items-center justify-center bg-white rounded border border-gray-100 py-1"><span class="text-lg font-bold text-gray-500">Bs ${expCashBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+                            <div>
+                                <input id="swal-input-bs" type="number" step="0.01" class="w-full text-center text-xl font-bold text-blue-600 border-2 border-gray-200 rounded-lg focus:border-blue-500 outline-none p-1 transition-all" placeholder="0.00">
+                            </div>
                         </div>
                     </div>
-                    <div class="flex items-center justify-center border-b pb-2">
-                        <span class="text-xl font-bold text-gray-400">$${expCash.toFixed(2)}</span>
-                    </div>
-                    <div class="border-b pb-2">
-                        <input id="swal-input-cash" type="number" step="0.01" class="w-full text-center text-xl font-bold text-higea-blue border-2 border-gray-200 rounded-xl focus:border-higea-blue outline-none p-2 transition-all" placeholder="0.00">
-                    </div>
 
-                    <div class="flex items-center gap-2 border-b pb-2">
-                        <div class="p-2 bg-blue-100 rounded-lg text-blue-700">📱</div>
-                        <div>
-                            <p class="font-bold text-gray-700">Bolívares (Bs)</p>
-                            <span id="diff-tag-bs" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-400">Cuadrado</span>
+                    <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm">
+                        <h4 class="text-xs font-bold text-blue-500 uppercase tracking-widest mb-3 border-b border-blue-200 pb-1 flex items-center gap-2">
+                            <span>🏦</span> Bancos y Plataformas Digitales
+                        </h4>
+                        <div class="grid grid-cols-3 gap-4">
+                            <div class="flex items-center gap-2"><span class="text-xl">💳</span> <span class="font-bold text-gray-700 text-sm">Punto Venta</span></div>
+                            <div class="flex items-center justify-center"><span class="text-sm font-bold text-gray-400">Esp: Bs ${expPunto.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+                            <div><input id="swal-input-punto" type="number" step="0.01" class="w-full text-center text-md font-bold text-gray-700 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-300 outline-none p-1 bg-white" placeholder="0.00"></div>
+
+                            <div class="flex items-center gap-2"><span class="text-xl">📱</span> <span class="font-bold text-gray-700 text-sm">Pago Móvil</span></div>
+                            <div class="flex items-center justify-center"><span class="text-sm font-bold text-gray-400">Esp: Bs ${expPagoMovil.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span></div>
+                            <div><input id="swal-input-pm" type="number" step="0.01" class="w-full text-center text-md font-bold text-gray-700 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-300 outline-none p-1 bg-white" placeholder="0.00"></div>
+
+                            <div class="flex items-center gap-2"><span class="text-xl">🟣</span> <span class="font-bold text-gray-700 text-sm">Zelle</span></div>
+                            <div class="flex items-center justify-center"><span class="text-sm font-bold text-gray-400">Esp: $${expZelle.toFixed(2)}</span></div>
+                            <div><input id="swal-input-zelle" type="number" step="0.01" class="w-full text-center text-md font-bold text-purple-600 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-300 outline-none p-1 bg-white" placeholder="0.00"></div>
                         </div>
                     </div>
-                    <div class="flex items-center justify-center border-b pb-2">
-                        <span class="text-xl font-bold text-gray-400">Bs ${expBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
-                    </div>
-                    <div class="border-b pb-2">
-                        <input id="swal-input-bs" type="number" step="0.01" class="w-full text-center text-xl font-bold text-blue-600 border-2 border-gray-200 rounded-xl focus:border-blue-500 outline-none p-2 transition-all" placeholder="0.00">
-                    </div>
 
-                    <div class="flex items-center gap-2 border-b pb-2">
-                        <div class="p-2 bg-purple-100 rounded-lg text-purple-700">zk</div>
-                        <div>
-                            <p class="font-bold text-gray-700">Zelle ($)</p>
-                            <span id="diff-tag-zelle" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-400">Cuadrado</span>
+                    ${totalDonations > 0 ? `
+                    <div class="bg-yellow-50 p-3 rounded-xl border border-yellow-200 flex items-center justify-between shadow-sm animate-pulse">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-yellow-100 p-2 rounded-full"><span class="text-xl">🎁</span></div>
+                            <div>
+                                <p class="text-sm font-bold text-yellow-800">Donaciones / Regalos Hoy</p>
+                                <p class="text-xs text-yellow-600">Salida de inventario autorizada sin ingreso monetario.</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-xs font-bold text-yellow-600 block">MONTO ESTIMADO</span>
+                            <span class="text-xl font-black text-yellow-700">Ref ${totalDonations.toFixed(2)}</span>
                         </div>
                     </div>
-                    <div class="flex items-center justify-center border-b pb-2">
-                        <span class="text-xl font-bold text-gray-400">$${expZelle.toFixed(2)}</span>
-                    </div>
-                    <div class="border-b pb-2">
-                        <input id="swal-input-zelle" type="number" step="0.01" class="w-full text-center text-xl font-bold text-purple-600 border-2 border-gray-200 rounded-xl focus:border-purple-500 outline-none p-2 transition-all" placeholder="0.00">
-                    </div>
+                    ` : ''}
+                    
+                    <textarea id="swal-notes" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100 shadow-inner" placeholder="📝 Observaciones del Cierre (Sobrantes, faltantes justificados, notas)..."></textarea>
                 </div>
-                
-                <textarea id="swal-notes" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100" placeholder="📝 Observaciones (Opcional): Justificar diferencias aquí..."></textarea>
             `,
-            confirmButtonText: '🔐 Confirmar Cierre',
-            confirmButtonColor: '#1e293b', // Slate 800
+            confirmButtonText: '🔐 Confirmar y Cerrar',
+            confirmButtonColor: '#1e293b',
             showCancelButton: true,
             cancelButtonText: 'Cancelar',
             customClass: { popup: 'rounded-3xl' },
             
-            // --- AQUÍ OCURRE LA MAGIA DEL TIEMPO REAL ---
+            // --- PRE-LLENADO INTELIGENTE (UX) ---
             didOpen: () => {
-                const inputCash = document.getElementById('swal-input-cash');
-                const inputBs = document.getElementById('swal-input-bs');
-                const inputZelle = document.getElementById('swal-input-zelle');
-
-                // Función auxiliar para actualizar etiquetas
-                const updateTag = (inputVal, expected, tagId, symbol = '$') => {
-                    const val = parseFloat(inputVal) || 0;
-                    const diff = val - expected;
-                    const tag = document.getElementById(tagId);
-                    
-                    if (Math.abs(diff) < 0.1) {
-                        tag.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-green-100 text-green-700";
-                        tag.innerText = "✅ Cuadrado";
-                    } else if (diff > 0) {
-                        tag.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700";
-                        tag.innerText = `⚠️ Sobra ${symbol}${diff.toFixed(2)}`;
-                    } else {
-                        tag.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700";
-                        tag.innerText = `❌ Falta ${symbol}${Math.abs(diff).toFixed(2)}`;
-                    }
-                };
-
-                // Listeners
-                inputCash.addEventListener('input', (e) => updateTag(e.target.value, expCash, 'diff-tag-cash'));
-                inputBs.addEventListener('input', (e) => updateTag(e.target.value, expBs, 'diff-tag-bs', 'Bs '));
-                inputZelle.addEventListener('input', (e) => updateTag(e.target.value, expZelle, 'diff-tag-zelle'));
+                // Pre-llenamos los campos digitales porque suelen ser exactos (menos error humano)
+                // El usuario puede editarlos si el banco cobró comisión o hubo un error
+                document.getElementById('swal-input-punto').value = expPunto.toFixed(2);
+                document.getElementById('swal-input-pm').value = expPagoMovil.toFixed(2);
+                document.getElementById('swal-input-zelle').value = expZelle.toFixed(2);
+                
+                // Dejamos Efectivo vacío para obligar al conteo físico
+                document.getElementById('swal-input-cash').focus();
             },
+
             preConfirm: () => {
                 return {
                     cash_usd: document.getElementById('swal-input-cash').value || 0,
                     cash_ves: document.getElementById('swal-input-bs').value || 0,
                     zelle: document.getElementById('swal-input-zelle').value || 0,
-                    notes: document.getElementById('swal-notes').value,
-                    // Enviamos pago móvil y punto como 0 o sumados en cash_ves si prefieres simplificar
-                    pm: 0, 
-                    punto: 0
+                    pm: document.getElementById('swal-input-pm').value || 0,
+                    punto: document.getElementById('swal-input-punto').value || 0,
+                    notes: document.getElementById('swal-notes').value
                 }
             }
         }).then(async (result) => {
             if (result.isConfirmed) {
                 const declared = result.value;
                 
-                // Calculamos diferencias finales antes de enviar para confirmación de seguridad
-                const diffCash = parseFloat(declared.cash_usd) - expCash;
-                const hasDiff = Math.abs(diffCash) > 1; // Tolerancia $1
-
-                if (hasDiff) {
+                // Calculamos diferencias (Principalmente en efectivo, que es lo crítico)
+                const diffCash = parseFloat(declared.cash_usd) - expCashUSD;
+                
+                // Validación suave: Si hay mucha diferencia en efectivo, pedir confirmación extra
+                if (Math.abs(diffCash) > 1) {
                     const confirmDiff = await Swal.fire({
-                        title: '⚠️ ¿Cerrar con Descuadre?',
-                        text: `Hay una diferencia de $${diffCash.toFixed(2)}. ¿Deseas proceder y registrarla?`,
+                        title: '⚠️ Diferencia en Efectivo',
+                        html: `
+                            <p class="text-gray-600 mb-2">El efectivo declarado no coincide con el sistema.</p>
+                            <div class="bg-red-50 p-3 rounded text-red-700 font-bold mb-2">
+                                Diferencia: ${diffCash < 0 ? '-' : '+'}$${Math.abs(diffCash).toFixed(2)}
+                            </div>
+                            <p class="text-sm text-gray-500">¿Deseas cerrar la caja registrando esta diferencia?</p>
+                        `,
                         icon: 'warning',
                         showCancelButton: true,
                         confirmButtonText: 'Sí, Registrar Diferencia',
-                        confirmButtonColor: '#E11D2B'
+                        confirmButtonColor: '#E11D2B',
+                        cancelButtonText: 'Verificar Conteo'
                     });
                     if (!confirmDiff.isConfirmed) return;
                 }
@@ -2190,26 +2200,26 @@ const promptOpenCash = async () => {
                     Swal.fire({ title: 'Cerrando turno...', didOpen: () => Swal.showLoading() });
                     await axios.post(`${API_URL}/cash/close`, { declared, notes: declared.notes });
 
-                    // --- ACTUALIZACIÓN UI INMEDIATA (LO QUE PEDISTE) ---
-                    setCashShift(null); // Esto pone el widget en ROJO "Caja Cerrada" sin recargar
+                    // --- ACTUALIZACIÓN UI INMEDIATA ---
+                    setCashShift(null); // Actualiza widget lateral a ROJO
                     
-                    // Si tienes el módulo BI abierto, actualizamos el historial
+                    // Si el usuario está viendo el reporte de cierres, recargarlo
                     if (view === 'ADVANCED_REPORTS' && reportTab === 'CLOSINGS') fetchClosingsHistory();
 
                     Swal.fire({
                         icon: 'success',
-                        title: '¡Jornada Cerrada!',
-                        text: 'El reporte ha sido guardado exitosamente.',
-                        confirmButtonText: 'Generar PDF',
+                        title: '¡Caja Cerrada Exitosamente!',
+                        text: 'El reporte final ha sido guardado y el turno finalizado.',
+                        confirmButtonText: '🖨️ Generar PDF',
                         showCancelButton: true,
                         cancelButtonText: 'Cerrar'
                     }).then((resPDF) => {
-                        // Aquí llamamos a la función de imprimir el último cierre (opcional, lógica abajo)
-                        if(resPDF.isConfirmed) fetchClosingsHistory(); 
+                        if(resPDF.isConfirmed) fetchClosingsHistory(); // O llamar directo a printClosingReport si tienes el objeto
                     });
 
                 } catch (err) {
-                    Swal.fire('Error', 'No se pudo cerrar la caja', 'error');
+                    console.error(err);
+                    Swal.fire('Error', 'No se pudo cerrar la caja. Intente nuevamente.', 'error');
                 }
             }
         });

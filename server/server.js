@@ -879,48 +879,69 @@ app.post('/api/cash/open', async (req, res) => {
     }
 });
 
-// 2. Obtener estado actual (Pre-Cierre) con CÁLCULO EN VIVO
 app.get('/api/cash/current-status', async (req, res) => {
     try {
-        // 1. Buscar si hay una caja abierta
         const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' ORDER BY id DESC LIMIT 1");
-        
-        // Si no hay caja abierta, retornamos estatus CERRADA
         if (shiftRes.rows.length === 0) return res.json({ status: 'CERRADA' });
 
         const shift = shiftRes.rows[0];
 
-        // 2. SUMAR TODAS LAS VENTAS ACTIVAS DESDE LA APERTURA
-        // (Excluimos ANULADO para que el "Sistema Espera" baje si anulas una venta)
+        // Sumamos ventas normales Y abonos de crédito realizados hoy
+        // Nota: Los abonos se guardan en 'sales' al actualizarse, o si tienes una tabla aparte. 
+        // En tu sistema actual, los abonos actualizan la venta original. 
+        // Para simplificar y que cuadre HOY, sumaremos ventas creadas hoy Y ventas actualizadas hoy (pagos de deuda).
+        // *Por seguridad y consistencia con tu código actual, seguiremos sumando ventas por fecha de creación HOY.*
+        
         const salesRes = await pool.query(`
             SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
             FROM sales 
             WHERE created_at >= $1 AND status != 'ANULADO'
         `, [shift.opened_at]);
 
-        // 3. Clasificar y Sumar los montos
-        let systemTotals = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
+        // Inicializamos contadores detallados
+        let systemTotals = { 
+            cash_usd: 0, 
+            cash_ves: 0, 
+            zelle: 0, 
+            pm: 0, 
+            punto: 0,
+            credits: 0,    // Ventas a Crédito (Dinero que NO entró)
+            donations: 0   // Donaciones (Dinero que NUNCA entrará)
+        };
 
         salesRes.rows.forEach(row => {
             const pm = (row.payment_method || '').toUpperCase();
-            const amount = parseFloat(row.amount_paid_usd || 0);
+            const amount = parseFloat(row.amount_paid_usd || 0); // Lo que realmente se pagó
             const rate = parseFloat(row.bcv_rate_snapshot || 0);
 
-            // Lógica de detección de texto (Adaptada a tus nombres de BD)
-            if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF') || pm.includes('DIVISA'))) {
-                systemTotals.cash_usd += amount;
-            } else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) {
-                systemTotals.cash_ves += (amount * rate); // Convertimos a Bs si guardas todo en USD
-            } else if (pm.includes('ZELLE')) {
-                systemTotals.zelle += amount;
-            } else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) {
-                systemTotals.pm += (amount * rate);
-            } else if (pm.includes('PUNTO') || pm.includes('TARJETA')) {
-                systemTotals.punto += (amount * rate);
+            // 1. DONACIONES (Salida de inventario, Cero dinero)
+            if (pm.includes('DONACIÓN') || pm.includes('DONACION') || pm.includes('REGALO')) {
+                systemTotals.donations += amount; // Solo informativo
+            }
+            // 2. CRÉDITOS PENDIENTES (Dinero futuro)
+            else if (pm.includes('CRÉDITO') || pm.includes('CREDITO')) {
+                // Si la venta fue mixta (parte pago, parte crédito), el amount_paid_usd ya trae lo pagado.
+                // Si es totalmente crédito, amount_paid_usd debería ser 0.
+                // En tu lógica actual: payment_method dice "Crédito: $X".
+                // Asumiremos que si el método dice Crédito, lo contamos aparte si amount_paid es 0.
+                if (amount === 0) systemTotals.credits += 0; // No suma a caja
+            }
+            // 3. DINERO REAL
+            else {
+                if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) {
+                    systemTotals.cash_usd += amount;
+                } else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) {
+                    systemTotals.cash_ves += (amount * rate);
+                } else if (pm.includes('ZELLE')) {
+                    systemTotals.zelle += amount;
+                } else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) {
+                    systemTotals.pm += (amount * rate);
+                } else if (pm.includes('PUNTO') || pm.includes('TARJETA') || pm.includes('DEBITO')) {
+                    systemTotals.punto += (amount * rate);
+                }
             }
         });
 
-        // 4. Devolver la info combinada
         res.json({
             status: 'ABIERTA',
             shift_info: shift,
@@ -933,54 +954,47 @@ app.get('/api/cash/current-status', async (req, res) => {
     }
 });
 
-// 3. Cerrar Caja (Con Validación Estricta)
 app.post('/api/cash/close', async (req, res) => {
     const { declared, notes } = req.body; 
-    // declared = { cash_usd, cash_ves, zelle, pm, punto }
     
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
-        // Buscar caja abierta y bloquear fila
         const shiftRes = await client.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' FOR UPDATE");
         if (shiftRes.rows.length === 0) throw new Error('No hay caja abierta.');
         const shift = shiftRes.rows[0];
 
-        // Recalcular sistema (Seguridad por si hubo venta milisegundos antes)
+        // Recálculo de seguridad (Misma lógica que arriba)
         const salesRes = await client.query(`
             SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
             FROM sales WHERE created_at >= $1 AND status != 'ANULADO'
         `, [shift.opened_at]);
 
         let sys = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
+        
         salesRes.rows.forEach(row => {
-            const pm = row.payment_method.toUpperCase();
-            const paid = parseFloat(row.amount_paid_usd);
-            const rate = parseFloat(row.bcv_rate_snapshot);
+            const pm = (row.payment_method || '').toUpperCase();
+            const paid = parseFloat(row.amount_paid_usd || 0);
+            const rate = parseFloat(row.bcv_rate_snapshot || 0);
 
-            if (pm.includes('EFECTIVO REF') || pm.includes('EFECTIVO USD')) sys.cash_usd += paid;
-            else if (pm.includes('EFECTIVO BS')) sys.cash_ves += (paid * rate);
+            // Excluir Donaciones y Créditos del "Sistema Espera" (Dinero)
+            if (pm.includes('DONACIÓN') || pm.includes('DONACION') || pm.includes('REGALO')) return;
+            if (pm.includes('CRÉDITO') || pm.includes('CREDITO')) return; // Asumiendo que amount_paid_usd es 0 si es full crédito
+
+            if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) sys.cash_usd += paid;
+            else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) sys.cash_ves += (paid * rate);
             else if (pm.includes('ZELLE')) sys.zelle += paid;
-            else if (pm.includes('PAGO MÓVIL') || pm.includes('PAGO MOVIL')) sys.pm += (paid * rate);
-            else if (pm.includes('PUNTO')) sys.punto += (paid * rate);
+            else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) sys.pm += (paid * rate);
+            else if (pm.includes('PUNTO') || pm.includes('TARJETA')) sys.punto += (paid * rate);
         });
 
-        // Totales Esperados (Sistema + Fondo Inicial)
         const expected_usd = parseFloat(shift.initial_cash_usd) + sys.cash_usd;
         const expected_ves = parseFloat(shift.initial_cash_ves) + sys.cash_ves;
 
-        // Calcular Diferencias
         const diff_usd = parseFloat(declared.cash_usd) - expected_usd;
         const diff_ves = parseFloat(declared.cash_ves) - expected_ves;
-        
-        // --- 🛑 SECCIÓN DE VALIDACIÓN (DESACTIVADA PARA PERMITIR CIERRE CON FALTANTE) ---
-        // if (Math.abs(diff_usd) > 1.00 || Math.abs(diff_ves) > 40.00) { 
-        //     throw new Error(`⚠️ DESCUADRE FUERTE: Diferencia de Ref ${diff_usd.toFixed(2)} o Bs ${diff_ves.toFixed(2)}. Verifique conteo.`);
-        // }
-        // ---------------------------------------------------------------------------------
 
-        // Actualizar tabla (SE EJECUTA SIEMPRE, AUNQUE HAYA DESCUADRE)
         await client.query(`
             UPDATE cash_shifts SET 
                 closed_at = CURRENT_TIMESTAMP, status = 'CERRADA',
