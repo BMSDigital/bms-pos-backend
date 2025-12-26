@@ -162,6 +162,12 @@ function App() {
     // Estados para Auditoría de Inventario
     const [inventoryReportPage, setInventoryReportPage] = useState(1);
     const [selectedAuditProduct, setSelectedAuditProduct] = useState(null); // Para el modal de detalle
+	
+	// --- ESTADOS NUEVOS: GESTIÓN DE INVENTARIO (KARDEX) ---
+    const [isMovementModalOpen, setIsMovementModalOpen] = useState(false);
+    const [movementProduct, setMovementProduct] = useState(null); 
+    const [movementType, setMovementType] = useState('IN'); // 'IN' o 'OUT'
+    const [movementForm, setMovementForm] = useState({ quantity: '', document_ref: '', reason: 'COMPRA', cost_usd: '' });
 
     // --- ESTADOS PARA REPORTES AVANZADOS (NUEVO SISTEMA DE PESTAÑAS) ---
     const [reportTab, setReportTab] = useState('DASHBOARD'); // 'DASHBOARD', 'SALES', 'INVENTORY'
@@ -458,6 +464,50 @@ const promptOpenCash = async () => {
             return () => clearTimeout(timer);
         }
     }, [salesSearch, reportTab]); // <--- AQUÍ SÍ DEJAMOS 'reportTab'
+	
+	// ABRIR MODAL
+    const openMovementModal = (product, type) => {
+        setMovementProduct(product);
+        setMovementType(type);
+        setMovementForm({
+            quantity: '',
+            document_ref: '',
+            reason: type === 'IN' ? 'COMPRA_PROVEEDOR' : 'MERMA_DAÑO',
+            cost_usd: ''
+        });
+        setIsMovementModalOpen(true);
+    };
+
+    // ENVIAR MOVIMIENTO (Conexión Backend)
+    const handleMovementSubmit = async (e) => {
+        e.preventDefault();
+        if (!movementForm.quantity || movementForm.quantity <= 0) return Swal.fire('Error', 'Cantidad inválida', 'warning');
+        if (movementType === 'IN' && !movementForm.document_ref) return Swal.fire('Atención', 'El Nro de Factura es obligatorio para entradas.', 'warning');
+
+        try {
+            Swal.fire({ title: 'Actualizando Kardex...', didOpen: () => Swal.showLoading() });
+            
+            await axios.post(`${API_URL}/inventory/movement`, {
+                product_id: movementProduct.id,
+                type: movementType,
+                quantity: movementForm.quantity,
+                document_ref: movementForm.document_ref,
+                reason: movementForm.reason,
+                cost_usd: movementForm.cost_usd
+            });
+
+            Swal.fire({ icon: 'success', title: 'Movimiento Registrado', timer: 1500, showConfirmButton: false });
+            setIsMovementModalOpen(false);
+            fetchInventoryDetail(); // Recargar datos
+            
+            // Actualizar lista general de productos para reflejar cambios
+            const prodRes = await axios.get(`${API_URL}/products`);
+            setProducts(prodRes.data.map(p => ({ ...p, is_taxable: p.is_taxable === true || p.is_taxable === 1 })).sort((a, b) => a.id - b.id));
+
+        } catch (error) {
+            Swal.fire('Error', error.response?.data?.error || 'Error al procesar', 'error');
+        }
+    };
 	
 
     // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta: Inventario, Ventas Detalle y Resumen Gerencial) ---
@@ -3820,154 +3870,136 @@ const handleVoidSale = async (sale) => {
                         )}
                     </div>
                 ) : view === 'PRODUCTS' ? (
-                    /* MÓDULO DE PRODUCTOS (UX ACTUALIZADA: BARCODE + STATUS + ACCIONES + FECHA ACTUALIZACIÓN) */
-                    <div className="p-4 md:p-8 overflow-y-auto h-full relative bg-slate-50">
+                /* MÓDULO DE PRODUCTOS (UX PRO + KARDEX EN LISTA) */
+                <div className="p-4 md:p-8 overflow-y-auto h-full relative bg-slate-50">
 
-                        {/* CABECERA Y CONTROLES */}
-                        <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                            <div>
-                                <h2 className="text-2xl font-black text-gray-800">Inventario Maestro</h2>
-                                <p className="text-sm text-gray-500">Control total de productos, precios y disponibilidad</p>
-                            </div>
-
-                            <div className="flex w-full md:w-auto gap-2">
-                                <div className="relative w-full md:w-64">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-                                    <input
-                                        type="text"
-                                        placeholder="Buscar nombre, código..."
-                                        value={productSearchQuery}
-                                        onChange={(e) => setProductSearchQuery(e.target.value)}
-                                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-higea-blue outline-none shadow-sm text-sm"
-                                    />
-                                </div>
-
-                                <button
-                                    onClick={() => {
-                                        setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE' });
-                                        setIsProductFormOpen(true);
-                                    }}
-                                    className="hidden md:flex bg-higea-blue text-white px-5 py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 transition-all items-center gap-2 whitespace-nowrap"
-                                >
-                                    <span>+</span> Nuevo Ítem
-                                </button>
-                            </div>
+                    {/* CABECERA Y CONTROLES */}
+                    <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+                        <div>
+                            <h2 className="text-2xl font-black text-gray-800">Inventario Maestro</h2>
+                            <p className="text-sm text-gray-500">Gestión de existencias, costos y auditoría (Kardex)</p>
                         </div>
 
-                        {/* TABLA DE INVENTARIO */}
-                        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                            <div className="hidden md:grid grid-cols-12 bg-gray-50 p-4 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                                <div className="col-span-1">ID</div>
-                                <div className="col-span-4">Producto / Código</div>
-                                <div className="col-span-2">Categoría</div>
-                                <div className="col-span-2 text-right">Precio Ref</div>
-                                <div className="col-span-1 text-center">Stock</div>
-                                <div className="col-span-2 text-center">Acción</div>
+                        <div className="flex w-full md:w-auto gap-2">
+                            <div className="relative w-full md:w-64">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                                <input
+                                    type="text"
+                                    placeholder="Buscar nombre, código..."
+                                    value={productSearchQuery}
+                                    onChange={(e) => setProductSearchQuery(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-higea-blue outline-none shadow-sm text-sm"
+                                />
                             </div>
 
-                            <div className="divide-y divide-gray-100">
-                                {(() => {
-                                    const inventoryPerPage = 10;
-                                    const indexOfLastInventory = inventoryCurrentPage * inventoryPerPage;
-                                    const indexOfFirstInventory = indexOfLastInventory - inventoryPerPage;
-                                    const currentInventory = filteredInventory.slice(indexOfFirstInventory, indexOfLastInventory);
-                                    const inventoryTotalPages = Math.ceil(filteredInventory.length / inventoryPerPage);
+                            <button
+                                onClick={() => {
+                                    setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE' });
+                                    setIsProductFormOpen(true);
+                                }}
+                                className="hidden md:flex bg-higea-blue text-white px-5 py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 transition-all items-center gap-2 whitespace-nowrap"
+                            >
+                                <span>+</span> Nuevo Ítem
+                            </button>
+                        </div>
+                    </div>
 
-                                    if (filteredInventory.length === 0) return <div className="p-10 text-center text-gray-400"><div className="text-4xl mb-2">📦</div><p>No se encontraron productos.</p></div>;
+                    {/* TABLA DE INVENTARIO */}
+                    <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div className="hidden md:grid grid-cols-12 bg-gray-50 p-4 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                            <div className="col-span-1">ID</div>
+                            <div className="col-span-4">Producto / Código</div>
+                            <div className="col-span-2">Categoría</div>
+                            <div className="col-span-2 text-right">Precio Ref</div>
+                            <div className="col-span-1 text-center">Stock</div>
+                            <div className="col-span-2 text-center">Gestión (Kardex)</div>
+                        </div>
 
-                                    return (
-                                        <>
-                                            {currentInventory.map((p) => (
-                                                <div
-                                                    key={p.id}
-                                                    // ACCIÓN PRINCIPAL: Clic en la fila abre edición
-                                                    onClick={() => {
-                                                        setProductForm({
-                                                            id: p.id, name: p.name, category: p.category,
-                                                            price_usd: parseFloat(p.price_usd), stock: p.stock,
-                                                            icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
-                                                            barcode: p.barcode || '', status: p.status || 'ACTIVE'
-                                                        });
-                                                        setIsProductFormOpen(true);
-                                                    }}
-                                                    className={`p-4 transition-colors group cursor-pointer border-b border-gray-100 last:border-0 ${p.status === 'INACTIVE' ? 'bg-gray-50 opacity-75' : 'hover:bg-blue-50 bg-white'}`}
-                                                >
-                                                    {/* --- VISTA ESCRITORIO --- */}
-                                                    <div className="hidden md:grid grid-cols-12 items-center gap-2">
-                                                        <div className="col-span-1 font-bold text-gray-400">#{p.id}</div>
-                                                        <div className="col-span-4 font-medium text-gray-800 flex items-center gap-3">
-                                                            <div className={`h-10 w-10 rounded-lg flex items-center justify-center text-xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>
-                                                                {p.icon_emoji}
-                                                            </div>
-                                                            <div>
-                                                                <p className="leading-tight font-bold">{p.name}</p>
+                        <div className="divide-y divide-gray-100">
+                            {(() => {
+                                const inventoryPerPage = 10;
+                                const indexOfLastInventory = inventoryCurrentPage * inventoryPerPage;
+                                const indexOfFirstInventory = indexOfLastInventory - inventoryPerPage;
+                                const currentInventory = filteredInventory.slice(indexOfFirstInventory, indexOfLastInventory);
+                                const inventoryTotalPages = Math.ceil(filteredInventory.length / inventoryPerPage);
 
-                                                                {/* --- NUEVO: MOSTRAR FECHA DE ACTUALIZACIÓN (UX ESCRITORIO) --- */}
-                                                                <p className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
-                                                                    <span>🕒</span>
-                                                                    {p.last_stock_update
-                                                                        ? new Date(p.last_stock_update).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-                                                                        : 'Sin movimientos recientes'}
-                                                                </p>
-                                                                {/* --------------------------------------------------------------- */}
+                                if (filteredInventory.length === 0) return <div className="p-10 text-center text-gray-400"><div className="text-4xl mb-2">📦</div><p>No se encontraron productos.</p></div>;
 
-                                                                <div className="flex gap-2 mt-1">
-                                                                    {p.barcode && <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 font-mono">||| {p.barcode}</span>}
-                                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.is_taxable ? 'text-blue-600 bg-blue-50' : 'text-green-600 bg-green-50'}`}>
-                                                                        {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
-                                                                    </span>
-                                                                    {p.status === 'INACTIVE' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">INACTIVO</span>}
-                                                                </div>
-                                                            </div>
+                                return (
+                                    <>
+                                        {currentInventory.map((p) => (
+                                            <div
+                                                key={p.id}
+                                                // Al hacer clic en la fila abrimos edición (comportamiento original)
+                                                onClick={() => {
+                                                    setProductForm({
+                                                        id: p.id, name: p.name, category: p.category,
+                                                        price_usd: parseFloat(p.price_usd), stock: p.stock,
+                                                        icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
+                                                        barcode: p.barcode || '', status: p.status || 'ACTIVE'
+                                                    });
+                                                    setIsProductFormOpen(true);
+                                                }}
+                                                className={`p-4 transition-colors group cursor-pointer border-b border-gray-100 last:border-0 ${p.status === 'INACTIVE' ? 'bg-gray-50 opacity-75' : 'hover:bg-blue-50 bg-white'}`}
+                                            >
+                                                {/* --- VISTA ESCRITORIO --- */}
+                                                <div className="hidden md:grid grid-cols-12 items-center gap-2">
+                                                    <div className="col-span-1 font-bold text-gray-400">#{p.id}</div>
+                                                    <div className="col-span-4 font-medium text-gray-800 flex items-center gap-3">
+                                                        <div className={`h-10 w-10 rounded-lg flex items-center justify-center text-xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>
+                                                            {p.icon_emoji}
                                                         </div>
-                                                        <div className="col-span-2 text-gray-500 text-xs font-medium">{p.category}</div>
-                                                        <div className="col-span-2 text-right font-bold text-gray-700">Ref {parseFloat(p.price_usd).toFixed(2)}</div>
-                                                        <div className="col-span-1 text-center">
-                                                            <span className={`font-bold px-2 py-1 rounded-lg text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-50 text-green-700'}`}>
-                                                                {p.stock}
-                                                            </span>
-                                                        </div>
-                                                        <div className="col-span-2 text-center">
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation(); // <--- IMPORTANTE
-                                                                    setProductForm({
-                                                                        id: p.id, name: p.name, category: p.category,
-                                                                        price_usd: parseFloat(p.price_usd), stock: p.stock,
-                                                                        icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
-                                                                        barcode: p.barcode || '', status: p.status || 'ACTIVE'
-                                                                    });
-                                                                    setIsProductFormOpen(true);
-                                                                }}
-                                                                className="bg-white border border-gray-200 text-higea-blue hover:bg-higea-blue hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2 mx-auto z-10 relative"
-                                                            >
-                                                                <span>✏️</span> Editar
-                                                            </button>
+                                                        <div>
+                                                            <p className="leading-tight font-bold">{p.name}</p>
+                                                            <p className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
+                                                                <span>🕒</span>
+                                                                {p.last_stock_update
+                                                                    ? new Date(p.last_stock_update).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                                                                    : 'Sin movimientos'}
+                                                            </p>
+                                                            <div className="flex gap-2 mt-1">
+                                                                {p.barcode && <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 font-mono">||| {p.barcode}</span>}
+                                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.is_taxable ? 'text-blue-600 bg-blue-50' : 'text-green-600 bg-green-50'}`}>
+                                                                    {p.is_taxable ? 'GRAVADO' : 'EXENTO'}
+                                                                </span>
+                                                                {p.status === 'INACTIVE' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">INACTIVO</span>}
+                                                            </div>
                                                         </div>
                                                     </div>
+                                                    <div className="col-span-2 text-gray-500 text-xs font-medium">{p.category}</div>
+                                                    <div className="col-span-2 text-right font-bold text-gray-700">Ref {parseFloat(p.price_usd).toFixed(2)}</div>
+                                                    
+                                                    {/* COLUMNA STOCK (Con alerta visual) */}
+                                                    <div className="col-span-1 text-center">
+                                                        <span className={`font-black px-2 py-1 rounded-lg text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-green-50 text-green-700'}`}>
+                                                            {p.stock}
+                                                        </span>
+                                                    </div>
 
-                                                    {/* --- VISTA MÓVIL --- */}
-                                                    <div className="md:hidden flex justify-between items-center">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className={`h-12 w-12 rounded-xl flex items-center justify-center text-2xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>{p.icon_emoji}</div>
-                                                            <div>
-                                                                <p className="font-bold text-gray-800 text-sm line-clamp-1">{p.name}</p>
+                                                    {/* COLUMNA GESTIÓN (BOTONES NUEVOS) */}
+                                                    <div className="col-span-2 flex justify-center gap-1">
+                                                        {/* Botón Entrada (Verde) */}
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'IN'); }}
+                                                            className="bg-green-100 text-green-700 hover:bg-green-600 hover:text-white p-2 rounded-lg transition-all shadow-sm"
+                                                            title="Registrar Entrada (Compra)"
+                                                        >
+                                                            📥
+                                                        </button>
+                                                        
+                                                        {/* Botón Salida (Rojo) */}
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'OUT'); }}
+                                                            className="bg-red-100 text-red-700 hover:bg-red-600 hover:text-white p-2 rounded-lg transition-all shadow-sm"
+                                                            title="Registrar Salida (Merma/Ajuste)"
+                                                        >
+                                                            📤
+                                                        </button>
 
-                                                                {/* --- NUEVO: MOSTRAR FECHA DE ACTUALIZACIÓN (UX MÓVIL) --- */}
-                                                                <p className="text-[9px] text-gray-400">
-                                                                    🕒 {p.last_stock_update ? new Date(p.last_stock_update).toLocaleDateString() : '-'}
-                                                                </p>
-                                                                {/* ---------------------------------------------------------- */}
-
-                                                                <div className="flex flex-wrap gap-1 mt-1">
-                                                                    {p.barcode && <span className="text-[9px] bg-gray-100 px-1 rounded border">||| {p.barcode}</span>}
-                                                                </div>
-                                                                <p className="font-black text-higea-red text-xs mt-1">Ref {parseFloat(p.price_usd).toFixed(2)}</p>
-                                                            </div>
-                                                        </div>
+                                                        {/* Botón Editar (Gris - Original) */}
                                                         <button
                                                             onClick={(e) => {
-                                                                e.stopPropagation(); // <--- IMPORTANTE
+                                                                e.stopPropagation();
                                                                 setProductForm({
                                                                     id: p.id, name: p.name, category: p.category,
                                                                     price_usd: parseFloat(p.price_usd), stock: p.stock,
@@ -3976,164 +4008,278 @@ const handleVoidSale = async (sale) => {
                                                                 });
                                                                 setIsProductFormOpen(true);
                                                             }}
-                                                            className="bg-gray-50 text-higea-blue border border-gray-200 p-2 rounded-lg active:scale-95"
+                                                            className="bg-gray-100 text-gray-500 hover:bg-higea-blue hover:text-white p-2 rounded-lg transition-all shadow-sm"
+                                                            title="Editar Ficha"
                                                         >
                                                             ✏️
                                                         </button>
                                                     </div>
                                                 </div>
-                                            ))}
 
-                                            {/* PAGINACIÓN */}
-                                            {inventoryTotalPages > 1 && (
-                                                <div className="p-4 border-t border-gray-100 flex justify-center items-center gap-4">
-                                                    <button onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))} disabled={inventoryCurrentPage === 1} className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50">Anterior</button>
-                                                    <span className="text-xs font-bold text-gray-500">Pág {inventoryCurrentPage} de {inventoryTotalPages}</span>
-                                                    <button onClick={() => setInventoryCurrentPage(prev => Math.min(inventoryTotalPages, prev + 1))} disabled={inventoryCurrentPage === inventoryTotalPages} className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50">Siguiente</button>
-                                                </div>
-                                            )}
-                                        </>
-                                    );
-                                })()}
-                            </div>
-                        </div>
-
-                        <button onClick={() => { setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE' }); setIsProductFormOpen(true); }} className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-higea-blue text-white rounded-full shadow-2xl flex items-center justify-center text-3xl font-light z-40 active:scale-90 transition-transform">+</button>
-
-                        {/* --- MODAL FORMULARIO --- */}
-                        {isProductFormOpen && (
-                            <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                                <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden max-h-[95vh] flex flex-col">
-                                    <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
-                                        <h3 className="text-lg font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
-                                        <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold">✕</button>
-                                    </div>
-
-                                    <div className="p-6 overflow-y-auto custom-scrollbar">
-                                        <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
-
-                                            {/* NOMBRE */}
-                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Nombre (*)</label>
-                                            <input type="text" name="name" placeholder="Ej: Pizza Margarita" value={productForm.name} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl mb-4 focus:border-higea-blue outline-none font-medium" required autoFocus />
-
-                                            {/* PRECIO Y CATEGORÍA */}
-                                            <div className="grid grid-cols-2 gap-4 mb-4">
-                                                <div>
-                                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio Ref (*)</label>
-                                                    <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
-                                                </div>
-                                                {/* ========================================================== */}
-                                                {/* PEGAR ESTE BLOQUE NUEVO */}
-                                                <div className="animate-fade-in-up">
-                                                    {/* Encabezado con Contador */}
-                                                    <div className="flex justify-between items-center mb-1 ml-1">
-                                                        <label className="text-xs font-bold text-gray-500 block">Categoría</label>
-                                                        <span className="text-[10px] text-higea-blue font-bold bg-blue-50 px-2 py-0.5 rounded-full">
-                                                            {uniqueCategories.length} opciones
-                                                        </span>
+                                                {/* --- VISTA MÓVIL --- */}
+                                                <div className="md:hidden flex justify-between items-center">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`h-12 w-12 rounded-xl flex items-center justify-center text-2xl ${p.status === 'INACTIVE' ? 'bg-gray-200 grayscale' : 'bg-blue-50'}`}>{p.icon_emoji}</div>
+                                                        <div>
+                                                            <p className="font-bold text-gray-800 text-sm line-clamp-1">{p.name}</p>
+                                                            <p className="text-[9px] text-gray-400">🕒 {p.last_stock_update ? new Date(p.last_stock_update).toLocaleDateString() : '-'}</p>
+                                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                                {p.barcode && <span className="text-[9px] bg-gray-100 px-1 rounded border">||| {p.barcode}</span>}
+                                                            </div>
+                                                            <p className="font-black text-higea-red text-xs mt-1">Ref {parseFloat(p.price_usd).toFixed(2)}</p>
+                                                        </div>
                                                     </div>
-
-                                                    {/* A. Carrusel de Botones (Scroll Horizontal) */}
-                                                    <div className="flex gap-2 overflow-x-auto pb-3 mb-1 custom-scrollbar snap-x scroll-smooth">
-                                                        {uniqueCategories.map((cat) => (
-                                                            <button
-                                                                type="button"
-                                                                key={cat}
-                                                                onClick={() => setProductForm(prev => ({ ...prev, category: cat }))}
-                                                                className={`snap-start whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold border-2 transition-all active:scale-95 shadow-sm hover:shadow-md ${productForm.category === cat
-                                                                        ? 'bg-higea-blue text-white border-higea-blue scale-105'
-                                                                        : 'bg-white text-gray-500 border-gray-100 hover:border-higea-blue hover:text-higea-blue'
-                                                                    }`}
-                                                            >
-                                                                {cat}
-                                                            </button>
-                                                        ))}
-                                                    </div>
-
-                                                    {/* B. Input Inteligente (Autocompletar) */}
-                                                    <div className="relative group">
-                                                        <input
-                                                            type="text"
-                                                            name="category"
-                                                            list="category-suggestions"
-                                                            placeholder="Escribe o selecciona arriba..."
-                                                            value={productForm.category}
-                                                            onChange={handleProductFormChange}
-                                                            className="w-full border-2 border-gray-100 p-3 pl-4 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700 bg-gray-50 focus:bg-white transition-all group-hover:bg-white shadow-sm"
-                                                        />
-                                                        {/* Datalist Invisible para sugerencias nativas */}
-                                                        <datalist id="category-suggestions">
-                                                            {uniqueCategories.map(cat => <option key={cat} value={cat} />)}
-                                                        </datalist>
-
-                                                        {/* Ícono decorativo */}
-                                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-higea-blue transition-colors pointer-events-none text-lg">
-                                                            📂
+                                                    <div className="flex flex-col items-end gap-2">
+                                                        <span className={`font-bold px-2 py-0.5 rounded text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>{p.stock} Und</span>
+                                                        <div className="flex gap-2">
+                                                            <button onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'IN'); }} className="bg-green-50 text-green-700 p-2 rounded-lg border border-green-200 text-xs">📥</button>
+                                                            <button onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'OUT'); }} className="bg-red-50 text-red-700 p-2 rounded-lg border border-red-200 text-xs">📤</button>
+                                                            <button onClick={(e) => { 
+                                                                e.stopPropagation(); 
+                                                                setProductForm({
+                                                                    id: p.id, name: p.name, category: p.category,
+                                                                    price_usd: parseFloat(p.price_usd), stock: p.stock,
+                                                                    icon_emoji: p.icon_emoji, is_taxable: p.is_taxable,
+                                                                    barcode: p.barcode || '', status: p.status || 'ACTIVE'
+                                                                });
+                                                                setIsProductFormOpen(true);
+                                                            }} className="bg-gray-100 text-gray-500 p-2 rounded-lg border border-gray-200 text-xs">✏️</button>
                                                         </div>
                                                     </div>
                                                 </div>
-                                                {/* ========================================================== */}
                                             </div>
+                                        ))}
 
-                                            {/* CÓDIGO DE BARRAS (NUEVO) */}
-                                            <div className="mb-4">
-                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Código de Barras (Opcional)</label>
-                                                <div className="relative">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">|||</span>
-                                                    <input type="text" name="barcode" placeholder="Escanear o escribir..." value={productForm.barcode} onChange={handleProductFormChange} className="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm" />
-                                                </div>
+                                        {/* PAGINACIÓN */}
+                                        {inventoryTotalPages > 1 && (
+                                            <div className="p-4 border-t border-gray-100 flex justify-center items-center gap-4">
+                                                <button onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))} disabled={inventoryCurrentPage === 1} className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50">Anterior</button>
+                                                <span className="text-xs font-bold text-gray-500">Pág {inventoryCurrentPage} de {inventoryTotalPages}</span>
+                                                <button onClick={() => setInventoryCurrentPage(prev => Math.min(inventoryTotalPages, prev + 1))} disabled={inventoryCurrentPage === inventoryTotalPages} className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50">Siguiente</button>
                                             </div>
+                                        )}
+                                    </>
+                                );
+                            })()}
+                        </div>
+                    </div>
 
-                                            {/* STOCK E ICONO */}
-                                            <div className="grid grid-cols-2 gap-4 mb-4">
-                                                <div>
-                                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Stock</label>
-                                                    <input type="number" name="stock" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none" required />
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Emoji</label>
-                                                    <input type="text" name="icon_emoji" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none text-center text-xl" />
-                                                </div>
+                    <button onClick={() => { setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE' }); setIsProductFormOpen(true); }} className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-higea-blue text-white rounded-full shadow-2xl flex items-center justify-center text-3xl font-light z-40 active:scale-90 transition-transform">+</button>
+
+                    {/* --- NUEVO: MODAL DE MOVIMIENTOS (KARDEX) --- */}
+                    {isMovementModalOpen && movementProduct && (
+                        <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                            <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl animate-scale-up overflow-hidden">
+                                
+                                {/* Header Dinámico */}
+                                <div className={`p-6 text-center text-white relative ${movementType === 'IN' ? 'bg-green-600' : 'bg-red-600'}`}>
+                                    <button onClick={() => setIsMovementModalOpen(false)} className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 rounded-full p-1 transition-colors">✕</button>
+                                    <div className="text-4xl mb-2">{movementType === 'IN' ? '📥' : '📤'}</div>
+                                    <h3 className="text-2xl font-black uppercase tracking-wide">
+                                        {movementType === 'IN' ? 'Registrar Entrada' : 'Registrar Salida'}
+                                    </h3>
+                                    <p className="text-white/80 font-medium text-sm mt-1">{movementProduct.name}</p>
+                                </div>
+
+                                <form onSubmit={handleMovementSubmit} className="p-6 space-y-5">
+                                    
+                                    {/* Cantidad */}
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-400 uppercase ml-1">Cantidad a {movementType === 'IN' ? 'Sumar' : 'Restar'}</label>
+                                        <input 
+                                            type="number" min="1" required autoFocus
+                                            value={movementForm.quantity}
+                                            onChange={(e) => setMovementForm({...movementForm, quantity: e.target.value})}
+                                            className={`w-full text-center text-3xl font-black p-3 border-2 rounded-xl outline-none focus:ring-4 transition-all ${movementType === 'IN' ? 'border-green-100 text-green-700 focus:border-green-500 focus:ring-green-50' : 'border-red-100 text-red-700 focus:border-red-500 focus:ring-red-50'}`}
+                                            placeholder="0"
+                                        />
+                                        <div className="text-center mt-2 text-xs font-bold text-gray-400">
+                                            Stock Actual: {movementProduct.stock} ➝ Nuevo: {movementProduct.stock + (movementType === 'IN' ? parseInt(movementForm.quantity||0) : -parseInt(movementForm.quantity||0))}
+                                        </div>
+                                    </div>
+
+                                    {/* Datos Fiscales (Solo Entrada) */}
+                                    {movementType === 'IN' && (
+                                        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-3">
+                                            <div>
+                                                <label className="text-[10px] font-bold text-blue-600 uppercase block mb-1">📄 Nro. Factura / Nota Entrega (SENIAT)</label>
+                                                <input 
+                                                    type="text" required
+                                                    value={movementForm.document_ref}
+                                                    onChange={(e) => setMovementForm({...movementForm, document_ref: e.target.value})}
+                                                    className="w-full p-2 text-sm border border-blue-200 rounded-lg outline-none focus:border-blue-500"
+                                                    placeholder="Ej: FAC-0002391"
+                                                />
                                             </div>
+                                            <div>
+                                                <label className="text-[10px] font-bold text-blue-600 uppercase block mb-1">💰 Nuevo Costo Unitario (Ref) - Opcional</label>
+                                                <input 
+                                                    type="number" step="0.01"
+                                                    value={movementForm.cost_usd}
+                                                    onChange={(e) => setMovementForm({...movementForm, cost_usd: e.target.value})}
+                                                    className="w-full p-2 text-sm border border-blue-200 rounded-lg outline-none focus:border-blue-500"
+                                                    placeholder={`Actual: ${parseFloat(movementProduct.price_usd).toFixed(2)}`}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
 
-                                            {/* SELECTOR EMOJI */}
-                                            <div className="bg-gray-50 p-2 rounded-xl border border-gray-200 mb-4">
-                                                <div className="grid grid-cols-8 gap-1 max-h-20 overflow-y-auto custom-scrollbar">
-                                                    {EMOJI_OPTIONS.map((emoji, index) => (
-                                                        <button type="button" key={index} onClick={() => handleEmojiSelect(emoji)} className={`text-lg p-1 rounded hover:bg-white ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white' : ''}`}>{emoji}</button>
+                                    {/* Motivo */}
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-400 uppercase ml-1 mb-1 block">Motivo del Movimiento</label>
+                                        <select 
+                                            value={movementForm.reason}
+                                            onChange={(e) => setMovementForm({...movementForm, reason: e.target.value})}
+                                            className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 outline-none focus:border-gray-400"
+                                        >
+                                            {movementType === 'IN' ? (
+                                                <>
+                                                    <option value="COMPRA_PROVEEDOR">Compra a Proveedor</option>
+                                                    <option value="DEVOLUCION_CLIENTE">Devolución de Cliente</option>
+                                                    <option value="AJUSTE_INVENTARIO_IN">Ajuste de Inventario (+)</option>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <option value="MERMA_DAÑO">Merma / Daño</option>
+                                                    <option value="AUTOCONSUMO">Consumo Interno</option>
+                                                    <option value="AJUSTE_INVENTARIO_OUT">Ajuste de Inventario (-)</option>
+                                                </>
+                                            )}
+                                        </select>
+                                    </div>
+
+                                    {/* Botón Acción */}
+                                    <button 
+                                        type="submit"
+                                        className={`w-full py-4 rounded-xl text-white font-bold shadow-lg transition-transform active:scale-95 ${movementType === 'IN' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+                                    >
+                                        {movementType === 'IN' ? 'CONFIRMAR ENTRADA' : 'CONFIRMAR SALIDA'}
+                                    </button>
+
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- MODAL FORMULARIO DE EDICIÓN ORIGINAL (NO SE TOCA) --- */}
+                    {isProductFormOpen && (
+                        <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                            <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden max-h-[95vh] flex flex-col">
+                                <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+                                    <h3 className="text-lg font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
+                                    <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold">✕</button>
+                                </div>
+
+                                <div className="p-6 overflow-y-auto custom-scrollbar">
+                                    <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
+
+                                        {/* NOMBRE */}
+                                        <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Nombre (*)</label>
+                                        <input type="text" name="name" placeholder="Ej: Pizza Margarita" value={productForm.name} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl mb-4 focus:border-higea-blue outline-none font-medium" required autoFocus />
+
+                                        {/* PRECIO Y CATEGORÍA */}
+                                        <div className="grid grid-cols-2 gap-4 mb-4">
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio Ref (*)</label>
+                                                <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
+                                            </div>
+                                            {/* CATEGORÍA */}
+                                            <div className="animate-fade-in-up">
+                                                <div className="flex justify-between items-center mb-1 ml-1">
+                                                    <label className="text-xs font-bold text-gray-500 block">Categoría</label>
+                                                    <span className="text-[10px] text-higea-blue font-bold bg-blue-50 px-2 py-0.5 rounded-full">
+                                                        {uniqueCategories.length} opciones
+                                                    </span>
+                                                </div>
+                                                <div className="flex gap-2 overflow-x-auto pb-3 mb-1 custom-scrollbar snap-x scroll-smooth">
+                                                    {uniqueCategories.map((cat) => (
+                                                        <button
+                                                            type="button"
+                                                            key={cat}
+                                                            onClick={() => setProductForm(prev => ({ ...prev, category: cat }))}
+                                                            className={`snap-start whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold border-2 transition-all active:scale-95 shadow-sm hover:shadow-md ${productForm.category === cat
+                                                                    ? 'bg-higea-blue text-white border-higea-blue scale-105'
+                                                                    : 'bg-white text-gray-500 border-gray-100 hover:border-higea-blue hover:text-higea-blue'
+                                                            }`}
+                                                        >
+                                                            {cat}
+                                                        </button>
                                                     ))}
                                                 </div>
-                                            </div>
-
-                                            {/* ESTATUS Y FISCAL (SWITCHES) */}
-                                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                                {/* Estatus */}
-                                                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
-                                                    <label className="text-[10px] font-bold text-gray-400 block mb-2 uppercase">Disponibilidad</label>
-                                                    <div className="flex bg-white rounded-lg p-1 border border-gray-200">
-                                                        <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'ACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'ACTIVE' ? 'bg-green-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>ACTIVO</button>
-                                                        <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'INACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'INACTIVE' ? 'bg-gray-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>INACTIVO</button>
-                                                    </div>
-                                                </div>
-
-                                                {/* Fiscal */}
-                                                <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                                                    <label className="text-[10px] font-bold text-blue-400 block mb-2 uppercase">Impuesto (IVA)</label>
-                                                    <select name="is_taxable" value={productForm.is_taxable.toString()} onChange={handleProductFormChange} className="w-full bg-white border border-blue-200 text-blue-800 text-xs font-bold rounded-lg p-2 outline-none">
-                                                        <option value="true">SÍ (Gravado)</option>
-                                                        <option value="false">NO (Exento)</option>
-                                                    </select>
+                                                <div className="relative group">
+                                                    <input
+                                                        type="text"
+                                                        name="category"
+                                                        list="category-suggestions"
+                                                        placeholder="Escribe o selecciona arriba..."
+                                                        value={productForm.category}
+                                                        onChange={handleProductFormChange}
+                                                        className="w-full border-2 border-gray-100 p-3 pl-4 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700 bg-gray-50 focus:bg-white transition-all group-hover:bg-white shadow-sm"
+                                                    />
+                                                    <datalist id="category-suggestions">
+                                                        {uniqueCategories.map(cat => <option key={cat} value={cat} />)}
+                                                    </datalist>
+                                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-higea-blue transition-colors pointer-events-none text-lg">📂</div>
                                                 </div>
                                             </div>
+                                        </div>
 
-                                            <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</button>
-                                        </form>
-                                    </div>
+                                        {/* CÓDIGO DE BARRAS */}
+                                        <div className="mb-4">
+                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Código de Barras (Opcional)</label>
+                                            <div className="relative">
+                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">|||</span>
+                                                <input type="text" name="barcode" placeholder="Escanear o escribir..." value={productForm.barcode} onChange={handleProductFormChange} className="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm" />
+                                            </div>
+                                        </div>
+
+                                        {/* STOCK E ICONO */}
+                                        <div className="grid grid-cols-2 gap-4 mb-4">
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Stock Inicial</label>
+                                                <input type="number" name="stock" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none" required />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Emoji</label>
+                                                <input type="text" name="icon_emoji" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none text-center text-xl" />
+                                            </div>
+                                        </div>
+
+                                        {/* SELECTOR EMOJI */}
+                                        <div className="bg-gray-50 p-2 rounded-xl border border-gray-200 mb-4">
+                                            <div className="grid grid-cols-8 gap-1 max-h-20 overflow-y-auto custom-scrollbar">
+                                                {EMOJI_OPTIONS.map((emoji, index) => (
+                                                    <button type="button" key={index} onClick={() => handleEmojiSelect(emoji)} className={`text-lg p-1 rounded hover:bg-white ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white' : ''}`}>{emoji}</button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* ESTATUS Y FISCAL */}
+                                        <div className="grid grid-cols-2 gap-4 mb-6">
+                                            <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                                <label className="text-[10px] font-bold text-gray-400 block mb-2 uppercase">Disponibilidad</label>
+                                                <div className="flex bg-white rounded-lg p-1 border border-gray-200">
+                                                    <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'ACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'ACTIVE' ? 'bg-green-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>ACTIVO</button>
+                                                    <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'INACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'INACTIVE' ? 'bg-gray-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>INACTIVO</button>
+                                                </div>
+                                            </div>
+                                            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                                                <label className="text-[10px] font-bold text-blue-400 block mb-2 uppercase">Impuesto (IVA)</label>
+                                                <select name="is_taxable" value={productForm.is_taxable.toString()} onChange={handleProductFormChange} className="w-full bg-white border border-blue-200 text-blue-800 text-xs font-bold rounded-lg p-2 outline-none">
+                                                    <option value="true">SÍ (Gravado)</option>
+                                                    <option value="false">NO (Exento)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</button>
+                                    </form>
                                 </div>
                             </div>
-                        )}
-                    </div>
-                ) : view === 'ADVANCED_REPORTS' ? (
+                        </div>
+                    )}
+                </div>
+            ) : view === 'ADVANCED_REPORTS' ? (
                 /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO + DRILL DOWN + CIERRES) --- */
                 <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50">
 

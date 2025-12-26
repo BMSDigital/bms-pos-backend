@@ -1035,6 +1035,88 @@ app.get('/api/reports/closings', async (req, res) => {
     }
 });
 
+// ==========================================
+// 📦 GESTIÓN DE INVENTARIO PRO (KARDEX)
+// ==========================================
+
+// 1. Registrar Movimiento (Entrada/Salida con Auditoría)
+app.post('/api/inventory/movement', async (req, res) => {
+    const { product_id, type, quantity, document_ref, reason, cost_usd } = req.body;
+    
+    if (!product_id || !quantity || quantity <= 0) {
+        return res.status(400).json({ error: 'Datos inválidos.' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // A. Obtener producto actual para asegurar consistencia
+        const prodRes = await client.query('SELECT stock, price_usd FROM products WHERE id = $1 FOR UPDATE', [product_id]);
+        if (prodRes.rows.length === 0) throw new Error('Producto no encontrado');
+        
+        const currentStock = parseInt(prodRes.rows[0].stock || 0);
+        let newStock = 0;
+        let finalCost = prodRes.rows[0].price_usd;
+
+        // B. Calcular Nuevo Stock
+        if (type === 'IN') {
+            newStock = currentStock + parseInt(quantity);
+            // Si es entrada y trae nuevo costo, actualizamos el costo del producto
+            if (cost_usd && parseFloat(cost_usd) > 0) finalCost = parseFloat(cost_usd);
+        } else {
+            if (currentStock < quantity) throw new Error(`Stock insuficiente. Disponible: ${currentStock}`);
+            newStock = currentStock - parseInt(quantity);
+        }
+
+        // C. Actualizar Producto Maestro
+        await client.query(
+            'UPDATE products SET stock = $1, price_usd = $2, last_stock_update = CURRENT_TIMESTAMP WHERE id = $3',
+            [newStock, finalCost, product_id]
+        );
+
+        // D. Guardar en Historial (Kardex) - Opcional pero recomendado
+        // Nota: Si no creaste la tabla inventory_movements, comenta este bloque para que no de error.
+        try {
+            await client.query(
+                `INSERT INTO inventory_movements 
+                (product_id, type, quantity, prev_stock, new_stock, document_ref, reason, cost_usd) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [product_id, type, quantity, currentStock, newStock, document_ref || 'N/A', reason, finalCost]
+            );
+        } catch (logError) {
+            console.warn("No se pudo guardar el historial (¿Tabla 'inventory_movements' existe?)", logError.message);
+        }
+
+        await client.query('COMMIT');
+        res.json({ success: true, new_stock: newStock });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// 2. Obtener Historial de un Producto
+app.get('/api/inventory/history/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Intentamos buscar en la tabla de movimientos
+        const result = await pool.query(`
+            SELECT * FROM inventory_movements 
+            WHERE product_id = $1 
+            ORDER BY created_at DESC LIMIT 10
+        `, [id]);
+        res.json(result.rows);
+    } catch (err) {
+        // Si la tabla no existe, devolvemos array vacío para no romper el front
+        res.json([]); 
+    }
+});
+
 // --- SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND (REACT) --- //
 // 1. Decirle a Express que busque en la carpeta dist (que se crea en el build)
 // Se asume la estructura: /bms-pos-backend/server (aquí estamos) y /bms-pos-backend/bms-pos-frontend
