@@ -150,6 +150,8 @@ function App() {
 
     const [isCustomerFormOpen, setIsCustomerFormOpen] = useState(false); // NUEVO ESTADO
     const [isProductFormOpen, setIsProductFormOpen] = useState(false); // NUEVO ESTADO PARA PRODUCTOS
+	
+	const [closingsHistory, setClosingsHistory] = useState([]);
 
     // Estado para el visor de recibos
     const [receiptPreview, setReceiptPreview] = useState(null); // Guardará el HTML del recibo
@@ -262,40 +264,74 @@ function App() {
     const [inventorySearch, setInventorySearch] = useState(''); // Exclusivo para Inventario
     const [isSearchingSales, setIsSearchingSales] = useState(false); // Spinner local
 	
-	const promptOpenCash = async () => {
-        const { value: formValues } = await Swal.fire({
-            title: '☀️ Apertura de Caja',
-            html: `
-                <p class="mb-4 text-sm text-gray-500">Ingresa el fondo de maniobra inicial (Sencillo/Cambio).</p>
-                <div class="space-y-3">
-                    <input id="init-usd" type="number" step="0.01" class="swal2-input" placeholder="Fondo en Divisas ($)">
-                    <input id="init-ves" type="number" step="0.01" class="swal2-input" placeholder="Fondo en Bolívares (Bs)">
+	// --- NUEVA FUNCIÓN UI/UX: APERTURA DE CAJA MODERNA ---
+const promptOpenCash = async () => {
+    // Diseño moderno con HTML personalizado
+    const { value: formValues } = await Swal.fire({
+        title: '<h2 class="text-2xl font-bold text-gray-800">☀️ Apertura de Jornada</h2>',
+        html: `
+            <div class="text-left font-sans mt-2">
+                <p class="text-gray-500 mb-6 text-sm">Para comenzar a procesar ventas, es necesario inicializar la caja. Ingrese el fondo de maniobra (sencillo/cambio) inicial.</p>
+                
+                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200 space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">💵 Fondo en Divisas ($)</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-2.5 text-gray-400">$</span>
+                            <input id="init-usd" type="number" step="0.01" class="w-full pl-8 pr-4 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all font-bold text-gray-700" placeholder="0.00" value="0">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">🇻🇪 Fondo en Bolívares (Bs)</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-2.5 text-gray-400">Bs</span>
+                            <input id="init-ves" type="number" step="0.01" class="w-full pl-8 pr-4 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all font-bold text-gray-700" placeholder="0.00" value="0">
+                        </div>
+                    </div>
                 </div>
-            `,
-            allowOutsideClick: false, // OBLIGATORIO
-            confirmButtonText: 'Abrir Turno',
-            confirmButtonColor: '#0056B3',
-            preConfirm: () => {
-                return {
-                    usd: document.getElementById('init-usd').value,
-                    ves: document.getElementById('init-ves').value
-                }
+            </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: '🚀 Abrir Caja y Comenzar',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#2563EB', // Un azul fuerte y moderno
+        cancelButtonColor: '#9CA3AF',
+        focusConfirm: false,
+        allowOutsideClick: false,
+        customClass: {
+            popup: 'rounded-2xl shadow-xl', // Bordes redondeados modernos
+        },
+        preConfirm: () => {
+            const usd = document.getElementById('init-usd').value;
+            const ves = document.getElementById('init-ves').value;
+            if (!usd && !ves) {
+                Swal.showValidationMessage('Por favor ingrese al menos un monto (puede ser 0)');
+                return false;
             }
-        });
-
-        if (formValues) {
-            try {
-                await axios.post(`${API_URL}/cash/open`, {
-                    initial_cash_usd: formValues.usd,
-                    initial_cash_ves: formValues.ves
-                });
-                Swal.fire('¡Caja Abierta!', 'Que tengas una excelente jornada.', 'success');
-                checkCashStatus(); // Recargar estado
-            } catch (err) {
-                Swal.fire('Error', err.response?.data?.error, 'error');
-            }
+            return { usd: usd || 0, ves: ves || 0 };
         }
-    };
+    });
+
+    if (formValues) {
+        try {
+            await axios.post(`${API_URL}/cash/open`, {
+                initial_cash_usd: formValues.usd,
+                initial_cash_ves: formValues.ves
+            });
+            
+            // Feedback visual de éxito
+            const Toast = Swal.mixin({
+                toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true
+            });
+            Toast.fire({ icon: 'success', title: '¡Caja Abierta Correctamente!' });
+            
+            checkCashStatus(); // Recargar estado visualmente
+        } catch (err) {
+            Swal.fire('Error', err.response?.data?.error || 'No se pudo abrir la caja', 'error');
+        }
+    }
+};
 
     // 1. Carga inicial de datos al montar el componente
     useEffect(() => {
@@ -306,14 +342,20 @@ function App() {
     const checkCashStatus = async () => {
         try {
             const res = await axios.get(`${API_URL}/cash/current-status`);
-            setCashShift(res.data); // Guardamos estado de la caja
             
-            // SI ESTÁ CERRADA, FORZAR APERTURA (Opcional: Bloquear vista POS)
-            if (res.data.status === 'CERRADA') {
-                 promptOpenCash();
+            // CORRECCIÓN LÓGICA CRÍTICA:
+            // Si el backend dice 'ABIERTA', guardamos la info del turno (shift_info).
+            // Si dice 'CERRADA', ponemos null para bloquear el cobro.
+            if (res.data.status === 'ABIERTA' && res.data.shift_info) {
+                setCashShift(res.data.shift_info); 
+            } else {
+                setCashShift(null); // Esto activa el bloqueo y muestra el botón "ABRIR"
             }
+            
         } catch (error) {
             console.error(error);
+            // En caso de error de conexión, asumimos cerrada por seguridad
+            setCashShift(null);
         }
     };
 
@@ -906,7 +948,26 @@ function App() {
     }, []);
 
     const handleOpenPayment = () => {
+        // --- 1. NUEVA VALIDACIÓN: IMPEDIR COBRO SI NO HAY CAJA ABIERTA ---
+        if (!cashShift) {
+            Swal.fire({
+                icon: 'warning',
+                title: '¡Caja Cerrada!',
+                text: 'No es posible procesar pagos sin abrir caja.',
+                confirmButtonText: '☀️ Abrir Caja Ahora',
+                confirmButtonColor: '#E11D2B',
+                showCancelButton: true,
+                cancelButtonText: 'Cancelar'
+            }).then((res) => {
+                if(res.isConfirmed) promptOpenCash();
+            });
+            return; // DETIENE EL PROCESO
+        }
+        // ----------------------------------------------------------------
+
         if (cart.length === 0) return Swal.fire('Carrito Vacío', '', 'info');
+        
+        // El resto de tu lógica original sigue igual...
         setPaymentShares({});
         setPaymentReferences({});
         setCurrentReference('');
@@ -2104,63 +2165,68 @@ function App() {
 };
 	
 	// --- NUEVO: FUNCIÓN PARA ANULAR VENTA (NOTA DE CRÉDITO) ---
-    const handleVoidSale = async (sale) => {
-        // Validaciones UX
-        if (sale.status === 'ANULADO') return Swal.fire('Error', 'Esta venta ya está anulada.', 'error');
+const handleVoidSale = async (sale) => {
+    // Validaciones UX
+    if (sale.status === 'ANULADO') return Swal.fire('Error', 'Esta venta ya está anulada.', 'error');
 
-        const isFiscal = sale.invoice_type === 'FISCAL';
-        
-        // 1. Confirmación de Seguridad
-        const { value: reason } = await Swal.fire({
-            title: isFiscal ? '⚠️ Generar Nota de Crédito' : '⚠️ Anular Venta',
-            html: `
-                <p class="text-sm text-gray-600 mb-4">
-                    Esta acción <b>reversará el inventario</b> (sumará el stock) y marcará la venta como ANULADA para que no sume en los reportes.
-                </p>
-                ${isFiscal ? '<p class="text-xs text-red-500 font-bold bg-red-50 p-2 rounded mb-4">Nota: Al ser Fiscal, esto registrará una Nota de Crédito interna.</p>' : ''}
-            `,
-            input: 'text',
-            inputPlaceholder: 'Motivo de la anulación (Ej: Error en cobro, Devolución)',
-            inputValidator: (value) => {
-                if (!value) return '¡Debes escribir un motivo obligatoriamente!';
-            },
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#E11D2B', // Rojo Alerta
-            confirmButtonText: 'Sí, Anular y Reversar',
-            cancelButtonText: 'Cancelar'
-        });
+    const isFiscal = sale.invoice_type === 'FISCAL';
+    
+    // 1. Confirmación de Seguridad
+    const { value: reason } = await Swal.fire({
+        title: isFiscal ? '⚠️ Generar Nota de Crédito' : '⚠️ Anular Venta',
+        html: `
+            <p class="text-sm text-gray-600 mb-4">
+                Esta acción <b>reversará el inventario</b> (sumará el stock) y marcará la venta como ANULADA para que no sume en los reportes.
+            </p>
+            ${isFiscal ? '<p class="text-xs text-red-500 font-bold bg-red-50 p-2 rounded mb-4">Nota: Al ser Fiscal, esto registrará una Nota de Crédito interna.</p>' : ''}
+        `,
+        input: 'text',
+        inputPlaceholder: 'Motivo de la anulación (Ej: Error en cobro, Devolución)',
+        inputValidator: (value) => {
+            if (!value) return '¡Debes escribir un motivo obligatoriamente!';
+        },
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#E11D2B', // Rojo Alerta
+        confirmButtonText: 'Sí, Anular y Reversar',
+        cancelButtonText: 'Cancelar'
+    });
 
-        if (reason) {
-            try {
-                Swal.fire({ title: 'Procesando Reverso...', didOpen: () => Swal.showLoading() });
-                
-                // 2. Llamada al Backend
-                // Usamos el ID normalizado que ya tienes en tus objetos de venta
-                const saleId = sale.id || sale["Nro Factura"]; 
-                
-                await axios.post(`${API_URL}/sales/${saleId}/void`, { reason });
+    if (reason) {
+        try {
+            Swal.fire({ title: 'Procesando Reverso...', didOpen: () => Swal.showLoading() });
+            
+            // 2. Llamada al Backend
+            // Usamos el ID normalizado que ya tienes en tus objetos de venta
+            const saleId = sale.id || sale["Nro Factura"]; 
+            
+            await axios.post(`${API_URL}/sales/${saleId}/void`, { reason });
 
-                // 3. Feedback Exitoso
-                await Swal.fire({
-                    icon: 'success',
-                    title: '¡Anulación Exitosa!',
-                    text: 'El inventario ha sido restaurado y la venta descontada de los reportes.',
-                    timer: 2000
-                });
+            // 3. Feedback Exitoso
+            await Swal.fire({
+                icon: 'success',
+                title: '¡Anulación Exitosa!',
+                text: 'El inventario ha sido restaurado y la venta descontada de los reportes.',
+                timer: 2000
+            });
 
-                // 4. Actualizar Vistas
-                setSelectedSaleDetail(null); // Cerrar modal detalle
-                fetchData(); // Refrescar Dashboard
-                if(reportTab === 'SALES') fetchSalesDetail(); // Refrescar reporte de ventas si está abierto
-                if(showDailySalesModal) openDailySalesDetail(); // Refrescar ventas del día si está abierto
+            // 4. Actualizar Vistas
+            setSelectedSaleDetail(null); // Cerrar modal detalle
+            fetchData(); // Refrescar Dashboard Simple
+            
+            if(reportTab === 'SALES') fetchSalesDetail(); // Refrescar reporte de ventas si está abierto
+            if(showDailySalesModal) openDailySalesDetail(); // Refrescar ventas del día si está abierto
 
-            } catch (error) {
-                console.error(error);
-                Swal.fire('Error', error.response?.data?.error || 'No se pudo anular la venta', 'error');
-            }
+            // --- CORRECCIÓN BUG BI: ACTUALIZACIÓN EN TIEMPO REAL ---
+            // Si el usuario está viendo el Dashboard Avanzado, forzamos la recarga de gráficas
+            if(view === 'ADVANCED_REPORTS' && reportTab === 'DASHBOARD') fetchAdvancedReport(); 
+
+        } catch (error) {
+            console.error(error);
+            Swal.fire('Error', error.response?.data?.error || 'No se pudo anular la venta', 'error');
         }
-    };
+    }
+};
 
     // --- FUNCIÓN GENERAR REPORTE PDF (DISEÑO MODERNO: REF + BS) ---
     const exportReportToPDF = () => {
@@ -2510,6 +2576,103 @@ function App() {
     });
 
     const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))].sort();
+	
+	const fetchClosingsHistory = async () => {
+    try {
+        Swal.fire({ title: 'Cargando cierres...', didOpen: () => Swal.showLoading() });
+        const res = await axios.get(`${API_URL}/reports/closings`);
+        setClosingsHistory(res.data);
+        setReportTab('CLOSINGS');
+        Swal.close();
+    } catch (error) {
+        Swal.fire('Error', 'No se pudo cargar el historial', 'error');
+    }
+};
+
+const printClosingReport = (shift) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+
+    // Encabezado
+    doc.setFillColor(0, 86, 179); // Azul Higea
+    doc.rect(0, 0, pageWidth, 20, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text("REPORTE DE CIERRE DE CAJA", 14, 13);
+
+    // Info General
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(10);
+    doc.text(`ID Cierre: #${shift.id}`, 14, 30);
+    doc.text(`Estado: ${shift.status}`, 14, 36);
+    doc.text(`Apertura: ${new Date(shift.opened_at).toLocaleString()}`, 14, 42);
+    doc.text(`Cierre: ${shift.closed_at ? new Date(shift.closed_at).toLocaleString() : 'EN CURSO'}`, 14, 48);
+
+    // Tabla de Totales (Diseño manual simple y limpio)
+    let y = 60;
+
+    const drawRow = (label, sistema, real, diff, isHeader = false) => {
+        if (isHeader) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFillColor(240, 240, 240);
+            doc.rect(14, y - 5, 180, 8, 'F');
+        } else {
+            doc.setFont('helvetica', 'normal');
+        }
+
+        doc.text(label, 16, y);
+        doc.text(sistema, 80, y, { align: 'right' });
+        doc.text(real, 130, y, { align: 'right' });
+
+        // Color para la diferencia
+        if (!isHeader) {
+            const diffVal = parseFloat(diff.replace(/[^0-9.-]+/g,""));
+            if (diffVal !== 0) doc.setTextColor(220, 53, 69); // Rojo
+            else doc.setTextColor(40, 167, 69); // Verde
+        }
+        doc.text(diff, 180, y, { align: 'right' });
+        doc.setTextColor(0, 0, 0); // Reset color
+        y += 10;
+    };
+
+    drawRow("CONCEPTO", "SISTEMA", "REAL (ARQUEO)", "DIFERENCIA", true);
+
+    // Filas de datos
+    drawRow("Efectivo USD", 
+        `$${parseFloat(shift.system_cash_usd || 0).toFixed(2)}`, 
+        `$${parseFloat(shift.real_cash_usd || 0).toFixed(2)}`, 
+        `$${parseFloat(shift.diff_usd || 0).toFixed(2)}`
+    );
+
+    drawRow("Zelle", 
+        `$${parseFloat(shift.system_zelle || 0).toFixed(2)}`, 
+        `$${parseFloat(shift.real_zelle || 0).toFixed(2)}`, 
+        `$${(parseFloat(shift.real_zelle || 0) - parseFloat(shift.system_zelle || 0)).toFixed(2)}`
+    );
+
+    // Agregar Bolívares si es necesario
+    drawRow("Efectivo Bs", 
+        `Bs ${parseFloat(shift.system_cash_ves || 0).toFixed(2)}`, 
+        `Bs ${parseFloat(shift.real_cash_ves || 0).toFixed(2)}`, 
+        `Bs ${parseFloat(shift.diff_ves || 0).toFixed(2)}`
+    );
+
+    // Notas
+    y += 10;
+    doc.setFont('helvetica', 'bold');
+    doc.text("Observaciones / Notas:", 14, y);
+    doc.setFont('helvetica', 'normal');
+    const splitNotes = doc.splitTextToSize(shift.notes || "Sin observaciones.", 180);
+    doc.text(splitNotes, 14, y + 6);
+
+    // Pie de página
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    doc.text("Generado por Sistema Higea POS", 14, 280);
+
+    doc.save(`Cierre_Caja_${shift.id}.pdf`);
+};
 
     return (
         <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
@@ -2550,182 +2713,225 @@ function App() {
             <div className="flex-1 relative overflow-hidden flex flex-col pb-16 md:pb-0">
 
                 {view === 'POS' ? (
-                    <div className="flex h-full flex-col md:flex-row">
-                        {/* Contenido POS */}
-                        <div className="flex-1 flex flex-col h-full relative overflow-hidden">
-                            <header className="bg-white/90 backdrop-blur-md border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm z-20">
-                                <div className="flex flex-col">
-                                    <span className="text-[10px] font-bold tracking-[0.2em] text-higea-blue uppercase">VOLUNTARIADO</span>
-                                    <h1 className="text-xl font-black text-higea-red leading-none">HIGEA</h1>
-                                </div>
-                                <div className="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-                                    {isFallbackActive ? ( // 💡 MEJORA: Warning si usa tasa de fallback
-                                        <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.398 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                    ) : (
-                                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                    )}
-                                    <span className="text-sm font-bold text-gray-800">{bcvRate.toFixed(2)} Bs</span>
-                                    {isFallbackActive && <span className="text-xs text-orange-500 font-medium">(FALLBACK)</span>}
-                                </div>
-                            </header>
+    <div className="flex h-full flex-col md:flex-row">
+        {/* Contenido POS */}
+        <div className="flex-1 flex flex-col h-full relative overflow-hidden">
+            <header className="bg-white/90 backdrop-blur-md border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm z-20">
+                <div className="flex flex-col">
+                    <span className="text-[10px] font-bold tracking-[0.2em] text-higea-blue uppercase">VOLUNTARIADO</span>
+                    <h1 className="text-xl font-black text-higea-red leading-none">HIGEA</h1>
+                </div>
+                <div className="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+                    {isFallbackActive ? ( // 💡 MEJORA: Warning si usa tasa de fallback
+                        <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.398 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    ) : (
+                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    )}
+                    <span className="text-sm font-bold text-gray-800">{bcvRate.toFixed(2)} Bs</span>
+                    {isFallbackActive && <span className="text-xs text-orange-500 font-medium">(FALLBACK)</span>}
+                </div>
+            </header>
 
-                            {/* NUEVA SECCIÓN: Búsqueda de alta visibilidad (UX mejorada) */}
-                            <div className="px-4 py-3 bg-[#F8FAFC] border-b border-gray-100">
-                                <input
-                                    key="pos-search-input-fix" // FIX: Stable key to maintain focus
-                                    type="text"
-                                    placeholder="🔍 Buscar artículo por nombre o categoría..."
-                                    value={posSearchQuery}
-                                    onChange={(e) => setPosSearchQuery(e.target.value)}
-                                    className="border-2 p-3 rounded-xl text-sm w-full focus:border-higea-blue outline-none shadow-inner"
-                                    autoFocus={true} // UX: Focus automático
-                                />
+            {/* NUEVA SECCIÓN: Búsqueda de alta visibilidad (UX mejorada) */}
+            <div className="px-4 py-3 bg-[#F8FAFC] border-b border-gray-100">
+                <input
+                    key="pos-search-input-fix" // FIX: Stable key to maintain focus
+                    type="text"
+                    placeholder="🔍 Buscar artículo por nombre o categoría..."
+                    value={posSearchQuery}
+                    onChange={(e) => setPosSearchQuery(e.target.value)}
+                    className="border-2 p-3 rounded-xl text-sm w-full focus:border-higea-blue outline-none shadow-inner"
+                    autoFocus={true} // UX: Focus automático
+                />
+            </div>
+
+            {/* SECCIÓN DE CATEGORÍAS (DISEÑO FINAL: SÓLIDO Y ALINEADO) */}
+            <div className="relative w-full bg-white border-b border-gray-100 h-16 shadow-sm z-10 group flex items-center">
+                
+                {/* 1. ZONA IZQUIERDA (Botón Atrás - Fondo Sólido) */}
+                <div className="absolute left-0 top-0 bottom-0 w-12 bg-white z-20 flex items-center justify-center shadow-[4px_0_12px_-4px_rgba(0,0,0,0.1)]">
+                    <button 
+                        onClick={() => scrollCategories('left')}
+                        className="w-8 h-8 rounded-full bg-gray-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-higea-blue hover:border-higea-blue hover:bg-white transition-all active:scale-95"
+                        title="Anterior"
+                    >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                    </button>
+                </div>
+
+                {/* 2. CONTENEDOR DE SCROLL */}
+                <div 
+                    ref={categoryScrollRef}
+                    className="flex overflow-x-auto gap-3 h-full items-center no-scrollbar scroll-smooth snap-x"
+                >
+                    {/* 🔥 ESPACIADOR INICIAL */}
+                    <div className="w-16 flex-shrink-0"></div>
+
+                    {categories.map((cat) => {
+                        const isActive = selectedCategory === cat;
+                        return (
+                            <button 
+                                key={cat} 
+                                onClick={() => setSelectedCategory(cat)} 
+                                className={`
+                                    snap-start whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition-all duration-300 border select-none flex items-center gap-2 z-10
+                                    ${isActive 
+                                        ? 'bg-higea-blue text-white border-transparent shadow-md shadow-blue-500/20 scale-100' 
+                                        : 'bg-white text-slate-500 border-slate-100 hover:border-blue-200 hover:text-higea-blue hover:bg-slate-50'
+                                    }
+                                `}
+                            >
+                                {/* Icono rayo solo para Todos */}
+                                {cat === 'Todos' && <span className="text-base">⚡</span>}
+                                <span>{cat}</span>
+                            </button>
+                        )
+                    })}
+                    
+                    {/* Espaciador final para simetría */}
+                    <div className="w-16 flex-shrink-0"></div>
+                </div>
+
+                {/* 3. ZONA DERECHA (Botón Siguiente - Fondo Sólido) */}
+                <div className="absolute right-0 top-0 bottom-0 w-12 bg-white z-20 flex items-center justify-center shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.1)]">
+                    <button 
+                        onClick={() => scrollCategories('right')}
+                        className="w-8 h-8 rounded-full bg-gray-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-higea-blue hover:border-higea-blue hover:bg-white transition-all active:scale-95"
+                        title="Siguiente"
+                    >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                    </button>
+                </div>
+            </div>
+
+            {/* 💡 MODIFICADO: Usar currentProducts para aplicar paginación */}
+            <div className="flex-1 overflow-y-auto px-4 pb-20 md:pb-6 custom-scrollbar">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {currentProducts.map((prod) => (
+                        <div key={prod.id} onClick={() => addToCart(prod)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm active:scale-95 transition-transform">
+                            <div className="flex justify-between items-start mb-2">
+                                <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{prod.icon_emoji}</div>
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${prod.stock < 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'}`}>{prod.stock}</span>
                             </div>
-
-                            {/* SECCIÓN DE CATEGORÍAS (DISEÑO FINAL: SÓLIDO Y ALINEADO) */}
-                  <div className="relative w-full bg-white border-b border-gray-100 h-16 shadow-sm z-10 group flex items-center">
-                      
-                      {/* 1. ZONA IZQUIERDA (Botón Atrás - Fondo Sólido) */}
-                      {/* bg-white: Tapa lo que pasa por debajo de forma nítida */}
-                      {/* w-12 (48px): Define el ancho de la zona del botón */}
-                      <div className="absolute left-0 top-0 bottom-0 w-12 bg-white z-20 flex items-center justify-center shadow-[4px_0_12px_-4px_rgba(0,0,0,0.1)]">
-                          <button 
-                              onClick={() => scrollCategories('left')}
-                              className="w-8 h-8 rounded-full bg-gray-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-higea-blue hover:border-higea-blue hover:bg-white transition-all active:scale-95"
-                              title="Anterior"
-                          >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-                          </button>
-                      </div>
-
-                      {/* 2. CONTENEDOR DE SCROLL */}
-                      <div 
-                          ref={categoryScrollRef}
-                          // Quitamos padding lateral para usar espaciadores físicos
-                          className="flex overflow-x-auto gap-3 h-full items-center no-scrollbar scroll-smooth snap-x"
-                      >
-                          {/* 🔥 ESPACIADOR INICIAL (CLAVE DEL ÉXITO) */}
-                          {/* w-16 (64px) es mayor que el botón (48px). */}
-                          {/* Esto deja 16px de aire VISIBLE entre la flecha y "Todos". */}
-                          <div className="w-16 flex-shrink-0"></div>
-
-                          {categories.map((cat) => {
-                              const isActive = selectedCategory === cat;
-                              return (
-                                  <button 
-                                      key={cat} 
-                                      onClick={() => setSelectedCategory(cat)} 
-                                      className={`
-                                          snap-start whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition-all duration-300 border select-none flex items-center gap-2 z-10
-                                          ${isActive 
-                                              ? 'bg-higea-blue text-white border-transparent shadow-md shadow-blue-500/20 scale-100' 
-                                              : 'bg-white text-slate-500 border-slate-100 hover:border-blue-200 hover:text-higea-blue hover:bg-slate-50'
-                                          }
-                                      `}
-                                  >
-                                      {/* Icono rayo solo para Todos */}
-                                      {cat === 'Todos' && <span className="text-base">⚡</span>}
-                                      <span>{cat}</span>
-                                  </button>
-                              )
-                          })}
-                          
-                          {/* Espaciador final para simetría */}
-                          <div className="w-16 flex-shrink-0"></div>
-                      </div>
-
-                      {/* 3. ZONA DERECHA (Botón Siguiente - Fondo Sólido) */}
-                      <div className="absolute right-0 top-0 bottom-0 w-12 bg-white z-20 flex items-center justify-center shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.1)]">
-                          <button 
-                              onClick={() => scrollCategories('right')}
-                              className="w-8 h-8 rounded-full bg-gray-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-higea-blue hover:border-higea-blue hover:bg-white transition-all active:scale-95"
-                              title="Siguiente"
-                          >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                          </button>
-                      </div>
-                  </div>
-
-                            {/* 💡 MODIFICADO: Usar currentProducts para aplicar paginación */}
-                            <div className="flex-1 overflow-y-auto px-4 pb-20 md:pb-6 custom-scrollbar">
-                                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-                                    {currentProducts.map((prod) => (
-                                        <div key={prod.id} onClick={() => addToCart(prod)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm active:scale-95 transition-transform">
-                                            <div className="flex justify-between items-start mb-2">
-                                                <div className="h-10 w-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl">{prod.icon_emoji}</div>
-                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${prod.stock < 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'}`}>{prod.stock}</span>
-                                            </div>
-                                            <h3 className="font-bold text-gray-800 text-sm leading-tight line-clamp-2 h-10">{prod.name}</h3>
-                                            <div className="flex flex-col mt-2">
-                                                {/* Ref */}
-                                                <span className="text-lg font-black text-higea-red">Ref {prod.price_usd}</span>
-                                                <span className="text-xs font-bold text-higea-blue">Bs {prod.price_ves}</span>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                                {/* Mostrar mensaje si no hay productos */}
-                                {currentProducts.length === 0 && (
-                                    <p className="text-center text-gray-400 mt-10 text-sm">No se encontraron productos en esta categoría o búsqueda.</p>
-                                )}
+                            <h3 className="font-bold text-gray-800 text-sm leading-tight line-clamp-2 h-10">{prod.name}</h3>
+                            <div className="flex flex-col mt-2">
+                                {/* Ref */}
+                                <span className="text-lg font-black text-higea-red">Ref {prod.price_usd}</span>
+                                <span className="text-xs font-bold text-higea-blue">Bs {prod.price_ves}</span>
                             </div>
-
-                            {/* 💡 CONTROLES DE PAGINACIÓN (Nuevo) */}
-                            {totalPages > 1 && (
-                                <div className="p-4 border-t border-gray-200 flex justify-center items-center gap-4 bg-white sticky bottom-0">
-                                    <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors">
-                                        Anterior
-                                    </button>
-                                    <span className="text-sm font-bold text-gray-700">Página {currentPage} de {totalPages}</span>
-                                    <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors">
-                                        Siguiente
-                                    </button>
-                                </div>
-                            )}
                         </div>
+                    ))}
+                </div>
+                {/* Mostrar mensaje si no hay productos */}
+                {currentProducts.length === 0 && (
+                    <p className="text-center text-gray-400 mt-10 text-sm">No se encontraron productos en esta categoría o búsqueda.</p>
+                )}
+            </div>
 
-                        <aside className="w-[350px] bg-white border-l border-gray-200 hidden md:flex flex-col shadow-xl z-20">
-                            <div className="p-5 border-b border-gray-100">
-                                <h2 className="text-lg font-bold text-gray-800">Orden Actual</h2>
+            {/* 💡 CONTROLES DE PAGINACIÓN (Nuevo) */}
+            {totalPages > 1 && (
+                <div className="p-4 border-t border-gray-200 flex justify-center items-center gap-4 bg-white sticky bottom-0">
+                    <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors">
+                        Anterior
+                    </button>
+                    <span className="text-sm font-bold text-gray-700">Página {currentPage} de {totalPages}</span>
+                    <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="px-3 py-1 rounded-lg text-sm font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors">
+                        Siguiente
+                    </button>
+                </div>
+            )}
+        </div>
 
-                                {/* FECHA Y PUNTO VERDE DE CAJA ABIERTA */}
-                                <div className="flex items-center gap-2 mt-1">
-                                    <span className="relative flex h-2.5 w-2.5">
-                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-                                    </span>
-                                    <p className="text-xs text-gray-500">{new Date().toLocaleDateString()} • Caja Abierta</p>
-                                </div>
-                            </div>
+        <aside className="w-[350px] bg-white border-l border-gray-200 hidden md:flex flex-col shadow-xl z-20">
+            <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+                
+                {/* --- AQUÍ ESTÁ EL NUEVO WIDGET DE ESTADO DE CAJA INTEGRADO --- */}
+                <div className={`mb-3 rounded-xl border-l-4 shadow-sm transition-all duration-300 ${
+    cashShift 
+    ? 'bg-white border-green-500' 
+    : 'bg-red-50 border-red-500'
+}`}>
+    <div className="p-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+            {/* Ícono dinámico */}
+            <div className={`p-1.5 rounded-full ${cashShift ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                {cashShift ? (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                )}
+            </div>
+            
+            {/* Información de Texto */}
+            <div>
+                <h3 className={`text-xs font-bold uppercase tracking-wider ${cashShift ? 'text-green-800' : 'text-red-800'}`}>
+                    {cashShift ? 'Caja Operativa' : 'Caja Cerrada'}
+                </h3>
+                <p className="text-[10px] text-gray-500 font-medium leading-tight">
+                    {cashShift 
+                        // VALIDACIÓN: Evita el error "Invalid Date" verificando que opened_at exista
+                        ? `Apertura: ${new Date(cashShift.opened_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+                        : 'Se requiere apertura'
+                    }
+                </p>
+            </div>
+        </div>
 
-                            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-1">
-                                {cart.length === 0 ? <p className="text-center text-gray-400 mt-10 text-sm">Carrito Vacío</p> : cart.map(item => <CartItem key={item.id} item={item} />)}
-                            </div>
+        {/* BOTÓN DE ACCIÓN (Solo si está cerrada) */}
+        {!cashShift && (
+            <button 
+                onClick={promptOpenCash}
+                className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 active:scale-95 flex items-center gap-1 animate-pulse"
+            >
+                <span>☀️ ABRIR</span>
+            </button>
+        )}
+        
+        {/* Indicador ON (Solo si está abierta) */}
+        {cashShift && (
+             <div className="flex items-center gap-1 bg-green-50 px-2 py-1 rounded border border-green-100">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span className="text-[10px] font-bold text-green-700">ON</span>
+             </div>
+        )}
+    </div>
+</div>
+                {/* --------------------------------------------------------- */}
 
-                            {/* 💡 MEJORA UX: Desglose Fiscal en carrito */}
-                            {cart.length > 0 && (
-                                <div className='px-5 pt-3 border-t border-gray-100'>
-                                    {subtotalExemptUSD > 0 && (
-                                        <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Subtotal Exento</span><span className='font-bold'>Ref {subtotalExemptUSD.toFixed(2)}</span></div>
-                                    )}
-                                    <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {subtotalTaxableUSD.toFixed(2)}</span></div>
-                                    <div className="flex justify-between text-sm text-higea-red mb-2"><span className='font-medium'>IVA ({IVA_RATE * 100}%)</span><span className='font-bold'>Ref {ivaUSD.toFixed(2)}</span></div>
-                                </div>
-                            )}
+                <h2 className="text-lg font-bold text-gray-800 px-1">Orden Actual</h2>
+            </div>
 
-                            <div className="p-5 bg-white border-t border-gray-100">
-                                <div className="flex justify-between mb-4 items-end">
-                                    <span className="text-sm text-gray-500">Total Final a Pagar</span>
-                                    <span className="text-2xl font-black text-higea-blue">Bs {totalVES.toLocaleString('es-VE', { maximumFractionDigits: 0 })}</span>
-                                </div>
-                                <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white font-bold py-3 rounded-xl shadow-lg hover:bg-red-700">COBRAR (Ref {finalTotalUSD.toFixed(2)})</button>
-                                {/* 💡 MEJORA UX: Botón de Cancelar Venta */}
-                                {cart.length > 0 && (
-                                    <button onClick={() => setCart([])} className="w-full mt-2 bg-gray-200 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-300">CANCELAR VENTA</button>
-                                )}
-                            </div>
-                        </aside>
-                    </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-1">
+                {cart.length === 0 ? <p className="text-center text-gray-400 mt-10 text-sm">Carrito Vacío</p> : cart.map(item => <CartItem key={item.id} item={item} />)}
+            </div>
+
+            {/* 💡 MEJORA UX: Desglose Fiscal en carrito */}
+            {cart.length > 0 && (
+                <div className='px-5 pt-3 border-t border-gray-100'>
+                    {subtotalExemptUSD > 0 && (
+                        <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Subtotal Exento</span><span className='font-bold'>Ref {subtotalExemptUSD.toFixed(2)}</span></div>
+                    )}
+                    <div className="flex justify-between text-sm text-gray-500"><span className='font-medium'>Base Imponible</span><span className='font-bold'>Ref {subtotalTaxableUSD.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-sm text-higea-red mb-2"><span className='font-medium'>IVA ({IVA_RATE * 100}%)</span><span className='font-bold'>Ref {ivaUSD.toFixed(2)}</span></div>
+                </div>
+            )}
+
+            <div className="p-5 bg-white border-t border-gray-100">
+                <div className="flex justify-between mb-4 items-end">
+                    <span className="text-sm text-gray-500">Total Final a Pagar</span>
+                    <span className="text-2xl font-black text-higea-blue">Bs {totalVES.toLocaleString('es-VE', { maximumFractionDigits: 0 })}</span>
+                </div>
+                <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white font-bold py-3 rounded-xl shadow-lg hover:bg-red-700">COBRAR (Ref {finalTotalUSD.toFixed(2)})</button>
+                {/* 💡 MEJORA UX: Botón de Cancelar Venta */}
+                {cart.length > 0 && (
+                    <button onClick={() => setCart([])} className="w-full mt-2 bg-gray-200 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-300">CANCELAR VENTA</button>
+                )}
+            </div>
+        </aside>
+    </div>
                 ) : view === 'DASHBOARD' ? (
                     <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up">
                         <h2 className="text-2xl font-black text-gray-800 mb-6">Panel Gerencial</h2>
@@ -3801,6 +4007,12 @@ function App() {
                                 >
                                     <span>📦</span> Inventario
                                 </button>
+								<button
+									onClick={fetchClosingsHistory}
+									className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${reportTab === 'CLOSINGS' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+								>
+									<span>🔐</span> Cierres
+								</button>
                             </div>
                         </div>
 
@@ -4260,6 +4472,62 @@ function App() {
                                 </div>
                             </div>
                         )}
+						
+						{/* --- CONTENIDO DE LA PESTAÑA CIERRES --- */}
+{reportTab === 'CLOSINGS' && (
+    <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <h3 className="font-bold text-slate-700 text-lg">Historial de Cortes de Caja</h3>
+            <button onClick={fetchClosingsHistory} className="text-sm text-higea-blue font-bold hover:underline">Actualizar Lista</button>
+        </div>
+        
+        <div className="overflow-x-auto flex-1 custom-scrollbar">
+            <table className="w-full text-left text-xs text-gray-600">
+                <thead className="bg-slate-50 text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
+                    <tr>
+                        <th className="px-6 py-4">ID / Fecha</th>
+                        <th className="px-6 py-4">Apertura</th>
+                        <th className="px-6 py-4">Cierre</th>
+                        <th className="px-6 py-4 text-right">Sistema ($)</th>
+                        <th className="px-6 py-4 text-right">Real ($)</th>
+                        <th className="px-6 py-4 text-center">Diferencia</th>
+                        <th className="px-6 py-4 text-center">Acción</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                    {closingsHistory.map((shift) => (
+                        <tr key={shift.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-6 py-4 font-bold text-higea-blue">#{shift.id}</td>
+                            <td className="px-6 py-4">{new Date(shift.opened_at).toLocaleString()}</td>
+                            <td className="px-6 py-4 font-bold">
+                                {shift.status === 'ABIERTA' 
+                                    ? <span className="text-green-600 bg-green-50 px-2 py-1 rounded">EN CURSO</span> 
+                                    : new Date(shift.closed_at).toLocaleString()}
+                            </td>
+                            <td className="px-6 py-4 text-right">Ref {parseFloat(shift.system_cash_usd || 0).toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-black text-slate-800">Ref {parseFloat(shift.real_cash_usd || 0).toFixed(2)}</td>
+                            <td className="px-6 py-4 text-center">
+                                {Math.abs(parseFloat(shift.diff_usd)) < 0.5 
+                                    ? <span className="bg-green-100 text-green-700 px-2 py-1 rounded font-bold">OK</span>
+                                    : <span className="bg-red-100 text-red-700 px-2 py-1 rounded font-bold">{parseFloat(shift.diff_usd).toFixed(2)}</span>
+                                }
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                                <button 
+                                    onClick={() => printClosingReport(shift)}
+                                    className="bg-white border border-slate-200 text-slate-600 hover:text-higea-blue hover:border-higea-blue p-2 rounded-lg transition-all shadow-sm"
+                                    title="Imprimir Reporte"
+                                >
+                                    🖨️
+                                </button>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    </div>
+)}
 
 
                         {/* --- MODAL DETALLE DE AUDITORÍA (PRODUCTO) --- */}

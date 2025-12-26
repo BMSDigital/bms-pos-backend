@@ -995,6 +995,22 @@ app.post('/api/cash/close', async (req, res) => {
     }
 });
 
+// --- NUEVO: HISTORIAL DE CIERRES PARA BI ---
+app.get('/api/reports/closings', async (req, res) => {
+    try {
+        // Traemos los últimos 50 cierres ordenados por fecha
+        const result = await pool.query(`
+            SELECT * FROM cash_shifts 
+            ORDER BY opened_at DESC 
+            LIMIT 50
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND (REACT) --- //
 // 1. Decirle a Express que busque en la carpeta dist (que se crea en el build)
 // Se asume la estructura: /bms-pos-backend/server (aquí estamos) y /bms-pos-backend/bms-pos-frontend
