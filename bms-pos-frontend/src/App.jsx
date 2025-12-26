@@ -820,12 +820,17 @@ const promptOpenCash = async () => {
 
     const fetchData = async () => {
         try {
+            // 1. Cargar estado y configuración
             const statusRes = await axios.get(`${API_URL}/status`);
             setBcvRate(statusRes.data.bcv_rate);
             setFallbackRate(statusRes.data.fallback_rate);
 
+            // 2. Cargar Productos
             const prodRes = await axios.get(`${API_URL}/products`);
-            const allProducts = prodRes.data
+            // Protección: Validar que data sea array antes de mapear
+            const rawProducts = Array.isArray(prodRes.data) ? prodRes.data : [];
+            
+            const allProducts = rawProducts
                 .map(p => ({ ...p, is_taxable: p.is_taxable === true || p.is_taxable === 't' || p.is_taxable === 1 }))
                 .sort((a, b) => a.id - b.id);
 
@@ -834,24 +839,52 @@ const promptOpenCash = async () => {
             setFilteredInventory(allProducts);
             setCategories(['Todos', ...new Set(allProducts.map(p => p.category))]);
 
+            // 3. Reportes básicos
             const statsRes = await axios.get(`${API_URL}/reports/daily`);
             setStats(statsRes.data);
+            
             const recentRes = await axios.get(`${API_URL}/reports/recent-sales`);
-            setRecentSales(recentRes.data);
+            setRecentSales(Array.isArray(recentRes.data) ? recentRes.data : []); // Protección
+            
             const stockRes = await axios.get(`${API_URL}/reports/low-stock`);
-            setLowStock(stockRes.data);
+            setLowStock(Array.isArray(stockRes.data) ? stockRes.data : []); // Protección
 
-            // --- CORRECCIÓN AQUÍ: Definir creditsRes antes de usarlo ---
+            // ===========================================================================
+            // --- CORRECCIÓN CRÍTICA (EL ERROR QUE TIENES) ---
+            // ===========================================================================
+            const salesRes = await axios.get(`${API_URL}/sales/report/daily`);
+            
+            // PROTECCIÓN: Si salesRes.data no es un array, usamos [] para evitar el crash
+            const sales = Array.isArray(salesRes.data) ? salesRes.data : [];
+            
+            setDailySalesList(sales); 
+
+            // Recalculamos totales (Ahora es seguro porque 'sales' siempre será array)
+            let totalRef = 0;
+            let count = 0;
+            
+            sales.forEach(sale => {
+                if (sale.status !== 'ANULADO') {
+                    totalRef += parseFloat(sale.total_amount_usd || 0);
+                    count++;
+                }
+            });
+
+            setDailySalesTotals({ totalUSD: totalRef, count: count });
+            // ===========================================================================
+
+            // 4. Créditos
             const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
-            setPendingCredits(creditsRes.data);
+            const creditsData = Array.isArray(creditsRes.data) ? creditsRes.data : []; // Protección
+            setPendingCredits(creditsData);
 
-            const overdue = creditsRes.data.filter(c => c.is_overdue).length;
+            const overdue = creditsData.filter(c => c.is_overdue).length;
             setOverdueCount(overdue);
 
             const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
-            setGroupedCredits(groupedRes.data);
+            setGroupedCredits(Array.isArray(groupedRes.data) ? groupedRes.data : []); // Protección
 
-            // Intentar cargar analíticas (con manejo de error suave)
+            // 5. Analíticas (con manejo de error suave)
             try {
                 const analyticsRes = await axios.get(`${API_URL}/reports/analytics`);
                 setTopDebtors(analyticsRes.data.topDebtors || []);
@@ -863,6 +896,8 @@ const promptOpenCash = async () => {
             setLoading(false);
         } catch (error) {
             console.error("Error fetching data:", error);
+            // IMPORTANTE: En caso de error general, inicializar listas vacías para que la UI no rompa
+            if (!dailySalesList) setDailySalesList([]);
             setLoading(false);
         }
     };
