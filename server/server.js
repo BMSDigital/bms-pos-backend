@@ -879,46 +879,56 @@ app.post('/api/cash/open', async (req, res) => {
     }
 });
 
-// 2. Obtener estado actual (Pre-Cierre)
+// 2. Obtener estado actual (Pre-Cierre) con CÁLCULO EN VIVO
 app.get('/api/cash/current-status', async (req, res) => {
     try {
-        const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' LIMIT 1");
+        // 1. Buscar si hay una caja abierta
+        const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' ORDER BY id DESC LIMIT 1");
         
-        // Si no hay caja abierta, avisamos al frontend
+        // Si no hay caja abierta, retornamos estatus CERRADA
         if (shiftRes.rows.length === 0) return res.json({ status: 'CERRADA' });
 
         const shift = shiftRes.rows[0];
 
-        // Sumar ventas DESDE la fecha de apertura
-        // NOTA: Usamos lógica de texto para detectar métodos mixtos que guardaste como strings
+        // 2. SUMAR TODAS LAS VENTAS ACTIVAS DESDE LA APERTURA
+        // (Excluimos ANULADO para que el "Sistema Espera" baje si anulas una venta)
         const salesRes = await pool.query(`
             SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
             FROM sales 
             WHERE created_at >= $1 AND status != 'ANULADO'
         `, [shift.opened_at]);
 
-        let sys = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
+        // 3. Clasificar y Sumar los montos
+        let systemTotals = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
 
         salesRes.rows.forEach(row => {
-            const pm = row.payment_method.toUpperCase();
-            const paid = parseFloat(row.amount_paid_usd);
-            const rate = parseFloat(row.bcv_rate_snapshot);
-            
-            // Lógica simple de detección de texto en tus métodos de pago
-            if (pm.includes('EFECTIVO REF') || pm.includes('EFECTIVO USD')) sys.cash_usd += paid;
-            else if (pm.includes('EFECTIVO BS')) sys.cash_ves += (paid * rate);
-            else if (pm.includes('ZELLE')) sys.zelle += paid;
-            else if (pm.includes('PAGO MÓVIL') || pm.includes('PAGO MOVIL')) sys.pm += (paid * rate);
-            else if (pm.includes('PUNTO')) sys.punto += (paid * rate);
-            // Las donaciones o mixtos caerán aquí según lo que diga el string
+            const pm = (row.payment_method || '').toUpperCase();
+            const amount = parseFloat(row.amount_paid_usd || 0);
+            const rate = parseFloat(row.bcv_rate_snapshot || 0);
+
+            // Lógica de detección de texto (Adaptada a tus nombres de BD)
+            if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF') || pm.includes('DIVISA'))) {
+                systemTotals.cash_usd += amount;
+            } else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) {
+                systemTotals.cash_ves += (amount * rate); // Convertimos a Bs si guardas todo en USD
+            } else if (pm.includes('ZELLE')) {
+                systemTotals.zelle += amount;
+            } else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) {
+                systemTotals.pm += (amount * rate);
+            } else if (pm.includes('PUNTO') || pm.includes('TARJETA')) {
+                systemTotals.punto += (amount * rate);
+            }
         });
 
+        // 4. Devolver la info combinada
         res.json({
             status: 'ABIERTA',
             shift_info: shift,
-            system_totals: sys
+            system_totals: systemTotals
         });
+
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: err.message });
     }
 });

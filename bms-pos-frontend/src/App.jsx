@@ -2003,166 +2003,178 @@ const promptOpenCash = async () => {
         }
     };
 	
-	const handleCashClose = () => {
-    // 1. Calcular totales esperados según el sistema (MANTENIDO DE TU CÓDIGO)
-    let systemTotals = {
-        efectivoRef: 0,
-        zelle: 0,
-        pagoMovil: 0,
-        puntoVenta: 0,
-        otros: 0
-    };
-
-    // Recorremos las ventas del día cargadas en dailySalesList
-    dailySalesList.forEach(sale => {
-        if (sale.status === 'ANULADO') return; // Ignorar anuladas
-
-        // Lógica simple de parsing para detectar métodos
-        const pm = sale.payment_method.toLowerCase();
-        const paidUsd = parseFloat(sale.amount_paid_usd);
-        const rate = parseFloat(sale.bcv_rate_snapshot) || bcvRate;
-        
-        // Convertimos todo a su moneda base estimada para el cuadre
-        if (pm.includes('efectivo ref')) systemTotals.efectivoRef += paidUsd;
-        else if (pm.includes('zelle')) systemTotals.zelle += paidUsd;
-        else if (pm.includes('pago móvil') || pm.includes('pago movil')) systemTotals.pagoMovil += (paidUsd * rate);
-        else if (pm.includes('punto')) systemTotals.puntoVenta += (paidUsd * rate);
-        else systemTotals.otros += paidUsd;
-    });
-
-    // 2. Mostrar Modal de Cuadre (TU HTML + Campo Notas Opcional)
-    Swal.fire({
-        title: '🔐 Cierre de Caja y Cuadre',
-        html: `
-            <div class="text-left space-y-4 font-sans">
-                <p class="text-xs text-gray-400 text-center uppercase font-bold mb-4">Ingrese los montos reales (Cierre de Lote / Arqueo)</p>
-                
-                <div class="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                    <div class="flex justify-between text-xs font-bold text-blue-800 mb-1">
-                        <span>💳 Punto de Venta (Bs)</span>
-                        <span>Sistema: Bs ${systemTotals.puntoVenta.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
-                    </div>
-                    <input id="close-pos" type="number" step="0.01" class="w-full p-2 rounded-lg border border-blue-200 outline-none font-bold text-gray-700" placeholder="Monto Cierre de Lote">
-                </div>
-
-                <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
-                    <div class="flex justify-between text-xs font-bold text-gray-500 mb-1">
-                        <span>📱 Pago Móvil (Bs)</span>
-                        <span>Sistema: Bs ${systemTotals.pagoMovil.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
-                    </div>
-                    <input id="close-pm" type="number" step="0.01" class="w-full p-2 rounded-lg border border-gray-300 outline-none text-sm" placeholder="Monto Verificado">
-                </div>
-
-                <div class="bg-green-50 p-3 rounded-xl border border-green-100">
-                    <div class="flex justify-between text-xs font-bold text-green-700 mb-1">
-                        <span>💵 Efectivo (Ref)</span>
-                        <span>Sistema: $${systemTotals.efectivoRef.toFixed(2)}</span>
-                    </div>
-                    <input id="close-cash" type="number" step="0.01" class="w-full p-2 rounded-lg border border-green-200 outline-none font-bold text-gray-700" placeholder="Conteo de Billetes">
-                </div>
-
-                <textarea id="close-notes" class="w-full mt-2 p-2 border border-gray-200 rounded-lg text-xs outline-none" placeholder="Observaciones / Justificación de diferencias (Opcional)"></textarea>
-            </div>
-        `,
-        confirmButtonText: 'Calcular Diferencias',
-        confirmButtonColor: '#0056B3',
-        showCancelButton: true,
-        cancelButtonText: 'Cancelar',
-        preConfirm: () => {
-            return {
-                realPos: parseFloat(document.getElementById('close-pos').value) || 0,
-                realPm: parseFloat(document.getElementById('close-pm').value) || 0,
-                realCash: parseFloat(document.getElementById('close-cash').value) || 0,
-                notes: document.getElementById('close-notes').value, // Capturamos notas
-                systemTotals
-            };
+	// --- 💰 FUNCIÓN MAESTRA DE CIERRE DE CAJA (UX EN TIEMPO REAL) ---
+    const handleCashClose = async () => {
+        // 1. Obtener datos del backend
+        Swal.fire({ title: 'Calculando totales...', didOpen: () => Swal.showLoading() });
+        let statusData;
+        try {
+            const res = await axios.get(`${API_URL}/cash/current-status`);
+            statusData = res.data;
+            if (statusData.status === 'CERRADA') return Swal.fire('Error', 'No hay caja abierta.', 'error');
+        } catch (e) {
+            return Swal.fire('Error', 'Error de conexión', 'error');
         }
-    }).then((result) => {
-        if (result.isConfirmed) {
-            const { realPos, realPm, realCash, notes, systemTotals } = result.value;
+        Swal.close();
+
+        const sys = statusData.system_totals;
+        const initial = statusData.shift_info;
+
+        // Totales Esperados
+        const expCash = parseFloat(initial.initial_cash_usd) + sys.cash_usd;
+        const expBs = parseFloat(initial.initial_cash_ves) + sys.cash_ves;
+        const expZelle = sys.zelle;
+
+        // 2. MODAL INTERACTIVO CON CÁLCULO EN VIVO
+        await Swal.fire({
+            title: '<h2 class="text-2xl font-black text-gray-800">📠 Arqueo de Caja</h2>',
+            width: '800px',
+            html: `
+                <div class="grid grid-cols-3 gap-4 text-left font-sans mb-4">
+                    <div class="font-bold text-gray-400 text-xs uppercase tracking-widest text-center">Método</div>
+                    <div class="font-bold text-gray-400 text-xs uppercase tracking-widest text-center">Sistema Espera</div>
+                    <div class="font-bold text-higea-blue text-xs uppercase tracking-widest text-center">Tú Cuentas (Real)</div>
+
+                    <div class="flex items-center gap-2 border-b pb-2">
+                        <div class="p-2 bg-green-100 rounded-lg text-green-700">💵</div>
+                        <div>
+                            <p class="font-bold text-gray-700">Efectivo ($)</p>
+                            <span id="diff-tag-cash" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-400">Cuadrado</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-center border-b pb-2">
+                        <span class="text-xl font-bold text-gray-400">$${expCash.toFixed(2)}</span>
+                    </div>
+                    <div class="border-b pb-2">
+                        <input id="swal-input-cash" type="number" step="0.01" class="w-full text-center text-xl font-bold text-higea-blue border-2 border-gray-200 rounded-xl focus:border-higea-blue outline-none p-2 transition-all" placeholder="0.00">
+                    </div>
+
+                    <div class="flex items-center gap-2 border-b pb-2">
+                        <div class="p-2 bg-blue-100 rounded-lg text-blue-700">📱</div>
+                        <div>
+                            <p class="font-bold text-gray-700">Bolívares (Bs)</p>
+                            <span id="diff-tag-bs" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-400">Cuadrado</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-center border-b pb-2">
+                        <span class="text-xl font-bold text-gray-400">Bs ${expBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</span>
+                    </div>
+                    <div class="border-b pb-2">
+                        <input id="swal-input-bs" type="number" step="0.01" class="w-full text-center text-xl font-bold text-blue-600 border-2 border-gray-200 rounded-xl focus:border-blue-500 outline-none p-2 transition-all" placeholder="0.00">
+                    </div>
+
+                    <div class="flex items-center gap-2 border-b pb-2">
+                        <div class="p-2 bg-purple-100 rounded-lg text-purple-700">zk</div>
+                        <div>
+                            <p class="font-bold text-gray-700">Zelle ($)</p>
+                            <span id="diff-tag-zelle" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-400">Cuadrado</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-center border-b pb-2">
+                        <span class="text-xl font-bold text-gray-400">$${expZelle.toFixed(2)}</span>
+                    </div>
+                    <div class="border-b pb-2">
+                        <input id="swal-input-zelle" type="number" step="0.01" class="w-full text-center text-xl font-bold text-purple-600 border-2 border-gray-200 rounded-xl focus:border-purple-500 outline-none p-2 transition-all" placeholder="0.00">
+                    </div>
+                </div>
+                
+                <textarea id="swal-notes" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100" placeholder="📝 Observaciones (Opcional): Justificar diferencias aquí..."></textarea>
+            `,
+            confirmButtonText: '🔐 Confirmar Cierre',
+            confirmButtonColor: '#1e293b', // Slate 800
+            showCancelButton: true,
+            cancelButtonText: 'Cancelar',
+            customClass: { popup: 'rounded-3xl' },
             
-            // Calcular Diferencias (TU LÓGICA)
-            const diffPos = realPos - systemTotals.puntoVenta;
-            const diffPm = realPm - systemTotals.pagoMovil;
-            const diffCash = realCash - systemTotals.efectivoRef;
+            // --- AQUÍ OCURRE LA MAGIA DEL TIEMPO REAL ---
+            didOpen: () => {
+                const inputCash = document.getElementById('swal-input-cash');
+                const inputBs = document.getElementById('swal-input-bs');
+                const inputZelle = document.getElementById('swal-input-zelle');
 
-            // Generar reporte de diferencias (TU HTML + BOTÓN DE GUARDAR)
-            Swal.fire({
-                title: '📊 Resultados del Cuadre',
-                html: `
-                    <div class="space-y-3 text-sm">
-                        <div class="flex justify-between items-center border-b pb-2">
-                            <span>💳 Punto de Venta</span>
-                            <span class="font-bold ${Math.abs(diffPos) < 1 ? 'text-green-600' : 'text-red-600'}">
-                                ${diffPos >= 0 ? '+' : ''}${diffPos.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
-                            </span>
-                        </div>
-                        <div class="flex justify-between items-center border-b pb-2">
-                            <span>📱 Pago Móvil</span>
-                            <span class="font-bold ${Math.abs(diffPm) < 1 ? 'text-green-600' : 'text-red-600'}">
-                                ${diffPm >= 0 ? '+' : ''}${diffPm.toLocaleString('es-VE', {minimumFractionDigits: 2})} Bs
-                            </span>
-                        </div>
-                        <div class="flex justify-between items-center border-b pb-2">
-                            <span>💵 Efectivo Divisa</span>
-                            <span class="font-bold ${Math.abs(diffCash) < 0.1 ? 'text-green-600' : 'text-red-600'}">
-                                ${diffCash >= 0 ? '+' : ''}${diffCash.toFixed(2)} Ref
-                            </span>
-                        </div>
-                        <p class="text-xs text-gray-400 mt-4 text-center">
-                            ${Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1 
-                                ? '✅ ¡Caja Cuadrada Perfectamente!' 
-                                : '⚠️ Existen diferencias. Al confirmar se guardará este estado.'}
-                        </p>
-                    </div>
-                `,
-                icon: (Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1) ? 'success' : 'warning',
-                
-                // --- AQUÍ ESTÁ LA INTEGRACIÓN DEL PUNTO D ---
-                showCancelButton: true,
-                confirmButtonText: '🔐 Confirmar y Cerrar Caja', // Botón de acción real
-                cancelButtonText: 'Revisar / Corregir',
-                confirmButtonColor: (Math.abs(diffPos) < 1 && Math.abs(diffCash) < 0.1) ? '#10B981' : '#E11D2B'
-            }).then(async (finalResult) => {
-                if (finalResult.isConfirmed) {
-                    try {
-                        Swal.fire({ title: 'Guardando Cierre...', didOpen: () => Swal.showLoading() });
-
-                        // Preparamos los datos para el Backend (Adaptando tus inputs al Schema)
-                        const closePayload = {
-                            declared: {
-                                cash_usd: realCash,
-                                cash_ves: 0, // Asumimos 0 ya que no lo pides en tu UI
-                                zelle: systemTotals.zelle, // Asumimos que Zelle cuadra perfecto (o puedes agregar input)
-                                pm: realPm,
-                                punto: realPos
-                            },
-                            notes: notes || "Cierre realizado desde App"
-                        };
-
-                        // LLAMADA AL BACKEND
-                        await axios.post(`${API_URL}/cash/close`, closePayload);
-
-                        Swal.fire({
-                            icon: 'success',
-                            title: '¡Cierre Registrado!',
-                            text: 'La jornada ha sido cerrada exitosamente en la base de datos.',
-                            timer: 3000
-                        });
-                        
-                        // Opcional: Si tienes la función de actualizar estado, llámala aquí
-                        // checkCashStatus();
-
-                    } catch (error) {
-                        console.error(error);
-                        // Mensaje de error (Ej: Descuadre muy grande si activaste esa validación)
-                        Swal.fire('Error', error.response?.data?.error || 'No se pudo guardar el cierre', 'error');
+                // Función auxiliar para actualizar etiquetas
+                const updateTag = (inputVal, expected, tagId, symbol = '$') => {
+                    const val = parseFloat(inputVal) || 0;
+                    const diff = val - expected;
+                    const tag = document.getElementById(tagId);
+                    
+                    if (Math.abs(diff) < 0.1) {
+                        tag.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-green-100 text-green-700";
+                        tag.innerText = "✅ Cuadrado";
+                    } else if (diff > 0) {
+                        tag.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700";
+                        tag.innerText = `⚠️ Sobra ${symbol}${diff.toFixed(2)}`;
+                    } else {
+                        tag.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700";
+                        tag.innerText = `❌ Falta ${symbol}${Math.abs(diff).toFixed(2)}`;
                     }
+                };
+
+                // Listeners
+                inputCash.addEventListener('input', (e) => updateTag(e.target.value, expCash, 'diff-tag-cash'));
+                inputBs.addEventListener('input', (e) => updateTag(e.target.value, expBs, 'diff-tag-bs', 'Bs '));
+                inputZelle.addEventListener('input', (e) => updateTag(e.target.value, expZelle, 'diff-tag-zelle'));
+            },
+            preConfirm: () => {
+                return {
+                    cash_usd: document.getElementById('swal-input-cash').value || 0,
+                    cash_ves: document.getElementById('swal-input-bs').value || 0,
+                    zelle: document.getElementById('swal-input-zelle').value || 0,
+                    notes: document.getElementById('swal-notes').value,
+                    // Enviamos pago móvil y punto como 0 o sumados en cash_ves si prefieres simplificar
+                    pm: 0, 
+                    punto: 0
                 }
-            });
-        }
-    });
-};
+            }
+        }).then(async (result) => {
+            if (result.isConfirmed) {
+                const declared = result.value;
+                
+                // Calculamos diferencias finales antes de enviar para confirmación de seguridad
+                const diffCash = parseFloat(declared.cash_usd) - expCash;
+                const hasDiff = Math.abs(diffCash) > 1; // Tolerancia $1
+
+                if (hasDiff) {
+                    const confirmDiff = await Swal.fire({
+                        title: '⚠️ ¿Cerrar con Descuadre?',
+                        text: `Hay una diferencia de $${diffCash.toFixed(2)}. ¿Deseas proceder y registrarla?`,
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonText: 'Sí, Registrar Diferencia',
+                        confirmButtonColor: '#E11D2B'
+                    });
+                    if (!confirmDiff.isConfirmed) return;
+                }
+
+                // ENVÍO AL BACKEND
+                try {
+                    Swal.fire({ title: 'Cerrando turno...', didOpen: () => Swal.showLoading() });
+                    await axios.post(`${API_URL}/cash/close`, { declared, notes: declared.notes });
+
+                    // --- ACTUALIZACIÓN UI INMEDIATA (LO QUE PEDISTE) ---
+                    setCashShift(null); // Esto pone el widget en ROJO "Caja Cerrada" sin recargar
+                    
+                    // Si tienes el módulo BI abierto, actualizamos el historial
+                    if (view === 'ADVANCED_REPORTS' && reportTab === 'CLOSINGS') fetchClosingsHistory();
+
+                    Swal.fire({
+                        icon: 'success',
+                        title: '¡Jornada Cerrada!',
+                        text: 'El reporte ha sido guardado exitosamente.',
+                        confirmButtonText: 'Generar PDF',
+                        showCancelButton: true,
+                        cancelButtonText: 'Cerrar'
+                    }).then((resPDF) => {
+                        // Aquí llamamos a la función de imprimir el último cierre (opcional, lógica abajo)
+                        if(resPDF.isConfirmed) fetchClosingsHistory(); 
+                    });
+
+                } catch (err) {
+                    Swal.fire('Error', 'No se pudo cerrar la caja', 'error');
+                }
+            }
+        });
+    };
 	
 	// --- NUEVO: FUNCIÓN PARA ANULAR VENTA (NOTA DE CRÉDITO) ---
 const handleVoidSale = async (sale) => {
@@ -4899,23 +4911,38 @@ const printClosingReport = (shift) => {
                     {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Reimprimir Copia Fiscal' : 'Imprimir Ticket / Nota'}
                 </button>
 
-                {/* 2. BOTÓN DE ANULACIÓN / NOTA DE CRÉDITO (NUEVO) */}
-                {selectedSaleDetail.status !== 'ANULADO' ? (
+                {/* 2. BOTÓN DE ANULACIÓN / NOTA DE CRÉDITO (DISEÑO AJUSTADO) */}
+            {selectedSaleDetail.status !== 'ANULADO' ? (
+                // CAMBIO AQUÍ: Reduje mt-6 a mt-3 y pt-4 a pt-3
+                <div className="mt-3 pt-3 border-t border-gray-100">
                     <button
                         onClick={() => handleVoidSale(selectedSaleDetail)}
-                        className="w-full flex items-center justify-center gap-2 bg-red-50 text-red-600 border border-red-100 font-bold py-3 rounded-xl hover:bg-red-600 hover:text-white transition-all active:scale-95"
+                        className="w-full group relative flex items-center justify-center gap-3 px-6 py-3 bg-white border-2 border-red-100 text-red-600 rounded-xl hover:bg-red-50 hover:border-red-200 transition-all duration-300 active:scale-95 shadow-sm"
                     >
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        {selectedSaleDetail.invoice_type === 'FISCAL' ? 'EMITIR NOTA DE CRÉDITO (REVERSO)' : 'ANULAR VENTA (DEVOLVER STOCK)'}
+                        {/* Ícono de Papelera con fondo */}
+                        <div className="p-2 bg-red-50 rounded-lg group-hover:bg-red-100 transition-colors">
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </div>
+                        
+                        {/* Textos Informativos */}
+                        <div className="text-left flex-1">
+                            <span className="block text-sm font-bold tracking-wide">
+                                {selectedSaleDetail.invoice_type === 'FISCAL' ? 'EMITIR NOTA DE CRÉDITO' : 'ANULAR VENTA (DEVOLVER STOCK)'}
+                            </span>
+                            <span className="block text-[10px] text-red-400 font-medium">
+                                {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Genera documento fiscal de reverso' : 'Reversa inventario y contabilidad'}
+                            </span>
+                        </div>
                     </button>
-                ) : (
-                    // Indicador visual si ya está anulada
-                    <div className="w-full bg-gray-100 text-gray-500 font-bold py-3 rounded-xl text-center border border-gray-200 flex items-center justify-center gap-2">
-                        <span>🚫</span> ESTA VENTA FUE ANULADA
-                    </div>
-                )}
+                </div>
+            ) : (
+                // Indicador visual si ya está anulada
+                <div className="mt-3 w-full bg-gray-100 text-gray-500 font-bold py-3 rounded-xl text-center border border-gray-200 flex items-center justify-center gap-2">
+                    <span>🚫</span> ESTA VENTA FUE ANULADA
+                </div>
+            )}
             </div>
 
         </div>
