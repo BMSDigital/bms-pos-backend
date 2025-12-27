@@ -4066,100 +4066,153 @@ const handleVoidSale = async (sale) => {
 
                     <button onClick={() => { setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE' }); setIsProductFormOpen(true); }} className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-higea-blue text-white rounded-full shadow-2xl flex items-center justify-center text-3xl font-light z-40 active:scale-90 transition-transform">+</button>
 
-                    {/* --- NUEVO: MODAL DE MOVIMIENTOS (KARDEX) --- */}
-                    {isMovementModalOpen && movementProduct && (
-                        <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                            <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl animate-scale-up overflow-hidden">
-                                
-                                {/* Header Dinámico */}
-                                <div className={`p-6 text-center text-white relative ${movementType === 'IN' ? 'bg-green-600' : 'bg-red-600'}`}>
-                                    <button onClick={() => setIsMovementModalOpen(false)} className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 rounded-full p-1 transition-colors">✕</button>
-                                    <div className="text-4xl mb-2">{movementType === 'IN' ? '📥' : '📤'}</div>
-                                    <h3 className="text-2xl font-black uppercase tracking-wide">
-                                        {movementType === 'IN' ? 'Registrar Entrada' : 'Registrar Salida'}
-                                    </h3>
-                                    <p className="text-white/80 font-medium text-sm mt-1">{movementProduct.name}</p>
-                                </div>
+                    {/* --- MODAL GESTIÓN DE STOCK (CORREGIDO: BOTÓN CERRAR ACCESIBLE) --- */}
+{isMovementModalOpen && movementProduct && (
+    <div className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+        
+        {/* Card Principal */}
+        <div className="bg-white rounded-[1.5rem] w-full max-w-md shadow-2xl animate-scale-up overflow-hidden relative">
+            
+            {/* Header de Color Sólido */}
+            <div className={`p-6 text-center text-white relative ${
+                movementType === 'IN' 
+                    ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' 
+                    : 'bg-gradient-to-r from-red-500 to-rose-600'
+            }`}>
+                {/* --- CORRECCIÓN AQUÍ: z-50 y tamaño w-10 h-10 --- */}
+                <button 
+                    onClick={() => setIsMovementModalOpen(false)} 
+                    className="absolute top-3 right-3 z-50 w-10 h-10 flex items-center justify-center bg-white/20 hover:bg-white/40 rounded-full text-white transition-all text-lg font-bold backdrop-blur-md shadow-sm cursor-pointer active:scale-90"
+                    title="Cerrar ventana"
+                >
+                    ✕
+                </button>
+                {/* ------------------------------------------------ */}
 
-                                <form onSubmit={handleMovementSubmit} className="p-6 space-y-5">
-                                    
-                                    {/* Cantidad */}
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-400 uppercase ml-1">Cantidad a {movementType === 'IN' ? 'Sumar' : 'Restar'}</label>
-                                        <input 
-                                            type="number" min="1" required autoFocus
-                                            value={movementForm.quantity}
-                                            onChange={(e) => setMovementForm({...movementForm, quantity: e.target.value})}
-                                            className={`w-full text-center text-3xl font-black p-3 border-2 rounded-xl outline-none focus:ring-4 transition-all ${movementType === 'IN' ? 'border-green-100 text-green-700 focus:border-green-500 focus:ring-green-50' : 'border-red-100 text-red-700 focus:border-red-500 focus:ring-red-50'}`}
-                                            placeholder="0"
-                                        />
-                                        <div className="text-center mt-2 text-xs font-bold text-gray-400">
-                                            Stock Actual: {movementProduct.stock} ➝ Nuevo: {movementProduct.stock + (movementType === 'IN' ? parseInt(movementForm.quantity||0) : -parseInt(movementForm.quantity||0))}
-                                        </div>
-                                    </div>
+                <div className="text-4xl mb-2 drop-shadow-sm select-none">
+                    {movementType === 'IN' ? '📥' : '📤'}
+                </div>
+                <h3 className="text-xl font-black uppercase tracking-wider text-white">
+                    {movementType === 'IN' ? 'Registrar Entrada' : 'Registrar Salida'}
+                </h3>
+                <p className="text-white/90 text-sm font-medium mt-1 opacity-90">
+                    {movementProduct.name}
+                </p>
+            </div>
 
-                                    {/* Datos Fiscales (Solo Entrada) */}
-                                    {movementType === 'IN' && (
-                                        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-3">
-                                            <div>
-                                                <label className="text-[10px] font-bold text-blue-600 uppercase block mb-1">📄 Nro. Factura / Nota Entrega (SENIAT)</label>
-                                                <input 
-                                                    type="text" required
-                                                    value={movementForm.document_ref}
-                                                    onChange={(e) => setMovementForm({...movementForm, document_ref: e.target.value})}
-                                                    className="w-full p-2 text-sm border border-blue-200 rounded-lg outline-none focus:border-blue-500"
-                                                    placeholder="Ej: FAC-0002391"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="text-[10px] font-bold text-blue-600 uppercase block mb-1">💰 Nuevo Costo Unitario (Ref) - Opcional</label>
-                                                <input 
-                                                    type="number" step="0.01"
-                                                    value={movementForm.cost_usd}
-                                                    onChange={(e) => setMovementForm({...movementForm, cost_usd: e.target.value})}
-                                                    className="w-full p-2 text-sm border border-blue-200 rounded-lg outline-none focus:border-blue-500"
-                                                    placeholder={`Actual: ${parseFloat(movementProduct.price_usd).toFixed(2)}`}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
+            <form onSubmit={handleMovementSubmit} className="p-8 space-y-6">
+                
+                {/* 1. Input de Cantidad */}
+                <div className="text-center space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Cantidad a {movementType === 'IN' ? 'Agregar' : 'Descontar'}
+                    </label>
+                    <div className="relative max-w-[200px] mx-auto">
+                        <input 
+                            type="number" 
+                            min="1" 
+                            required 
+                            autoFocus
+                            value={movementForm.quantity}
+                            onChange={(e) => setMovementForm({...movementForm, quantity: e.target.value})}
+                            className={`w-full text-center text-5xl font-black py-2 bg-transparent outline-none placeholder-slate-200 transition-colors ${
+                                movementType === 'IN' ? 'text-emerald-600 caret-emerald-500' : 'text-rose-600 caret-rose-500'
+                            }`}
+                            placeholder="0"
+                        />
+                        <div className={`h-1 w-full rounded-full mt-2 ${
+                            movementType === 'IN' ? 'bg-emerald-100' : 'bg-rose-100'
+                        }`}>
+                            <div className={`h-full rounded-full transition-all duration-300 ${
+                                movementForm.quantity ? 'w-full' : 'w-1/3 mx-auto'
+                            } ${movementType === 'IN' ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+                        </div>
+                    </div>
+                    
+                    {/* Feedback Visual de Stock */}
+                    <div className="flex justify-center items-center gap-3 text-xs font-bold text-slate-400 mt-2 bg-slate-50 py-1 px-3 rounded-lg w-fit mx-auto">
+                        <span>Stock: {movementProduct.stock}</span>
+                        <span>➝</span>
+                        <span className={`${movementType === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {movementProduct.stock + (movementType === 'IN' ? (parseInt(movementForm.quantity)||0) : -(parseInt(movementForm.quantity)||0))}
+                        </span>
+                    </div>
+                </div>
 
-                                    {/* Motivo */}
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-400 uppercase ml-1 mb-1 block">Motivo del Movimiento</label>
-                                        <select 
-                                            value={movementForm.reason}
-                                            onChange={(e) => setMovementForm({...movementForm, reason: e.target.value})}
-                                            className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 outline-none focus:border-gray-400"
-                                        >
-                                            {movementType === 'IN' ? (
-                                                <>
-                                                    <option value="COMPRA_PROVEEDOR">Compra a Proveedor</option>
-                                                    <option value="DEVOLUCION_CLIENTE">Devolución de Cliente</option>
-                                                    <option value="AJUSTE_INVENTARIO_IN">Ajuste de Inventario (+)</option>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <option value="MERMA_DAÑO">Merma / Daño</option>
-                                                    <option value="AUTOCONSUMO">Consumo Interno</option>
-                                                    <option value="AJUSTE_INVENTARIO_OUT">Ajuste de Inventario (-)</option>
-                                                </>
-                                            )}
-                                        </select>
-                                    </div>
-
-                                    {/* Botón Acción */}
-                                    <button 
-                                        type="submit"
-                                        className={`w-full py-4 rounded-xl text-white font-bold shadow-lg transition-transform active:scale-95 ${movementType === 'IN' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
-                                    >
-                                        {movementType === 'IN' ? 'CONFIRMAR ENTRADA' : 'CONFIRMAR SALIDA'}
-                                    </button>
-
-                                </form>
+                {/* 2. Sección de Datos */}
+                <div className="space-y-4">
+                    {/* Datos Fiscales (Solo Entrada) */}
+                    {movementType === 'IN' && (
+                        <div className="grid grid-cols-1 gap-3 animate-fade-in-up">
+                            <div className="relative group">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg grayscale group-focus-within:grayscale-0 transition-all">🧾</span>
+                                <input 
+                                    type="text" 
+                                    required
+                                    value={movementForm.document_ref}
+                                    onChange={(e) => setMovementForm({...movementForm, document_ref: e.target.value})}
+                                    className="w-full pl-10 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder:font-normal placeholder:text-slate-400"
+                                    placeholder="Nro. Factura / Nota Entrega *"
+                                />
+                            </div>
+                            
+                            <div className="relative group">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold group-focus-within:text-emerald-600 transition-colors">Ref</span>
+                                <input 
+                                    type="number" 
+                                    step="0.01"
+                                    value={movementForm.cost_usd}
+                                    onChange={(e) => setMovementForm({...movementForm, cost_usd: e.target.value})}
+                                    className="w-full pl-10 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder:font-normal placeholder:text-slate-400"
+                                    placeholder={`Nuevo Costo (Actual: ${parseFloat(movementProduct.price_usd).toFixed(2)})`}
+                                />
                             </div>
                         </div>
                     )}
+
+                    {/* Selector de Motivo */}
+                    <div className="relative">
+                        <select 
+                            value={movementForm.reason}
+                            onChange={(e) => setMovementForm({...movementForm, reason: e.target.value})}
+                            className="w-full p-3 bg-white border-2 border-slate-100 rounded-xl text-sm font-bold text-slate-600 outline-none focus:border-slate-300 appearance-none cursor-pointer hover:bg-slate-50 transition-colors"
+                        >
+                            {movementType === 'IN' ? (
+                                <>
+                                    <option value="COMPRA_PROVEEDOR">📦 Compra a Proveedor</option>
+                                    <option value="DEVOLUCION_CLIENTE">↩️ Devolución de Cliente</option>
+                                    <option value="AJUSTE_INVENTARIO_IN">🔧 Ajuste (+)</option>
+                                    <option value="DONACION_RECIBIDA">🎁 Donación Recibida</option>
+                                </>
+                            ) : (
+                                <>
+                                    <option value="MERMA_DAÑO">🗑️ Merma / Daño</option>
+                                    <option value="AUTOCONSUMO">☕ Consumo Interno</option>
+                                    <option value="AJUSTE_INVENTARIO_OUT">🔧 Ajuste (-)</option>
+                                    <option value="VENCIMIENTO">📅 Producto Vencido</option>
+                                </>
+                            )}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</div>
+                    </div>
+                </div>
+
+                {/* 3. Botón de Acción */}
+                <button 
+                    type="submit"
+                    className={`w-full py-4 rounded-xl text-white font-bold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-95 flex items-center justify-center gap-3 ${
+                        movementType === 'IN' 
+                            ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-200' 
+                            : 'bg-rose-600 hover:bg-rose-500 shadow-rose-200'
+                    }`}
+                >
+                    <span>{movementType === 'IN' ? 'CONFIRMAR ENTRADA' : 'CONFIRMAR SALIDA'}</span>
+                </button>
+
+            </form>
+        </div>
+    </div>
+)}
 
                     {/* --- MODAL FORMULARIO DE EDICIÓN ORIGINAL (NO SE TOCA) --- */}
                     {isProductFormOpen && (
