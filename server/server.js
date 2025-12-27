@@ -100,7 +100,7 @@ app.get('/api/status', (req, res) => {
 app.get('/api/products', async (req, res) => {
     try {
         // AGREGAMOS 'barcode' y 'status' A LA LISTA DE CAMPOS SELECCIONADOS
-        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, last_stock_update FROM products ORDER BY id ASC');
+        const result = await pool.query('SELECT id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, last_stock_update, expiration_date FROM products ORDER BY id ASC');
         
         const productsWithVes = result.rows.map(product => ({
             ...product,
@@ -116,52 +116,49 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// 3. Crear/Actualizar Producto (CORREGIDO)
+// 3. Crear/Actualizar Producto (CORREGIDO CON VENCIMIENTO)
 app.post('/api/products', async (req, res) => {
-    // 1. Extraemos TODOS los campos del body
-    const { id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status } = req.body;
+    // 1. Extraemos TODOS los campos, INCLUYENDO expiration_date
+    const { id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date } = req.body;
     
     // Validaciones básicas
     if (!name || !price_usd || price_usd <= 0) return res.status(400).json({ error: 'Datos inválidos.' });
     
     try {
         let result;
-        // Convertimos is_taxable a booleano real
         const isTaxableValue = typeof is_taxable === 'boolean' ? is_taxable : (is_taxable === 'true');
-        
-        // --- AQUÍ ESTABA EL ERROR ---
-        // Si 'status' viene en el body, lo usamos. Si no, usamos 'ACTIVE' por defecto.
-        // Antes quizás se estaba forzando 'ACTIVE' siempre.
         const statusValue = status ? status : 'ACTIVE'; 
-        
-        // Barcode opcional
         const barcodeValue = barcode || '';
+        
+        // Manejo de fecha vacía: Si viene vacía, enviamos NULL a la base de datos
+        const expirationValue = expiration_date ? expiration_date : null;
 
         if (id) {
-            // UPDATE: Asegúrate de que el orden de los signos $ coincida con el array de valores
+            // UPDATE: Agregamos expiration_date = $9 (y rodamos el ID a $10)
             const query = `
                 UPDATE products 
-                SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, is_taxable = $6, barcode = $7, status = $8, last_stock_update = CURRENT_TIMESTAMP 
-                WHERE id = $9 RETURNING *`;
+                SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, is_taxable = $6, barcode = $7, status = $8, expiration_date = $9, last_stock_update = CURRENT_TIMESTAMP 
+                WHERE id = $10 RETURNING *`;
             
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, id];
+            // EL ORDEN DE LOS VALORES ES CRÍTICO AQUÍ 👇
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue, id];
             
             result = await pool.query(query, values);
             
             if (result.rowCount === 0) return res.status(404).json({ error: 'Producto no encontrado' });
         } else {
-            // INSERT
+            // INSERT: Agregamos la columna y el valor $9
             const query = `
-                INSERT INTO products (name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`;
+                INSERT INTO products (name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`;
                 
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue];
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue];
             
             result = await pool.query(query, values);
         }
         res.json(result.rows[0]);
     } catch (err) {
-        console.error(err); // Importante para ver errores en la consola del servidor
+        console.error(err); 
         res.status(500).json({ error: err.message });
     }
 });
