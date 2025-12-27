@@ -163,11 +163,19 @@ function App() {
     const [inventoryReportPage, setInventoryReportPage] = useState(1);
     const [selectedAuditProduct, setSelectedAuditProduct] = useState(null); // Para el modal de detalle
 	
+	// --- ESTADO PARA VISOR DE KARDEX ---
+    const [isKardexOpen, setIsKardexOpen] = useState(false);
+    const [kardexHistory, setKardexHistory] = useState([]);
+    const [kardexProduct, setKardexProduct] = useState(null);
+	
 	// --- ESTADOS NUEVOS: GESTIÓN DE INVENTARIO (KARDEX) ---
     const [isMovementModalOpen, setIsMovementModalOpen] = useState(false);
     const [movementProduct, setMovementProduct] = useState(null); 
     const [movementType, setMovementType] = useState('IN'); // 'IN' o 'OUT'
     const [movementForm, setMovementForm] = useState({ quantity: '', document_ref: '', reason: 'COMPRA', cost_usd: '' });
+	
+	// --- ESTADO PARA PESTAÑAS DEL MODAL DE AUDITORÍA ---
+    const [auditTab, setAuditTab] = useState('INFO'); // 'INFO' (Finanzas) o 'HISTORY' (Movimientos)
 
     // --- ESTADOS PARA REPORTES AVANZADOS (NUEVO SISTEMA DE PESTAÑAS) ---
     const [reportTab, setReportTab] = useState('DASHBOARD'); // 'DASHBOARD', 'SALES', 'INVENTORY'
@@ -506,6 +514,25 @@ const promptOpenCash = async () => {
 
         } catch (error) {
             Swal.fire('Error', error.response?.data?.error || 'Error al procesar', 'error');
+        }
+    };
+	
+	// --- FUNCIÓN: VER KARDEX (HISTORIAL) ---
+    const viewKardexHistory = async (product) => {
+        setKardexProduct(product);
+        setIsKardexOpen(true);
+        setKardexHistory([]); // Limpiar anterior
+
+        try {
+            Swal.fire({ title: 'Auditando Kardex...', didOpen: () => Swal.showLoading() });
+            // Asegúrate de tener este endpoint en tu server.js (lo creamos en el paso anterior)
+            const res = await axios.get(`${API_URL}/inventory/history/${product.id}`);
+            setKardexHistory(res.data);
+            Swal.close();
+        } catch (error) {
+            console.error(error);
+            Swal.fire('Info', 'No hay historial disponible aún para este producto.', 'info');
+            setIsKardexOpen(false);
         }
     };
 	
@@ -3912,7 +3939,7 @@ const handleVoidSale = async (sale) => {
                             <div className="col-span-2">Categoría</div>
                             <div className="col-span-2 text-right">Precio Ref</div>
                             <div className="col-span-1 text-center">Stock</div>
-                            <div className="col-span-2 text-center">Gestión (Kardex)</div>
+                            <div className="col-span-2 text-center">Gestión Rápida</div>
                         </div>
 
                         <div className="divide-y divide-gray-100">
@@ -3976,27 +4003,28 @@ const handleVoidSale = async (sale) => {
                                                         </span>
                                                     </div>
 
-                                                    {/* COLUMNA GESTIÓN (BOTONES NUEVOS) */}
-                                                    <div className="col-span-2 flex justify-center gap-1">
-                                                        {/* Botón Entrada (Verde) */}
+                                                    {/* COLUMNA GESTIÓN (BOTONES ICONOS FLAT UI) */}
+                                                    <div className="col-span-2 flex justify-center items-center gap-2">
+                                                        
+                                                        {/* 1. ENTRADA (Verde Esmeralda - Growth) */}
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'IN'); }}
-                                                            className="bg-green-100 text-green-700 hover:bg-green-600 hover:text-white p-2 rounded-lg transition-all shadow-sm"
-                                                            title="Registrar Entrada (Compra)"
+                                                            className="w-8 h-8 flex items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95 border border-emerald-100 hover:border-transparent"
+                                                            title="Registrar Entrada"
                                                         >
-                                                            📥
+                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
                                                         </button>
                                                         
-                                                        {/* Botón Salida (Rojo) */}
+                                                        {/* 2. SALIDA (Rojo Rose - Alert) */}
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'OUT'); }}
-                                                            className="bg-red-100 text-red-700 hover:bg-red-600 hover:text-white p-2 rounded-lg transition-all shadow-sm"
-                                                            title="Registrar Salida (Merma/Ajuste)"
+                                                            className="w-8 h-8 flex items-center justify-center rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95 border border-rose-100 hover:border-transparent"
+                                                            title="Registrar Salida"
                                                         >
-                                                            📤
+                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4" /></svg>
                                                         </button>
 
-                                                        {/* Botón Editar (Gris - Original) */}
+                                                        {/* 3. EDITAR (Gris Neutro - Edit) */}
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
@@ -4008,10 +4036,22 @@ const handleVoidSale = async (sale) => {
                                                                 });
                                                                 setIsProductFormOpen(true);
                                                             }}
-                                                            className="bg-gray-100 text-gray-500 hover:bg-higea-blue hover:text-white p-2 rounded-lg transition-all shadow-sm"
+                                                            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-higea-blue hover:text-white transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95 border border-slate-200 hover:border-transparent"
                                                             title="Editar Ficha"
                                                         >
-                                                            ✏️
+                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                        </button>
+                                                        
+                                                        {/* 4. KARDEX (Indigo - History) */}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                viewKardexHistory(p);
+                                                            }}
+                                                            className="w-8 h-8 flex items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-500 hover:text-white transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95 border border-indigo-100 hover:border-transparent"
+                                                            title="Ver Historial Kardex"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                                                         </button>
                                                     </div>
                                                 </div>
@@ -4031,9 +4071,11 @@ const handleVoidSale = async (sale) => {
                                                     </div>
                                                     <div className="flex flex-col items-end gap-2">
                                                         <span className={`font-bold px-2 py-0.5 rounded text-xs ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>{p.stock} Und</span>
+                                                        
+                                                        {/* BOTONES MÓVIL (COMPACTOS) */}
                                                         <div className="flex gap-2">
-                                                            <button onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'IN'); }} className="bg-green-50 text-green-700 p-2 rounded-lg border border-green-200 text-xs">📥</button>
-                                                            <button onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'OUT'); }} className="bg-red-50 text-red-700 p-2 rounded-lg border border-red-200 text-xs">📤</button>
+                                                            <button onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'IN'); }} className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center font-bold shadow-sm active:scale-95">+</button>
+                                                            <button onClick={(e) => { e.stopPropagation(); openMovementModal(p, 'OUT'); }} className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-bold shadow-sm active:scale-95">-</button>
                                                             <button onClick={(e) => { 
                                                                 e.stopPropagation(); 
                                                                 setProductForm({
@@ -4043,7 +4085,7 @@ const handleVoidSale = async (sale) => {
                                                                     barcode: p.barcode || '', status: p.status || 'ACTIVE'
                                                                 });
                                                                 setIsProductFormOpen(true);
-                                                            }} className="bg-gray-100 text-gray-500 p-2 rounded-lg border border-gray-200 text-xs">✏️</button>
+                                                            }} className="w-8 h-8 rounded-lg bg-slate-50 text-slate-500 border border-slate-200 flex items-center justify-center shadow-sm active:scale-95">✎</button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -4214,123 +4256,156 @@ const handleVoidSale = async (sale) => {
     </div>
 )}
 
-                    {/* --- MODAL FORMULARIO DE EDICIÓN ORIGINAL (NO SE TOCA) --- */}
-                    {isProductFormOpen && (
-                        <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                            <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden max-h-[95vh] flex flex-col">
-                                <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
-                                    <h3 className="text-lg font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
-                                    <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold">✕</button>
-                                </div>
+                    {/* --- MODAL FORMULARIO DE EDICIÓN (UX AUDITORÍA: STOCK BLOQUEADO EN EDICIÓN) --- */}
+{isProductFormOpen && (
+    <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+        <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden max-h-[95vh] flex flex-col">
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+                <h3 className="text-lg font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
+                <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold">✕</button>
+            </div>
 
-                                <div className="p-6 overflow-y-auto custom-scrollbar">
-                                    <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
+            <div className="p-6 overflow-y-auto custom-scrollbar">
+                <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
 
-                                        {/* NOMBRE */}
-                                        <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Nombre (*)</label>
-                                        <input type="text" name="name" placeholder="Ej: Pizza Margarita" value={productForm.name} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl mb-4 focus:border-higea-blue outline-none font-medium" required autoFocus />
+                    {/* NOMBRE */}
+                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Nombre (*)</label>
+                    <input type="text" name="name" placeholder="Ej: Pizza Margarita" value={productForm.name} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl mb-4 focus:border-higea-blue outline-none font-medium" required autoFocus />
 
-                                        {/* PRECIO Y CATEGORÍA */}
-                                        <div className="grid grid-cols-2 gap-4 mb-4">
-                                            <div>
-                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio Ref (*)</label>
-                                                <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
-                                            </div>
-                                            {/* CATEGORÍA */}
-                                            <div className="animate-fade-in-up">
-                                                <div className="flex justify-between items-center mb-1 ml-1">
-                                                    <label className="text-xs font-bold text-gray-500 block">Categoría</label>
-                                                    <span className="text-[10px] text-higea-blue font-bold bg-blue-50 px-2 py-0.5 rounded-full">
-                                                        {uniqueCategories.length} opciones
-                                                    </span>
-                                                </div>
-                                                <div className="flex gap-2 overflow-x-auto pb-3 mb-1 custom-scrollbar snap-x scroll-smooth">
-                                                    {uniqueCategories.map((cat) => (
-                                                        <button
-                                                            type="button"
-                                                            key={cat}
-                                                            onClick={() => setProductForm(prev => ({ ...prev, category: cat }))}
-                                                            className={`snap-start whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold border-2 transition-all active:scale-95 shadow-sm hover:shadow-md ${productForm.category === cat
-                                                                    ? 'bg-higea-blue text-white border-higea-blue scale-105'
-                                                                    : 'bg-white text-gray-500 border-gray-100 hover:border-higea-blue hover:text-higea-blue'
-                                                            }`}
-                                                        >
-                                                            {cat}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                                <div className="relative group">
-                                                    <input
-                                                        type="text"
-                                                        name="category"
-                                                        list="category-suggestions"
-                                                        placeholder="Escribe o selecciona arriba..."
-                                                        value={productForm.category}
-                                                        onChange={handleProductFormChange}
-                                                        className="w-full border-2 border-gray-100 p-3 pl-4 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700 bg-gray-50 focus:bg-white transition-all group-hover:bg-white shadow-sm"
-                                                    />
-                                                    <datalist id="category-suggestions">
-                                                        {uniqueCategories.map(cat => <option key={cat} value={cat} />)}
-                                                    </datalist>
-                                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-higea-blue transition-colors pointer-events-none text-lg">📂</div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* CÓDIGO DE BARRAS */}
-                                        <div className="mb-4">
-                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Código de Barras (Opcional)</label>
-                                            <div className="relative">
-                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">|||</span>
-                                                <input type="text" name="barcode" placeholder="Escanear o escribir..." value={productForm.barcode} onChange={handleProductFormChange} className="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm" />
-                                            </div>
-                                        </div>
-
-                                        {/* STOCK E ICONO */}
-                                        <div className="grid grid-cols-2 gap-4 mb-4">
-                                            <div>
-                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Stock Inicial</label>
-                                                <input type="number" name="stock" value={productForm.stock} onChange={handleProductFormChange} min="0" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none" required />
-                                            </div>
-                                            <div>
-                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Emoji</label>
-                                                <input type="text" name="icon_emoji" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none text-center text-xl" />
-                                            </div>
-                                        </div>
-
-                                        {/* SELECTOR EMOJI */}
-                                        <div className="bg-gray-50 p-2 rounded-xl border border-gray-200 mb-4">
-                                            <div className="grid grid-cols-8 gap-1 max-h-20 overflow-y-auto custom-scrollbar">
-                                                {EMOJI_OPTIONS.map((emoji, index) => (
-                                                    <button type="button" key={index} onClick={() => handleEmojiSelect(emoji)} className={`text-lg p-1 rounded hover:bg-white ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white' : ''}`}>{emoji}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        {/* ESTATUS Y FISCAL */}
-                                        <div className="grid grid-cols-2 gap-4 mb-6">
-                                            <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
-                                                <label className="text-[10px] font-bold text-gray-400 block mb-2 uppercase">Disponibilidad</label>
-                                                <div className="flex bg-white rounded-lg p-1 border border-gray-200">
-                                                    <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'ACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'ACTIVE' ? 'bg-green-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>ACTIVO</button>
-                                                    <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'INACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'INACTIVE' ? 'bg-gray-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>INACTIVO</button>
-                                                </div>
-                                            </div>
-                                            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                                                <label className="text-[10px] font-bold text-blue-400 block mb-2 uppercase">Impuesto (IVA)</label>
-                                                <select name="is_taxable" value={productForm.is_taxable.toString()} onChange={handleProductFormChange} className="w-full bg-white border border-blue-200 text-blue-800 text-xs font-bold rounded-lg p-2 outline-none">
-                                                    <option value="true">SÍ (Gravado)</option>
-                                                    <option value="false">NO (Exento)</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</button>
-                                    </form>
-                                </div>
+                    {/* PRECIO Y CATEGORÍA */}
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio Ref (*)</label>
+                            <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
+                        </div>
+                        {/* CATEGORÍA */}
+                        <div className="animate-fade-in-up">
+                            <div className="flex justify-between items-center mb-1 ml-1">
+                                <label className="text-xs font-bold text-gray-500 block">Categoría</label>
+                                <span className="text-[10px] text-higea-blue font-bold bg-blue-50 px-2 py-0.5 rounded-full">
+                                    {uniqueCategories.length} opciones
+                                </span>
+                            </div>
+                            <div className="flex gap-2 overflow-x-auto pb-3 mb-1 custom-scrollbar snap-x scroll-smooth">
+                                {uniqueCategories.map((cat) => (
+                                    <button
+                                        type="button"
+                                        key={cat}
+                                        onClick={() => setProductForm(prev => ({ ...prev, category: cat }))}
+                                        className={`snap-start whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold border-2 transition-all active:scale-95 shadow-sm hover:shadow-md ${productForm.category === cat
+                                                ? 'bg-higea-blue text-white border-higea-blue scale-105'
+                                                : 'bg-white text-gray-500 border-gray-100 hover:border-higea-blue hover:text-higea-blue'
+                                        }`}
+                                    >
+                                        {cat}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="relative group">
+                                <input
+                                    type="text"
+                                    name="category"
+                                    list="category-suggestions"
+                                    placeholder="Escribe o selecciona arriba..."
+                                    value={productForm.category}
+                                    onChange={handleProductFormChange}
+                                    className="w-full border-2 border-gray-100 p-3 pl-4 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700 bg-gray-50 focus:bg-white transition-all group-hover:bg-white shadow-sm"
+                                />
+                                <datalist id="category-suggestions">
+                                    {uniqueCategories.map(cat => <option key={cat} value={cat} />)}
+                                </datalist>
+                                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-higea-blue transition-colors pointer-events-none text-lg">📂</div>
                             </div>
                         </div>
-                    )}
+                    </div>
+
+                    {/* CÓDIGO DE BARRAS */}
+                    <div className="mb-4">
+                        <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Código de Barras (Opcional)</label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">|||</span>
+                            <input type="text" name="barcode" placeholder="Escanear o escribir..." value={productForm.barcode} onChange={handleProductFormChange} className="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm" />
+                        </div>
+                    </div>
+
+                    {/* STOCK (CONTROLADO) E ICONO */}
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                        {/* INPUT STOCK CON LÓGICA DE AUDITORÍA */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">
+                                {productForm.id ? 'Stock Actual (Controlado)' : 'Stock Inicial'}
+                            </label>
+                            <div className="relative">
+                                <input 
+                                    type="number" 
+                                    name="stock" 
+                                    value={productForm.stock} 
+                                    onChange={handleProductFormChange} 
+                                    min="0" 
+                                    disabled={!!productForm.id} // SE BLOQUEA SI ES EDICIÓN
+                                    className={`w-full border-2 p-3 rounded-xl outline-none font-bold transition-colors ${
+                                        productForm.id 
+                                            ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed' 
+                                            : 'bg-white border-gray-100 focus:border-higea-blue text-gray-800'
+                                    }`} 
+                                    required 
+                                />
+                                {/* CANDADO VISUAL */}
+                                {productForm.id && (
+                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                        <span className="text-lg" title="Para modificar el stock, utilice los botones de Entrada o Salida en el listado.">
+                                            🔒
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                            {productForm.id && (
+                                <p className="text-[9px] text-blue-500 mt-1 ml-1 leading-tight">
+                                    * Use Entrada/Salida para modificar.
+                                </p>
+                            )}
+                        </div>
+
+                        {/* INPUT EMOJI */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Emoji</label>
+                            <input type="text" name="icon_emoji" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none text-center text-xl" />
+                        </div>
+                    </div>
+
+                    {/* SELECTOR EMOJI */}
+                    <div className="bg-gray-50 p-2 rounded-xl border border-gray-200 mb-4">
+                        <div className="grid grid-cols-8 gap-1 max-h-20 overflow-y-auto custom-scrollbar">
+                            {EMOJI_OPTIONS.map((emoji, index) => (
+                                <button type="button" key={index} onClick={() => handleEmojiSelect(emoji)} className={`text-lg p-1 rounded hover:bg-white ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white' : ''}`}>{emoji}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* ESTATUS Y FISCAL */}
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
+                            <label className="text-[10px] font-bold text-gray-400 block mb-2 uppercase">Disponibilidad</label>
+                            <div className="flex bg-white rounded-lg p-1 border border-gray-200">
+                                <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'ACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'ACTIVE' ? 'bg-green-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>ACTIVO</button>
+                                <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'INACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'INACTIVE' ? 'bg-gray-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>INACTIVO</button>
+                            </div>
+                        </div>
+                        <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
+                            <label className="text-[10px] font-bold text-blue-400 block mb-2 uppercase">Impuesto (IVA)</label>
+                            <select name="is_taxable" value={productForm.is_taxable.toString()} onChange={handleProductFormChange} className="w-full bg-white border border-blue-200 text-blue-800 text-xs font-bold rounded-lg p-2 outline-none">
+                                <option value="true">SÍ (Gravado)</option>
+                                <option value="false">NO (Exento)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</button>
+                </form>
+            </div>
+        </div>
+    </div>
+)}
                 </div>
             ) : view === 'ADVANCED_REPORTS' ? (
                 /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO + DRILL DOWN + CIERRES) --- */
@@ -4714,7 +4789,14 @@ const handleVoidSale = async (sale) => {
                                             return (
                                                 <>
                                                     {currentData.map((prod) => (
-                                                        <tr key={prod.id} onClick={() => setSelectedAuditProduct(prod)} className="hover:bg-indigo-50 transition-colors cursor-pointer group">
+                                                        <tr 
+    key={prod.id} 
+    onClick={() => { 
+        setSelectedAuditProduct(prod); 
+        setAuditTab('INFO'); 
+    }} 
+    className="hover:bg-indigo-50 transition-colors cursor-pointer group"
+>
                                                             <td className="px-6 py-4 font-bold text-gray-700 flex items-center gap-2">
                                                                 {prod.barcode && <span className="text-[9px] bg-gray-100 px-1 border rounded text-gray-400 font-mono">|||</span>}
                                                                 {prod.name}
@@ -4845,82 +4927,240 @@ const handleVoidSale = async (sale) => {
     </div>
 )}
 
-                    {/* MODAL DETALLE PRODUCTO (INVENTARIO) */}
-                    {selectedAuditProduct && (
-                        <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                            <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative animate-scale-up border-t-4 border-indigo-600">
-                                <button onClick={() => setSelectedAuditProduct(null)} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 bg-white rounded-full p-1 z-10">✕</button>
+                    {/* MODAL DETALLE PRODUCTO (RESPONSIVE PRO: HEADER MÓVIL CORREGIDO + SIDEBAR PC + FINANZAS VENEZUELA) */}
+            {selectedAuditProduct && (
+                <div className="fixed inset-0 z-[90] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-2 md:p-4 animate-fade-in">
+                    
+                    {/* CONTENEDOR PRINCIPAL */}
+                    <div className="bg-white rounded-2xl md:rounded-[2.5rem] w-full max-w-5xl h-[90vh] md:h-[85vh] shadow-2xl relative animate-scale-up flex flex-col md:flex-row overflow-hidden">
+                        
+                        {/* Botón Cerrar */}
+                        <button 
+                            onClick={() => setSelectedAuditProduct(null)} 
+                            className="absolute top-2 right-2 md:top-4 md:right-4 bg-white hover:bg-slate-100 text-slate-400 hover:text-red-500 rounded-full p-2 z-30 transition-all shadow-md border border-slate-100"
+                        >
+                            ✕
+                        </button>
 
-                                <div className="p-6 bg-slate-50 border-b border-slate-100">
-                                    <div className="flex items-start gap-4">
-                                        <div className="h-16 w-16 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-4xl shadow-sm">
-                                            {products.find(p => p.id === selectedAuditProduct.id)?.icon_emoji || '📦'}
-                                        </div>
-                                        <div>
-                                            <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-1">Ficha Técnica</p>
-                                            <h3 className="font-black text-2xl text-slate-800 leading-tight">{selectedAuditProduct.name}</h3>
-                                            <p className="text-sm text-slate-500 mt-1 font-medium">{selectedAuditProduct.category}</p>
-                                            <div className="mt-2 inline-flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200 shadow-sm">
-                                                <span className="text-xs">🕒</span>
-                                                <span className="text-[10px] font-bold text-slate-400 uppercase">Modificado:</span>
-                                                <span className="text-[10px] font-mono font-bold text-slate-700">
-                                                    {selectedAuditProduct.last_stock_update
-                                                        ? new Date(selectedAuditProduct.last_stock_update).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-                                                        : 'Sin cambios recientes'}
-                                                </span>
-                                            </div>
-                                        </div>
+                        {/* --- PANEL IZQUIERDO (IDENTIDAD) --- */}
+                        <div className="w-full md:w-4/12 bg-slate-50 p-4 md:p-6 flex flex-row md:flex-col items-center justify-between md:justify-center border-b md:border-b-0 md:border-r border-slate-200 relative shrink-0 gap-3">
+                            <div className="absolute top-0 left-0 w-full md:h-1.5 h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
+                            
+                            {/* 1. INFO VISUAL */}
+                            <div className="relative z-10 flex flex-row md:flex-col items-center gap-4 md:gap-0 flex-1 md:flex-none overflow-hidden">
+                                <div className="relative shrink-0">
+                                    <div className="h-16 w-16 md:h-28 md:w-28 bg-white rounded-2xl md:rounded-[2rem] border-2 md:border-4 border-white shadow-md md:shadow-xl flex items-center justify-center text-3xl md:text-6xl relative z-10">
+                                        {products.find(p => p.id === selectedAuditProduct.id)?.icon_emoji || '📦'}
+                                    </div>
+                                    <div className={`absolute -bottom-2 left-1/2 -translate-x-1/2 md:-bottom-3 px-2 md:px-3 py-0.5 md:py-1 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest shadow-sm border border-white whitespace-nowrap z-20 ${selectedAuditProduct.status === 'ACTIVE' ? 'bg-emerald-500 text-white' : 'bg-slate-400 text-white'}`}>
+                                        {selectedAuditProduct.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
                                     </div>
                                 </div>
-
-                                <div className="p-6 space-y-6">
-                                    <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                                        <div>
-                                            <p className="text-[10px] text-gray-400 uppercase font-bold">Código Barras</p>
-                                            <p className="font-mono text-sm font-bold text-slate-700">{selectedAuditProduct.barcode || 'N/A'}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedAuditProduct.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
-                                                {selectedAuditProduct.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div>
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-2">Costo Unitario</p>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                                                <p className="text-[10px] text-blue-400 font-bold">REFERENCIAL</p>
-                                                <p className="text-xl font-black text-blue-700">Ref {parseFloat(selectedAuditProduct.price_usd).toFixed(2)}</p>
-                                            </div>
-                                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                                                <p className="text-[10px] text-slate-400 font-bold">BOLÍVARES</p>
-                                                <p className="text-xl font-black text-slate-700">Bs {(parseFloat(selectedAuditProduct.price_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div>
-                                        <div className="flex justify-between items-end mb-2">
-                                            <p className="text-xs font-bold text-slate-400 uppercase">Valoración de Inventario</p>
-                                            <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">Stock: {selectedAuditProduct.stock} uds</span>
-                                        </div>
-                                        <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg shadow-indigo-200">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-indigo-200 text-xs font-bold">TOTAL REF</span>
-                                                <span className="text-2xl font-black">Ref {parseFloat(selectedAuditProduct.total_value_usd).toFixed(2)}</span>
-                                            </div>
-                                            <div className="h-px bg-indigo-500 my-2"></div>
-                                            <div className="flex justify-between items-center">
-                                                <span className="text-indigo-200 text-xs font-bold">TOTAL BS</span>
-                                                <span className="text-lg font-bold">Bs {(parseFloat(selectedAuditProduct.total_value_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
-                                            </div>
-                                        </div>
-                                    </div>
+                                <div className="text-left md:text-center min-w-0 pl-1 md:pl-0 pt-1 md:pt-4">
+                                    <h3 className="font-black text-lg md:text-2xl text-slate-800 leading-tight mb-0.5 md:mb-1 truncate md:whitespace-normal">
+                                        {selectedAuditProduct.name}
+                                    </h3>
+                                    <span className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider block truncate">
+                                        {selectedAuditProduct.category}
+                                    </span>
                                 </div>
                             </div>
+
+                            {/* 2. CARD STOCK */}
+                            <div className={`hidden md:flex w-full max-w-[220px] p-4 rounded-2xl border-2 flex-col items-center justify-center bg-white ${selectedAuditProduct.stock < 5 ? 'border-red-100 shadow-sm shadow-red-100' : 'border-slate-200 shadow-sm'}`}>
+                                <span className="text-[10px] font-bold uppercase text-slate-400">Existencia Total</span>
+                                <span className={`text-4xl font-black ${selectedAuditProduct.stock < 5 ? 'text-red-500' : 'text-slate-800'}`}>{selectedAuditProduct.stock}</span>
+                                <span className="text-xs font-bold opacity-50 mt-1">Unidades</span>
+                            </div>
+                            <div className="md:hidden flex flex-col items-end pr-8">
+                                <span className="text-[9px] font-bold text-slate-400 uppercase">Stock</span>
+                                <span className={`text-2xl font-black ${selectedAuditProduct.stock < 5 ? 'text-red-500' : 'text-slate-800'}`}>{selectedAuditProduct.stock}</span>
+                            </div>
                         </div>
-                    )}
+
+                        {/* --- PANEL DERECHO: CONTENIDO --- */}
+                        <div className="w-full md:w-8/12 bg-white flex flex-col h-full overflow-hidden">
+                            
+                            {/* PESTAÑAS */}
+                            <div className="flex border-b border-slate-100 px-4 md:px-8 pt-2 md:pt-6 gap-6 shrink-0 bg-white z-20 overflow-x-auto no-scrollbar">
+                                <button 
+                                    onClick={() => setAuditTab('INFO')}
+                                    className={`pb-3 md:pb-4 text-xs font-bold uppercase tracking-widest transition-all border-b-[3px] whitespace-nowrap ${auditTab === 'INFO' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                                >
+                                    📊 Finanzas
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        setAuditTab('HISTORY');
+                                        axios.get(`${API_URL}/inventory/history/${selectedAuditProduct.id}`)
+                                            .then(res => setKardexHistory(res.data))
+                                            .catch(console.error);
+                                    }}
+                                    className={`pb-3 md:pb-4 text-xs font-bold uppercase tracking-widest transition-all border-b-[3px] whitespace-nowrap ${auditTab === 'HISTORY' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                                >
+                                    📜 Movimientos
+                                </button>
+                            </div>
+
+                            {/* ÁREA DE SCROLL */}
+                            <div className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar relative h-full">
+                                
+                                {/* VISTA 1: FINANZAS ADAPTADAS A VENEZUELA */}
+                                {auditTab === 'INFO' && (
+                                    <div className="flex flex-col h-full animate-fade-in space-y-4 md:space-y-6">
+                                        
+                                        {/* 1. Datos Técnicos */}
+                                        <div className="grid grid-cols-2 gap-3 md:gap-6">
+                                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-center">
+                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Código de Barras</p>
+                                                <div className="flex items-center gap-2 overflow-hidden">
+                                                    <span className="text-xl opacity-20">|||</span>
+                                                    <p className="font-mono text-sm md:text-base font-black text-slate-700 truncate">
+                                                        {selectedAuditProduct.barcode || 'NO REGISTRADO'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className={`p-4 rounded-2xl border flex flex-col justify-center ${selectedAuditProduct.is_taxable ? 'bg-blue-50 border-blue-100' : 'bg-emerald-50 border-emerald-100'}`}>
+                                                <p className={`text-[10px] font-bold uppercase tracking-wide mb-1 ${selectedAuditProduct.is_taxable ? 'text-blue-400' : 'text-emerald-400'}`}>Régimen Fiscal</p>
+                                                <p className={`text-sm md:text-base font-black ${selectedAuditProduct.is_taxable ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                                    {selectedAuditProduct.is_taxable ? 'GRAVADO (IVA 16%)' : 'EXENTO (E)'}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {/* 2. COSTO UNITARIO (Sin $) */}
+                                        <div className="p-5 md:p-8 rounded-3xl border border-slate-100 shadow-xl shadow-slate-100/50 bg-white relative overflow-hidden group">
+                                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                                                <span className="text-6xl">📈</span>
+                                            </div>
+                                            <h4 className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Costo Unitario de Reposición</h4>
+                                            
+                                            <div className="flex flex-col md:flex-row items-baseline gap-2 md:gap-8">
+                                                <div>
+                                                    <span className="text-4xl md:text-5xl font-black text-slate-800 tracking-tight">
+                                                        {/* CAMBIO: Usamos 'Ref' pequeño en lugar de $ */}
+                                                        <span className="text-sm md:text-lg text-slate-400 font-bold mr-1 align-top">Ref</span>
+                                                        {parseFloat(selectedAuditProduct.price_usd).toFixed(2)}
+                                                    </span>
+                                                </div>
+                                                <div className="h-px w-full md:w-px md:h-12 bg-slate-100"></div>
+                                                <div>
+                                                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Costo en Bolívares</p>
+                                                    <span className="text-2xl md:text-3xl font-bold text-slate-600">
+                                                        Bs { (parseFloat(selectedAuditProduct.price_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 }) }
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* 3. VALOR TOTAL (Sin $) */}
+                                        <div className="mt-auto bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-600 rounded-2xl md:rounded-[2rem] p-6 md:p-8 text-white shadow-2xl shadow-indigo-300/50 relative overflow-hidden">
+                                            <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-3xl animate-pulse-slow"></div>
+                                            <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-indigo-900/20 rounded-full blur-3xl"></div>
+                                            
+                                            <div className="relative z-10">
+                                                <p className="text-[10px] md:text-xs font-bold opacity-80 uppercase tracking-[0.2em] mb-4 border-b border-white/20 pb-2 inline-block">Valor Total del Inventario</p>
+                                                
+                                                <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                                                    <div>
+                                                        <p className="text-4xl md:text-6xl font-black tracking-tight drop-shadow-md">
+                                                            {/* CAMBIO: Usamos 'Ref' en lugar de $ */}
+                                                            <span className="text-lg md:text-2xl opacity-60 font-bold mr-2 align-top">Ref</span>
+                                                            {parseFloat(selectedAuditProduct.total_value_usd).toFixed(2)}
+                                                        </p>
+                                                        <p className="text-xs font-medium opacity-60 mt-1">Calculado en base al stock actual</p>
+                                                    </div>
+                                                    
+                                                    <div className="w-full md:w-auto bg-white/10 backdrop-blur-md rounded-xl p-3 md:p-4 border border-white/10">
+                                                        <p className="text-[9px] font-bold opacity-70 uppercase mb-1">Total en Bolívares</p>
+                                                        <p className="text-xl md:text-2xl font-bold">
+                                                            Bs {(parseFloat(selectedAuditProduct.total_value_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* VISTA 2: HISTORIAL (TIMELINE) */}
+                                {auditTab === 'HISTORY' && (
+                                    <div className="animate-fade-in pb-16 md:pb-10">
+                                        {kardexHistory.length === 0 ? (
+                                            <div className="h-40 md:h-64 flex flex-col items-center justify-center text-slate-300 border-2 border-dashed border-slate-100 rounded-3xl mt-4">
+                                                <span className="text-3xl md:text-5xl mb-2 opacity-50">📜</span>
+                                                <p className="text-[10px] md:text-xs font-bold uppercase tracking-wider">No hay historial disponible</p>
+                                            </div>
+                                        ) : (
+                                            <div className="relative border-l-2 border-indigo-50 ml-2 md:ml-3 space-y-4 md:space-y-8 mt-2">
+                                                {kardexHistory.map((mov, idx) => (
+                                                    <div key={idx} className="relative pl-4 md:pl-8 group">
+                                                        <div className={`absolute -left-[9px] md:-left-[11px] top-0 w-4 h-4 md:w-6 md:h-6 rounded-full border-2 md:border-4 border-white shadow-md flex items-center justify-center text-[8px] md:text-[10px] z-10 ${
+                                                            mov.type === 'IN' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'
+                                                        }`}>
+                                                            {mov.type === 'IN' ? '↓' : '↑'}
+                                                        </div>
+                                                        
+                                                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 md:p-4 rounded-xl md:rounded-2xl bg-white border border-slate-100 hover:border-indigo-100 hover:shadow-md transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
+                                                            <div className="mb-2 sm:mb-0 w-full sm:w-auto">
+                                                                <div className="flex items-center justify-between sm:justify-start gap-2 mb-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wide ${
+                                                                            mov.type === 'IN' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                                                                        }`}>
+                                                                            {mov.type === 'IN' ? 'ENTRADA' : 'SALIDA'}
+                                                                        </span>
+                                                                        <span className="text-[9px] md:text-[10px] text-slate-400 font-mono font-medium">
+                                                                            {new Date(mov.created_at).toLocaleDateString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    <span className="text-[9px] text-slate-300 font-mono md:hidden">
+                                                                        {new Date(mov.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                                                    </span>
+                                                                </div>
+                                                                
+                                                                <p className="text-xs md:text-sm font-bold text-slate-700 line-clamp-1">
+                                                                    {mov.reason.replace(/_/g, ' ')}
+                                                                </p>
+
+                                                                {(mov.document_ref || (mov.type === 'IN' && mov.cost_usd)) && (
+                                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                                        {mov.document_ref && (
+                                                                            <span className="inline-flex items-center gap-1 text-[9px] md:text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-100 truncate max-w-[120px]">
+                                                                                📄 {mov.document_ref}
+                                                                            </span>
+                                                                        )}
+                                                                        {mov.type === 'IN' && mov.cost_usd && (
+                                                                            <span className="inline-flex items-center gap-1 text-[9px] md:text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100">
+                                                                                Ref {parseFloat(mov.cost_usd).toFixed(2)}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            
+                                                            <div className="text-right pl-0 md:pl-4 border-t md:border-t-0 md:border-l border-slate-50 pt-2 md:pt-0 mt-2 md:mt-0 w-full sm:w-auto flex flex-row sm:flex-col justify-between sm:justify-center items-center sm:items-end">
+                                                                <span className={`block text-base md:text-xl font-black ${mov.type === 'IN' ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                                    {mov.type === 'IN' ? '+' : '-'}{mov.quantity}
+                                                                </span>
+                                                                <div className="flex items-center justify-end gap-1 text-[9px] text-slate-400 font-bold uppercase mt-0 md:mt-0.5">
+                                                                    <span>Saldo:</span>
+                                                                    <span className="text-slate-600 text-[10px] md:text-xs">{mov.new_stock}</span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="absolute bottom-0 left-0 w-full h-8 md:h-12 bg-gradient-to-t from-white to-transparent pointer-events-none"></div>
+                        </div>
+                    </div>
+                </div>
+            )}
                 </div>
 
                 ) : (
@@ -5486,6 +5726,95 @@ const handleVoidSale = async (sale) => {
                                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
                                 IMPRIMIR
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+			
+			{/* --- MODAL VISOR DE KARDEX (HISTORIAL) --- */}
+            {isKardexOpen && kardexProduct && (
+                <div className="fixed inset-0 z-[90] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-white rounded-[2rem] w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl overflow-hidden relative">
+                        
+                        {/* CABECERA */}
+                        <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                            <div>
+                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Auditoría de Inventario</span>
+                                <h3 className="text-2xl font-black text-slate-800">{kardexProduct.name}</h3>
+                                <p className="text-sm text-slate-500">Stock Actual: <span className="font-bold text-higea-blue">{kardexProduct.stock}</span></p>
+                            </div>
+                            <button onClick={() => setIsKardexOpen(false)} className="w-10 h-10 bg-white rounded-full text-slate-400 hover:text-red-500 shadow-sm font-bold transition-colors">✕</button>
+                        </div>
+
+                        {/* LISTA DE MOVIMIENTOS (TIMELINE) */}
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-white">
+                            {kardexHistory.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-slate-300">
+                                    <span className="text-5xl mb-2">📭</span>
+                                    <p>No hay movimientos registrados.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-6 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent">
+                                    {kardexHistory.map((mov, idx) => (
+                                        <div key={idx} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                                            
+                                            {/* PUNTO EN LA LÍNEA DE TIEMPO */}
+                                            <div className={`flex items-center justify-center w-10 h-10 rounded-full border-4 border-white shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 ${
+                                                mov.type === 'IN' ? 'bg-emerald-500' : 'bg-rose-500'
+                                            } text-white font-bold z-10`}>
+                                                {mov.type === 'IN' ? '+' : '-'}
+                                            </div>
+                                            
+                                            {/* TARJETA DE DETALLE */}
+                                            <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded-2xl border border-slate-100 shadow-sm bg-white hover:shadow-md transition-shadow">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <span className={`text-[10px] font-black px-2 py-1 rounded uppercase tracking-wide ${
+                                                        mov.type === 'IN' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                                                    }`}>
+                                                        {mov.type === 'IN' ? 'Entrada' : 'Salida'}
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-400 font-mono">
+                                                        {new Date(mov.created_at).toLocaleDateString('es-VE')} • {new Date(mov.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                                    </span>
+                                                </div>
+                                                
+                                                <div className="mb-2">
+                                                    <div className="text-2xl font-black text-slate-800">
+                                                        {mov.quantity} <span className="text-sm font-medium text-slate-400">unidades</span>
+                                                    </div>
+                                                    <div className="text-xs font-bold text-slate-600 mt-1">
+                                                        {mov.reason.replace(/_/g, ' ')}
+                                                    </div>
+                                                </div>
+
+                                                {/* DATOS FISCALES / DOCUMENTO */}
+                                                <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 mt-2">
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase">Documento</span>
+                                                        <span className="text-xs font-mono font-bold text-slate-600 truncate max-w-[150px]">
+                                                            {mov.document_ref || 'N/A'}
+                                                        </span>
+                                                    </div>
+                                                    {mov.type === 'IN' && mov.cost_usd && (
+                                                        <div className="flex justify-between items-center mt-1 pt-1 border-t border-slate-200">
+                                                            <span className="text-[10px] font-bold text-slate-400 uppercase">Costo Reg.</span>
+                                                            <span className="text-xs font-bold text-emerald-600">
+                                                                Ref {parseFloat(mov.cost_usd).toFixed(2)}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* STOCK RESULTANTE (SNAPSHOT) */}
+                                                <div className="mt-2 text-right">
+                                                    <span className="text-[9px] text-slate-400">Stock resultante: </span>
+                                                    <span className="text-xs font-bold text-slate-700">{mov.new_stock}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

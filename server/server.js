@@ -1104,15 +1104,14 @@ app.post('/api/inventory/movement', async (req, res) => {
 app.get('/api/inventory/history/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        // Intentamos buscar en la tabla de movimientos
+        // Aumentamos a 50 para que el scroll sea útil y visible
         const result = await pool.query(`
             SELECT * FROM inventory_movements 
             WHERE product_id = $1 
-            ORDER BY created_at DESC LIMIT 10
+            ORDER BY created_at DESC LIMIT 50
         `, [id]);
         res.json(result.rows);
     } catch (err) {
-        // Si la tabla no existe, devolvemos array vacío para no romper el front
         res.json([]); 
     }
 });
