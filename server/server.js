@@ -196,24 +196,55 @@ app.post('/api/sales', async (req, res) => {
     const client = await pool.connect();
     
     try {
-        await client.query('BEGIN');
+        await client.query('BEGIN'); // Iniciar transacción segura
 
         let subtotalTaxableUsd = 0;
         let subtotalExemptUsd = 0;
 
+        // --- PASO 1: PROCESAR INVENTARIO (DESCUENTO POR LOTES - FEFO) ---
         for (const item of items) {
-            const itemTotalBase = parseFloat(item.price_usd) * item.quantity;
-            const updateResult = await client.query(
-                `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1 RETURNING id`,
-                [item.quantity, item.product_id]
-            );
+            const productId = item.product_id;
+            let qtyToDeduct = parseInt(item.quantity);
+            const itemTotalBase = parseFloat(item.price_usd) * qtyToDeduct;
 
-            if (updateResult.rowCount === 0) throw new Error(`Stock insuficiente ID ${item.product_id}`);
-            
+            // 1.1 Calcular Totales Financieros
             if (item.is_taxable) subtotalTaxableUsd += itemTotalBase;
             else subtotalExemptUsd += itemTotalBase;
+
+            // 1.2 Buscar Lotes Disponibles (Ordenados por Fecha de Vencimiento: Más viejos primero)
+            const batchesRes = await client.query(`
+                SELECT id, stock FROM product_batches 
+                WHERE product_id = $1 AND stock > 0 
+                ORDER BY expiration_date ASC NULLS LAST
+            `, [productId]);
+
+            // 1.3 Verificar si hay Stock Total suficiente
+            const totalStockAvailable = batchesRes.rows.reduce((sum, b) => sum + b.stock, 0);
+            if (totalStockAvailable < qtyToDeduct) {
+                throw new Error(`Stock insuficiente para producto ID ${productId}. Disponibles: ${totalStockAvailable}`);
+            }
+
+            // 1.4 Bucle de Descuento (FEFO)
+            let remainingQty = qtyToDeduct;
+            for (let batch of batchesRes.rows) {
+                if (remainingQty <= 0) break;
+
+                const take = Math.min(batch.stock, remainingQty);
+                
+                // Restar del Lote Específico
+                await client.query('UPDATE product_batches SET stock = stock - $1 WHERE id = $2', [take, batch.id]);
+                
+                remainingQty -= take;
+            }
+
+            // 1.5 Actualizar Stock Total en tabla 'products' (Para consistencia rápida)
+            const finalStockRes = await client.query('SELECT COALESCE(SUM(stock), 0) as total FROM product_batches WHERE product_id = $1', [productId]);
+            const finalTotal = parseInt(finalStockRes.rows[0].total);
+            
+            await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalTotal, productId]);
         }
         
+        // --- PASO 2: CÁLCULOS FINANCIEROS Y DEUDA ---
         const ivaUsd = subtotalTaxableUsd * IVA_RATE;
         const finalTotalUsd = subtotalTaxableUsd + subtotalExemptUsd + ivaUsd;
         const totalVes = finalTotalUsd * globalBCVRate; 
@@ -221,39 +252,36 @@ app.post('/api/sales', async (req, res) => {
         let saleStatus = 'PAGADO';
         let customerId = null;
         let dueDate = null;
-        // Si es contado, el pagado es igual al total. Si es crédito, 0 (por ahora).
         let amountPaidUsd = finalTotalUsd; 
         
         // [CAMBIO 2] Lógica mejorada para determinar el Cliente
-        // Permitir procesar si es crédito O si es factura fiscal
         if (is_credit || invoice_type === 'FISCAL') {
             
-            // ESCENARIO A: El frontend ya nos mandó el ID (porque lo buscó en el autocomplete)
+            // ESCENARIO A: El frontend ya nos mandó el ID
             if (customer_id) {
                 customerId = customer_id;
             } 
-            // ESCENARIO B: Es un cliente nuevo o manual (usamos la data para buscarlo o crearlo)
+            // ESCENARIO B: Es un cliente nuevo o manual
             else if (customer_data) {
                 customerId = await findOrCreateCustomer(client, customer_data);
             }
 
-            // Solo aplicamos la lógica de deuda/fiscal si efectivamente tenemos un cliente
+            // Solo aplicamos la lógica de deuda/fiscal si tenemos cliente
             if (customerId) {
-                // CORRECCIÓN: Solo marcar PENDIENTE si es explícitamente crédito
                 if (is_credit) {
                     saleStatus = 'PENDIENTE';
                     amountPaidUsd = 0; 
                     const days = due_days === 30 ? 30 : 15;
                     dueDate = `CURRENT_TIMESTAMP + INTERVAL '${days} days'`;
                 } else {
-                    // Si es Fiscal pero de Contado -> PAGADO
                     saleStatus = 'PAGADO';
-                    amountPaidUsd = finalTotalUsd; // Se asume pagado completo
+                    amountPaidUsd = finalTotalUsd;
                     dueDate = null;
                 }
             }
         }
 
+        // --- PASO 3: REGISTRAR VENTA EN CABECERA ---
         const saleQuery = `
             INSERT INTO sales (
                 total_usd, total_ves, bcv_rate_snapshot, payment_method, status, customer_id, due_date,
@@ -271,11 +299,23 @@ app.post('/api/sales', async (req, res) => {
         const saleResult = await client.query(saleQuery, saleValues);
         const saleId = saleResult.rows[0].id;
 
+        // --- PASO 4: REGISTRAR DETALLES Y MOVIMIENTOS ---
         for (const item of items) {
+            // A. Insertar Item de Venta
             await client.query(
                 `INSERT INTO sale_items (sale_id, product_id, quantity, price_at_moment_usd) VALUES ($1, $2, $3, $4)`,
                 [saleId, item.product_id, item.quantity, item.price_usd]
             );
+
+            // B. Registrar en Historial (Kardex) - Usando el stock total recién calculado
+            // Obtenemos el stock actual para el registro
+            const stockCheck = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
+            const currentStockLog = stockCheck.rows[0].stock;
+
+            await client.query(`
+                INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
+                VALUES ($1, 'OUT', $2, 'VENTA', $3, $4)
+            `, [item.product_id, item.quantity, `VENTA #${saleId}`, currentStockLog]);
         }
 
         await client.query('COMMIT');
