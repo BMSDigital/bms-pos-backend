@@ -1,3 +1,5 @@
+//Fraibert Bracho 
+//Derechos de autor
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
@@ -75,7 +77,6 @@ const debounce = (func, delay) => {
         }, delay);
     };
 };
-
 // 💡 MEJORA ARQUITECTURA: Uso de variables de entorno de Vite
 // Necesitas un archivo .env en la raíz del frontend con VITE_API_URL
 const API_URL = import.meta.env.VITE_API_URL || 'https://bms-postventa-api.onrender.com/api';
@@ -172,10 +173,13 @@ function App() {
     const [isMovementModalOpen, setIsMovementModalOpen] = useState(false);
     const [movementProduct, setMovementProduct] = useState(null);
     const [movementType, setMovementType] = useState('IN'); // 'IN' o 'OUT'
-    const [movementForm, setMovementForm] = useState({ quantity: '', document_ref: '', reason: 'COMPRA', cost_usd: '' });
+    const [movementForm, setMovementForm] = useState({ quantity: '', document_ref: '', reason: 'COMPRA_PROVEEDOR', cost_usd: '', new_expiration: '', next_expiration: ''});
 
     // --- ESTADO PARA PESTAÑAS DEL MODAL DE AUDITORÍA ---
     const [auditTab, setAuditTab] = useState('INFO'); // 'INFO' (Finanzas) o 'HISTORY' (Movimientos)
+	
+	const [batches, setBatches] = useState([]); // Para guardar los lotes del producto
+	const [selectedBatch, setSelectedBatch] = useState(null); // Lote seleccionado para borrar
 
     // --- ESTADOS PARA REPORTES AVANZADOS (NUEVO SISTEMA DE PESTAÑAS) ---
     const [reportTab, setReportTab] = useState('DASHBOARD'); // 'DASHBOARD', 'SALES', 'INVENTORY'
@@ -241,6 +245,7 @@ function App() {
     // NUEVOS ESTADOS para búsqueda de inventario
     const [productSearchQuery, setProductSearchQuery] = useState('');
     const [filteredInventory, setFilteredInventory] = useState([]);
+	const [filterExpiration, setFilterExpiration] = useState(false);
     const [inventoryCurrentPage, setInventoryCurrentPage] = useState(1); // <-- PAGINACIÓN INVENTARIO
     // ------------------------------------------
 
@@ -408,21 +413,40 @@ function App() {
         setCustomerCurrentPage(1); // <-- RESET DE PÁGINA
     }, [customerSearchQuery, allCustomers]);
 
-    // 💡 Lógica de filtro para la tabla de inventario (AÑADIDO RESET DE PÁGINA)
+    // 💡 Lógica de filtro OPTIMIZADA (Con Debounce para evitar Violations)
     useEffect(() => {
-        if (productSearchQuery) {
-            const lowerQuery = productSearchQuery.toLowerCase();
-            const results = products.filter(p =>
-                p.name.toLowerCase().includes(lowerQuery) ||
-                p.category.toLowerCase().includes(lowerQuery) ||
-                p.id.toString().includes(lowerQuery)
-            );
+        // Creamos un temporizador para no filtrar inmediatamente al escribir
+        const timerId = setTimeout(() => {
+            let results = products;
+
+            // 1. Filtro por Búsqueda (Texto)
+            if (productSearchQuery) {
+                const lowerQuery = productSearchQuery.toLowerCase();
+                results = results.filter(p =>
+                    p.name.toLowerCase().includes(lowerQuery) ||
+                    p.category.toLowerCase().includes(lowerQuery) ||
+                    p.id.toString().includes(lowerQuery) ||
+                    (p.barcode && p.barcode.includes(lowerQuery))
+                );
+            }
+
+            // 2. Filtro por Vencimiento
+            if (filterExpiration) {
+                results = results.filter(product => {
+                    if (!product.expiration_date) return false;
+                    const daysLeft = Math.ceil((new Date(product.expiration_date) - new Date()) / (1000 * 60 * 60 * 24));
+                    return daysLeft <= 30;
+                });
+            }
+
             setFilteredInventory(results);
-        } else {
-            setFilteredInventory(products);
-        }
-        setInventoryCurrentPage(1); // <-- RESET DE PÁGINA
-    }, [productSearchQuery, products]);
+            setInventoryCurrentPage(1);
+        }, 300); // <--- ESPERA 300ms (Esto elimina el lag del 'input handler')
+
+        // Limpieza: Si escribes otra letra antes de los 300ms, cancela el cálculo anterior
+        return () => clearTimeout(timerId);
+
+    }, [productSearchQuery, products, filterExpiration]);
 
     // 💡 MODIFICADO: Lógica de filtro para productos (POS)
     useEffect(() => {
@@ -484,6 +508,13 @@ function App() {
             return () => clearTimeout(timer);
         }
     }, [salesSearch, reportTab]); // <--- AQUÍ SÍ DEJAMOS 'reportTab'
+	
+	const fetchBatches = async (productId) => {
+    try {
+        const res = await axios.get(`${API_URL}/inventory/batches/${productId}`);
+        setBatches(res.data);
+    } catch (error) { console.error(error); }
+};
 
     // ABRIR MODAL
     const openMovementModal = (product, type) => {
@@ -498,35 +529,69 @@ function App() {
         setIsMovementModalOpen(true);
     };
 
-    // ENVIAR MOVIMIENTO (Conexión Backend)
+    // ENVIAR MOVIMIENTO (CORREGIDO: CÁLCULO DE STOCK REAL)
+    // ENVIAR MOVIMIENTO (NIVEL 2: GESTIÓN DE LOTES ROBUSTA)
     const handleMovementSubmit = async (e) => {
         e.preventDefault();
-        if (!movementForm.quantity || movementForm.quantity <= 0) return Swal.fire('Error', 'Cantidad inválida', 'warning');
+        const qty = parseInt(movementForm.quantity);
+
+        if (!qty || qty <= 0) return Swal.fire('Error', 'Cantidad inválida', 'warning');
         if (movementType === 'IN' && !movementForm.document_ref) return Swal.fire('Atención', 'El Nro de Factura es obligatorio para entradas.', 'warning');
 
-        try {
-            Swal.fire({ title: 'Actualizando Kardex...', didOpen: () => Swal.showLoading() });
+        // VALIDACIÓN: Si es una salida específica (Vencimiento o Merma), es obligatorio seleccionar un lote
+        if (movementType === 'OUT' && (movementForm.reason === 'VENCIMIENTO' || movementForm.reason === 'MERMA_DAÑO') && !selectedBatch) {
+            return Swal.fire('Error', 'Debes seleccionar un lote de la lista para retirar.', 'warning');
+        }
 
+        try {
+            Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading() });
+
+            // ENVIAMOS AL BACKEND (El backend maneja la suma de lotes y lógica FEFO)
             await axios.post(`${API_URL}/inventory/movement`, {
                 product_id: movementProduct.id,
                 type: movementType,
-                quantity: movementForm.quantity,
+                quantity: qty,
                 document_ref: movementForm.document_ref,
                 reason: movementForm.reason,
-                cost_usd: movementForm.cost_usd
+                cost_usd: movementForm.cost_usd,
+                // Si es entrada, enviamos la fecha del nuevo lote
+                new_expiration: movementType === 'IN' ? movementForm.new_expiration : null,
+                // Si es salida específica, enviamos el ID del lote seleccionado
+                specific_batch_id: selectedBatch 
             });
 
-            Swal.fire({ icon: 'success', title: 'Movimiento Registrado', timer: 1500, showConfirmButton: false });
+            Swal.fire({ icon: 'success', title: 'Movimiento Exitoso', timer: 1500, showConfirmButton: false });
+            
+            // Limpieza y Cierre
             setIsMovementModalOpen(false);
-            fetchInventoryDetail(); // Recargar datos
-
-            // Actualizar lista general de productos para reflejar cambios
-            const prodRes = await axios.get(`${API_URL}/products`);
-            setProducts(prodRes.data.map(p => ({ ...p, is_taxable: p.is_taxable === true || p.is_taxable === 1 })).sort((a, b) => a.id - b.id));
+            setMovementForm({ 
+                quantity: '', 
+                document_ref: '', 
+                reason: 'COMPRA_PROVEEDOR', 
+                cost_usd: '', 
+                new_expiration: '',
+                next_expiration: '' // Limpiamos campos viejos por si acaso
+            });
+            setSelectedBatch(null);
+            
+            // CRÍTICO: Recargar los datos para ver el nuevo stock total calculado por el backend
+            fetchData(); 
 
         } catch (error) {
+            console.error(error);
             Swal.fire('Error', error.response?.data?.error || 'Error al procesar', 'error');
         }
+    };
+
+    // Helper auxiliar corregido (recibe el stock calculado)
+    const updateProductDate = async (prod, date, correctStock) => {
+        return axios.post(`${API_URL}/products`, {
+            ...prod,
+            price_usd: prod.price_usd,
+            stock: correctStock, // <--- AQUÍ ESTÁ LA CORRECCIÓN: Usamos el stock calculado (10), no el viejo (3)
+            is_taxable: prod.is_taxable,
+            expiration_date: date
+        });
     };
 
     // --- FUNCIÓN: VER KARDEX (HISTORIAL) ---
@@ -4001,6 +4066,20 @@ function App() {
                                         className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-higea-blue outline-none shadow-sm text-sm"
                                     />
                                 </div>
+								{/* BOTÓN DE GESTIÓN DE VENCIMIENTOS (PASO C) */}
+                                <button
+                                    onClick={() => setFilterExpiration(!filterExpiration)}
+                                    className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-sm border ${
+                                        filterExpiration 
+                                        ? 'bg-orange-100 text-orange-700 border-orange-200 ring-2 ring-orange-200' 
+                                        : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    <span>{filterExpiration ? '🔥 Riesgos' : '📅 Vencimientos'}</span>
+                                    {filterExpiration && (
+                                        <span className="bg-orange-200 text-orange-800 px-1.5 rounded-full text-[9px]">ON</span>
+                                    )}
+                                </button>
 
                                 <button
                                     onClick={() => {
@@ -4093,32 +4172,49 @@ function App() {
                                                                     {p.status === 'INACTIVE' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">INACTIVO</span>}
                                                                 </div>
 
-                                                                {/* LÓGICA VISUAL DE VENCIMIENTO (SEMÁFORO) */}
-                                                                {(() => {
-                                                                    if (!p.expiration_date) return null;
-                                                                    const daysLeft = Math.ceil((new Date(p.expiration_date) - new Date()) / (1000 * 60 * 60 * 24));
-
-                                                                    let badgeClass = "bg-green-50 text-green-700 border-green-200";
-                                                                    let icon = "✅";
-                                                                    let text = `Vence: ${new Date(p.expiration_date).toLocaleDateString('es-VE')}`;
-
-                                                                    if (daysLeft < 0) {
-                                                                        badgeClass = "bg-red-100 text-red-700 border-red-200 font-black animate-pulse";
-                                                                        icon = "💀";
-                                                                        text = "¡VENCIDO!";
-                                                                    } else if (daysLeft <= 30) { // Alerta a 30 días
-                                                                        badgeClass = "bg-orange-100 text-orange-700 border-orange-200 font-bold";
-                                                                        icon = "⚠️";
-                                                                        text = `Vence en ${daysLeft} días`;
-                                                                    }
-
+                                                                {/* SEMÁFORO CORREGIDO PARA LOTES */}
+                                                            {(() => {
+                                                                // Si no hay fecha (null o string vacío), asumimos que es mercancía estable o sin fecha registrada
+                                                                if (!p.expiration_date) {
                                                                     return (
-                                                                        <div className={`mt-1.5 flex items-center gap-1.5 text-[9px] px-2 py-1 rounded border w-fit transition-all ${badgeClass}`}>
-                                                                            <span className="text-xs">{icon}</span>
-                                                                            <span>{text}</span>
+                                                                        <div className="mt-1.5 flex items-center gap-1.5 text-[9px] px-2 py-1 rounded border w-fit bg-gray-100 text-gray-500 border-gray-200">
+                                                                            <span>♾️</span>
+                                                                            <span>Sin Vencimiento</span>
                                                                         </div>
                                                                     );
-                                                                })()}
+                                                                }
+
+                                                                const expDate = new Date(p.expiration_date);
+                                                                // Corrección de zona horaria simple para evitar que reste un día
+                                                                expDate.setMinutes(expDate.getMinutes() + expDate.getTimezoneOffset());
+                                                                
+                                                                const today = new Date();
+                                                                today.setHours(0,0,0,0); // Ignorar hora actual
+
+                                                                const diffTime = expDate - today;
+                                                                const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                                                
+                                                                let badgeClass = "bg-green-50 text-green-700 border-green-200";
+                                                                let icon = "✅";
+                                                                let text = `Vence: ${expDate.toLocaleDateString('es-VE')}`;
+
+                                                                if (daysLeft < 0) {
+                                                                    badgeClass = "bg-red-100 text-red-700 border-red-200 font-black animate-pulse";
+                                                                    icon = "💀";
+                                                                    text = "¡VENCIDO!";
+                                                                } else if (daysLeft <= 30) {
+                                                                    badgeClass = "bg-orange-100 text-orange-700 border-orange-200 font-bold";
+                                                                    icon = "⚠️";
+                                                                    text = `Vence en ${daysLeft} días`;
+                                                                }
+
+                                                                return (
+                                                                    <div className={`mt-1.5 flex items-center gap-1.5 text-[9px] px-2 py-1 rounded border w-fit transition-all ${badgeClass}`}>
+                                                                        <span className="text-xs">{icon}</span>
+                                                                        <span>{text}</span>
+                                                                    </div>
+                                                                );
+                                                            })()}
                                                             </div>
                                                         </div>
                                                         <div className="col-span-2 text-gray-500 text-xs font-medium">{p.category}</div>
@@ -4255,148 +4351,188 @@ function App() {
 
                         <button onClick={() => { setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE', expiration_date: '' }); setIsProductFormOpen(true); }} className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-higea-blue text-white rounded-full shadow-2xl flex items-center justify-center text-3xl font-light z-40 active:scale-90 transition-transform">+</button>
 
-                        {/* --- MODAL GESTIÓN DE STOCK (CORREGIDO: BOTÓN CERRAR ACCESIBLE) --- */}
-                        {isMovementModalOpen && movementProduct && (
-                            <div className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+                        {/* --- MODAL GESTIÓN DE STOCK (NIVEL 2: GESTIÓN DE LOTES ROBUSTA) --- */}
+            {isMovementModalOpen && movementProduct && (
+                <div className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
 
-                                {/* Card Principal */}
-                                <div className="bg-white rounded-[1.5rem] w-full max-w-md shadow-2xl animate-scale-up overflow-hidden relative">
+                    {/* Card Principal */}
+                    <div className="bg-white rounded-[1.5rem] w-full max-w-md shadow-2xl animate-scale-up overflow-hidden relative">
 
-                                    {/* Header de Color Sólido */}
-                                    <div className={`p-6 text-center text-white relative ${movementType === 'IN'
-                                            ? 'bg-gradient-to-r from-emerald-500 to-emerald-600'
-                                            : 'bg-gradient-to-r from-red-500 to-rose-600'
-                                        }`}>
-                                        {/* --- CORRECCIÓN AQUÍ: z-50 y tamaño w-10 h-10 --- */}
-                                        <button
-                                            onClick={() => setIsMovementModalOpen(false)}
-                                            className="absolute top-3 right-3 z-50 w-10 h-10 flex items-center justify-center bg-white/20 hover:bg-white/40 rounded-full text-white transition-all text-lg font-bold backdrop-blur-md shadow-sm cursor-pointer active:scale-90"
-                                            title="Cerrar ventana"
-                                        >
-                                            ✕
-                                        </button>
-                                        {/* ------------------------------------------------ */}
+                        {/* Header de Color Sólido */}
+                        <div className={`p-6 text-center text-white relative ${movementType === 'IN'
+                            ? 'bg-gradient-to-r from-emerald-500 to-emerald-600'
+                            : 'bg-gradient-to-r from-red-500 to-rose-600'
+                        }`}>
+                            {/* Botón Cerrar */}
+                            <button
+                                onClick={() => setIsMovementModalOpen(false)}
+                                className="absolute top-3 right-3 z-50 w-10 h-10 flex items-center justify-center bg-white/20 hover:bg-white/40 rounded-full text-white transition-all text-lg font-bold backdrop-blur-md shadow-sm cursor-pointer active:scale-90"
+                                title="Cerrar ventana"
+                            >
+                                ✕
+                            </button>
 
-                                        <div className="text-4xl mb-2 drop-shadow-sm select-none">
-                                            {movementType === 'IN' ? '📥' : '📤'}
+                            <div className="text-4xl mb-2 drop-shadow-sm select-none">
+                                {movementType === 'IN' ? '📥' : '📤'}
+                            </div>
+                            <h3 className="text-xl font-black uppercase tracking-wider text-white">
+                                {movementType === 'IN' ? 'Recepción de Lote' : 'Salida de Inventario'}
+                            </h3>
+                            <p className="text-white/90 text-sm font-medium mt-1 opacity-90">
+                                {movementProduct.name}
+                            </p>
+                        </div>
+
+                        <form onSubmit={handleMovementSubmit} className="p-6 space-y-4">
+
+                            {/* 1. SELECCIÓN DE MOTIVO */}
+                            <div className="relative">
+                                <select
+                                    value={movementForm.reason}
+                                    onChange={(e) => {
+                                        setMovementForm({ ...movementForm, reason: e.target.value });
+                                        // SI ES VENCIMIENTO O MERMA, CARGAMOS LOS LOTES
+                                        if (e.target.value === 'VENCIMIENTO' || e.target.value === 'MERMA_DAÑO') {
+                                            fetchBatches(movementProduct.id);
+                                        }
+                                    }}
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400 transition-all appearance-none cursor-pointer"
+                                >
+                                    {movementType === 'IN' ? (
+                                        <>
+                                            <option value="COMPRA_PROVEEDOR">📦 Compra / Nuevo Lote</option>
+                                            <option value="DEVOLUCION_CLIENTE">↩️ Devolución de Cliente</option>
+                                            <option value="AJUSTE_INVENTARIO_IN">🔧 Ajuste (+)</option>
+                                            <option value="DONACION_RECIBIDA">🎁 Donación Recibida</option>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <option value="VENTA">💰 Venta (Automático FEFO)</option>
+                                            <option value="AUTOCONSUMO">☕ Consumo Interno</option>
+                                            <option value="AJUSTE_INVENTARIO_OUT">🔧 Ajuste (-)</option>
+                                            <option value="VENCIMIENTO">📅 Retiro por Vencimiento (Seleccionar Lote)</option>
+                                            <option value="MERMA_DAÑO">🗑️ Merma / Daño (Seleccionar Lote)</option>
+                                        </>
+                                    )}
+                                </select>
+                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</div>
+                            </div>
+
+                            {/* 2. LÓGICA INTELIGENTE SEGÚN TIPO */}
+
+                            {/* CASO A: ENTRADA (NUEVO LOTE) */}
+                            {movementType === 'IN' && (
+                                <div className="space-y-3 animate-fade-in-up">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {/* Input Factura */}
+                                        <div className="relative group">
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg grayscale group-focus-within:grayscale-0 transition-all">🧾</span>
+                                            <input
+                                                type="text"
+                                                required
+                                                value={movementForm.document_ref}
+                                                onChange={(e) => setMovementForm({ ...movementForm, document_ref: e.target.value })}
+                                                className="w-full pl-10 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-emerald-500 transition-all"
+                                                placeholder="Nro. Factura *"
+                                            />
                                         </div>
-                                        <h3 className="text-xl font-black uppercase tracking-wider text-white">
-                                            {movementType === 'IN' ? 'Registrar Entrada' : 'Registrar Salida'}
-                                        </h3>
-                                        <p className="text-white/90 text-sm font-medium mt-1 opacity-90">
-                                            {movementProduct.name}
-                                        </p>
+                                        {/* Input Costo */}
+                                        <div className="relative group">
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">Ref</span>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                value={movementForm.cost_usd}
+                                                onChange={(e) => setMovementForm({ ...movementForm, cost_usd: e.target.value })}
+                                                className="w-full pl-8 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-emerald-500 transition-all"
+                                                placeholder="Costo"
+                                            />
+                                        </div>
                                     </div>
 
-                                    <form onSubmit={handleMovementSubmit} className="p-8 space-y-6">
+                                    <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100">
+                                        <label className="text-[10px] font-bold text-emerald-800 block mb-1">📅 Vencimiento del Nuevo Lote</label>
+                                        <input
+                                            type="date"
+                                            required
+                                            value={movementForm.new_expiration || ''}
+                                            onChange={(e) => setMovementForm({ ...movementForm, new_expiration: e.target.value })}
+                                            className="w-full p-2 bg-white border border-emerald-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:border-emerald-500"
+                                        />
+                                    </div>
+                                </div>
+                            )}
 
-                                        {/* 1. Input de Cantidad */}
-                                        <div className="text-center space-y-2">
-                                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                                Cantidad a {movementType === 'IN' ? 'Agregar' : 'Descontar'}
-                                            </label>
-                                            <div className="relative max-w-[200px] mx-auto">
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    required
-                                                    autoFocus
-                                                    value={movementForm.quantity}
-                                                    onChange={(e) => setMovementForm({ ...movementForm, quantity: e.target.value })}
-                                                    className={`w-full text-center text-5xl font-black py-2 bg-transparent outline-none placeholder-slate-200 transition-colors ${movementType === 'IN' ? 'text-emerald-600 caret-emerald-500' : 'text-rose-600 caret-rose-500'
-                                                        }`}
-                                                    placeholder="0"
-                                                />
-                                                <div className={`h-1 w-full rounded-full mt-2 ${movementType === 'IN' ? 'bg-emerald-100' : 'bg-rose-100'
-                                                    }`}>
-                                                    <div className={`h-full rounded-full transition-all duration-300 ${movementForm.quantity ? 'w-full' : 'w-1/3 mx-auto'
-                                                        } ${movementType === 'IN' ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
-                                                </div>
-                                            </div>
-
-                                            {/* Feedback Visual de Stock */}
-                                            <div className="flex justify-center items-center gap-3 text-xs font-bold text-slate-400 mt-2 bg-slate-50 py-1 px-3 rounded-lg w-fit mx-auto">
-                                                <span>Stock: {movementProduct.stock}</span>
-                                                <span>➝</span>
-                                                <span className={`${movementType === 'IN' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                                    {movementProduct.stock + (movementType === 'IN' ? (parseInt(movementForm.quantity) || 0) : -(parseInt(movementForm.quantity) || 0))}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        {/* 2. Sección de Datos */}
-                                        <div className="space-y-4">
-                                            {/* Datos Fiscales (Solo Entrada) */}
-                                            {movementType === 'IN' && (
-                                                <div className="grid grid-cols-1 gap-3 animate-fade-in-up">
-                                                    <div className="relative group">
-                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg grayscale group-focus-within:grayscale-0 transition-all">🧾</span>
-                                                        <input
-                                                            type="text"
-                                                            required
-                                                            value={movementForm.document_ref}
-                                                            onChange={(e) => setMovementForm({ ...movementForm, document_ref: e.target.value })}
-                                                            className="w-full pl-10 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder:font-normal placeholder:text-slate-400"
-                                                            placeholder="Nro. Factura / Nota Entrega *"
-                                                        />
-                                                    </div>
-
-                                                    <div className="relative group">
-                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold group-focus-within:text-emerald-600 transition-colors">Ref</span>
-                                                        <input
-                                                            type="number"
-                                                            step="0.01"
-                                                            value={movementForm.cost_usd}
-                                                            onChange={(e) => setMovementForm({ ...movementForm, cost_usd: e.target.value })}
-                                                            className="w-full pl-10 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder:font-normal placeholder:text-slate-400"
-                                                            placeholder={`Nuevo Costo (Actual: ${parseFloat(movementProduct.price_usd).toFixed(2)})`}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Selector de Motivo */}
-                                            <div className="relative">
-                                                <select
-                                                    value={movementForm.reason}
-                                                    onChange={(e) => setMovementForm({ ...movementForm, reason: e.target.value })}
-                                                    className="w-full p-3 bg-white border-2 border-slate-100 rounded-xl text-sm font-bold text-slate-600 outline-none focus:border-slate-300 appearance-none cursor-pointer hover:bg-slate-50 transition-colors"
+                            {/* CASO B: SALIDA ESPECÍFICA (VENCIMIENTO / MERMA) */}
+                            {movementType === 'OUT' && (movementForm.reason === 'VENCIMIENTO' || movementForm.reason === 'MERMA_DAÑO') && (
+                                <div className="space-y-2 animate-fade-in-up">
+                                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Selecciona el lote a retirar:</p>
+                                    <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl bg-slate-50 p-2 custom-scrollbar">
+                                        {batches.length === 0 ? (
+                                            <p className="text-xs text-center p-4 text-slate-400 italic">Cargando lotes o sin stock...</p>
+                                        ) : (
+                                            batches.map(batch => (
+                                                <div
+                                                    key={batch.id}
+                                                    onClick={() => setSelectedBatch(batch.id)}
+                                                    className={`p-2 mb-1.5 rounded-lg text-xs flex justify-between items-center cursor-pointer border transition-all ${
+                                                        selectedBatch === batch.id 
+                                                        ? 'bg-rose-100 border-rose-500 text-rose-800 shadow-sm ring-1 ring-rose-200' 
+                                                        : 'bg-white border-slate-200 hover:border-rose-300 hover:bg-rose-50'
+                                                    }`}
                                                 >
-                                                    {movementType === 'IN' ? (
-                                                        <>
-                                                            <option value="COMPRA_PROVEEDOR">📦 Compra a Proveedor</option>
-                                                            <option value="DEVOLUCION_CLIENTE">↩️ Devolución de Cliente</option>
-                                                            <option value="AJUSTE_INVENTARIO_IN">🔧 Ajuste (+)</option>
-                                                            <option value="DONACION_RECIBIDA">🎁 Donación Recibida</option>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <option value="MERMA_DAÑO">🗑️ Merma / Daño</option>
-                                                            <option value="AUTOCONSUMO">☕ Consumo Interno</option>
-                                                            <option value="AJUSTE_INVENTARIO_OUT">🔧 Ajuste (-)</option>
-                                                            <option value="VENCIMIENTO">📅 Producto Vencido</option>
-                                                        </>
-                                                    )}
-                                                </select>
-                                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</div>
-                                            </div>
-                                        </div>
+                                                    <div className="flex flex-col">
+                                                        <span className="font-bold">📅 Vence: {batch.expiration_date ? new Date(batch.expiration_date).toLocaleDateString('es-VE') : 'Sin fecha'}</span>
+                                                        <span className="text-[9px] opacity-75">Entrada: {new Date(batch.created_at).toLocaleDateString()}</span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className="block font-black text-sm">x{batch.stock}</span>
+                                                        <span className="text-[9px]">Disp.</span>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                    {!selectedBatch && batches.length > 0 && <p className="text-[9px] text-red-500 font-bold text-center animate-pulse">* Debes tocar un lote para seleccionarlo</p>}
+                                </div>
+                            )}
 
-                                        {/* 3. Botón de Acción */}
-                                        <button
-                                            type="submit"
-                                            className={`w-full py-4 rounded-xl text-white font-bold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-95 flex items-center justify-center gap-3 ${movementType === 'IN'
-                                                    ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-200'
-                                                    : 'bg-rose-600 hover:bg-rose-500 shadow-rose-200'
-                                                }`}
-                                        >
-                                            <span>{movementType === 'IN' ? 'CONFIRMAR ENTRADA' : 'CONFIRMAR SALIDA'}</span>
-                                        </button>
-
-                                    </form>
+                            {/* 3. INPUT DE CANTIDAD (GIGANTE) */}
+                            <div className="text-center space-y-1 pt-2">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CANTIDAD</label>
+                                <div className="relative max-w-[150px] mx-auto">
+                                    <input
+                                        type="number" min="1" required autoFocus
+                                        className={`w-full text-center text-5xl font-black bg-transparent outline-none transition-colors placeholder-slate-200 ${
+                                            movementType === 'IN' ? 'text-emerald-600 caret-emerald-500' : 'text-rose-600 caret-rose-500'
+                                        }`}
+                                        placeholder="0"
+                                        value={movementForm.quantity}
+                                        onChange={(e) => setMovementForm({ ...movementForm, quantity: e.target.value })}
+                                    />
+                                    {/* Feedback Stock Actual */}
+                                    <div className="absolute -right-12 top-1/2 -translate-y-1/2 flex flex-col items-center opacity-50">
+                                        <span className="text-[9px] font-bold uppercase">Total</span>
+                                        <span className="text-xs font-black">{movementProduct.stock}</span>
+                                    </div>
                                 </div>
                             </div>
-                        )}
+
+                            {/* 4. BOTÓN DE ACCIÓN */}
+                            <button
+                                type="submit"
+                                className={`w-full py-3.5 rounded-xl text-white font-bold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-95 flex items-center justify-center gap-2 ${movementType === 'IN'
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-200'
+                                    : 'bg-slate-800 hover:bg-slate-700 shadow-slate-300'
+                                }`}
+                            >
+                                <span>CONFIRMAR ACCIÓN</span>
+                            </button>
+
+                        </form>
+                    </div>
+                </div>
+            )}
 
                         {/* --- MODAL FORMULARIO DE EDICIÓN (UX AUDITORÍA: STOCK BLOQUEADO EN EDICIÓN) --- */}
                         {isProductFormOpen && (
@@ -4506,27 +4642,39 @@ function App() {
                                                         </p>
                                                     )}
                                                 </div>
-                                                {/* SECCIÓN NUEVA: CONTROL SANITARIO (FECHA DE VENCIMIENTO) */}
-                                                <div className="mb-4 bg-orange-50 p-3 rounded-xl border border-orange-100 animate-fade-in-up">
-                                                    <div className="flex justify-between items-center mb-1">
-                                                        <label className="text-xs font-bold text-orange-800 flex items-center gap-1">
-                                                            📅 Fecha de Vencimiento
-                                                        </label>
-                                                        <span className="text-[9px] font-bold bg-white text-orange-600 px-2 py-0.5 rounded border border-orange-200">
-                                                            Normativa SACS
-                                                        </span>
-                                                    </div>
-                                                    <input
-                                                        type="date"
-                                                        name="expiration_date"
-                                                        value={productForm.expiration_date || ''}
-                                                        onChange={handleProductFormChange}
-                                                        className="w-full border-2 border-orange-200 p-2 rounded-lg focus:border-orange-500 outline-none text-sm font-bold text-gray-700 bg-white"
-                                                    />
-                                                    <p className="text-[9px] text-orange-600 mt-1 ml-1 font-medium">
-                                                        * Requerido para alimentos, medicinas y perecederos.
-                                                    </p>
-                                                </div>
+                                                {/* SECCIÓN: CONTROL SANITARIO (FECHA DE VENCIMIENTO) */}
+                    <div className="mb-4 bg-orange-50 p-3 rounded-xl border border-orange-100 animate-fade-in-up">
+                        <div className="flex justify-between items-center mb-1">
+                            <label className="text-xs font-bold text-orange-800 flex items-center gap-1">
+                                📅 Fecha de Vencimiento
+                            </label>
+                            {/* Botón para BORRAR la fecha si fue un error */}
+                            {productForm.expiration_date && (
+                                <button
+                                    type="button"
+                                    onClick={() => setProductForm({ ...productForm, expiration_date: '' })}
+                                    className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded border border-red-200 hover:bg-red-200 transition-colors font-bold"
+                                >
+                                    ✖ Quitar Fecha
+                                </button>
+                            )}
+                        </div>
+                        
+                        <div className="flex gap-2">
+                            <input 
+                                type="date" 
+                                name="expiration_date" 
+                                value={productForm.expiration_date || ''} 
+                                onChange={handleProductFormChange} 
+                                className="w-full border-2 border-orange-200 p-2 rounded-lg focus:border-orange-500 outline-none text-sm font-bold text-gray-700 bg-white" 
+                            />
+                        </div>
+
+                        <p className="text-[9px] text-orange-600 mt-1 ml-1 font-medium flex justify-between">
+                            <span>* Requerido para alimentos y perecederos.</span>
+                            {!productForm.expiration_date && <span className="text-gray-400 italic">Sin vencimiento</span>}
+                        </p>
+                    </div>
 
                                                 {/* INPUT EMOJI */}
                                                 <div>
