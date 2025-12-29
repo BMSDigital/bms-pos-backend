@@ -191,7 +191,7 @@ app.post('/api/products', async (req, res) => {
 
 // 4. PROCESAR VENTA
 app.post('/api/sales', async (req, res) => {
-    // [CAMBIO 1] Agregamos 'customer_id' a la extracción de datos
+    // [CAMBIO 1] Agregamos 'customer_id' a la extracción de datos (Tu código original)
     const { items, payment_method, customer_data, customer_id, is_credit, due_days, invoice_type } = req.body;
     const client = await pool.connect();
     
@@ -202,12 +202,13 @@ app.post('/api/sales', async (req, res) => {
         let subtotalExemptUsd = 0;
 
         // --- PASO 1: PROCESAR INVENTARIO (DESCUENTO POR LOTES - FEFO) ---
+        // (Aquí reemplazamos tu update simple por la lógica inteligente de lotes)
         for (const item of items) {
             const productId = item.product_id;
             let qtyToDeduct = parseInt(item.quantity);
             const itemTotalBase = parseFloat(item.price_usd) * qtyToDeduct;
 
-            // 1.1 Calcular Totales Financieros
+            // 1.1 Calcular Totales Financieros (Tu lógica original conservada)
             if (item.is_taxable) subtotalTaxableUsd += itemTotalBase;
             else subtotalExemptUsd += itemTotalBase;
 
@@ -237,14 +238,14 @@ app.post('/api/sales', async (req, res) => {
                 remainingQty -= take;
             }
 
-            // 1.5 Actualizar Stock Total en tabla 'products' (Para consistencia rápida)
+            // 1.5 Actualizar Stock Total en tabla 'products' (Para que tu lista se vea bien)
             const finalStockRes = await client.query('SELECT COALESCE(SUM(stock), 0) as total FROM product_batches WHERE product_id = $1', [productId]);
             const finalTotal = parseInt(finalStockRes.rows[0].total);
             
             await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalTotal, productId]);
         }
         
-        // --- PASO 2: CÁLCULOS FINANCIEROS Y DEUDA ---
+        // --- PASO 2: CÁLCULOS FINANCIEROS Y DEUDA (Tu lógica original intacta) ---
         const ivaUsd = subtotalTaxableUsd * IVA_RATE;
         const finalTotalUsd = subtotalTaxableUsd + subtotalExemptUsd + ivaUsd;
         const totalVes = finalTotalUsd * globalBCVRate; 
@@ -301,14 +302,14 @@ app.post('/api/sales', async (req, res) => {
 
         // --- PASO 4: REGISTRAR DETALLES Y MOVIMIENTOS ---
         for (const item of items) {
-            // A. Insertar Item de Venta
+            // A. Insertar Item de Venta (Tu código original)
             await client.query(
                 `INSERT INTO sale_items (sale_id, product_id, quantity, price_at_moment_usd) VALUES ($1, $2, $3, $4)`,
                 [saleId, item.product_id, item.quantity, item.price_usd]
             );
 
-            // B. Registrar en Historial (Kardex) - Usando el stock total recién calculado
-            // Obtenemos el stock actual para el registro
+            // B. Registrar en Historial (Kardex) [NUEVO REQUERIMIENTO NIVEL 2]
+            // Obtenemos el stock total actualizado para el registro histórico
             const stockCheck = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
             const currentStockLog = stockCheck.rows[0].stock;
 
