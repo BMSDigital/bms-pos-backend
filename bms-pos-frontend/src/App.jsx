@@ -79,7 +79,9 @@ const debounce = (func, delay) => {
 };
 // 💡 MEJORA ARQUITECTURA: Uso de variables de entorno de Vite
 // Necesitas un archivo .env en la raíz del frontend con VITE_API_URL
-const API_URL = import.meta.env.VITE_API_URL || 'https://bms-postventa-api.onrender.com/api';
+const API_URL = import.meta.env.VITE_API_URL || 'https://voluntariado-pos-venta.onrender.com/api';
+
+/*const API_URL = window.location.hostname === 'localhost' ? 'https://voluntariado-pos-venta.onrender.com/api' : '/api';*/
 
 // 🇻🇪 REQUISITO LEGAL: Tasa de IVA estándar en Venezuela
 const IVA_RATE = 0.16;
