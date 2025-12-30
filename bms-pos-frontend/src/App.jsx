@@ -283,12 +283,13 @@ function App() {
     name: '',
     category: '',
     price_usd: '',
-    stock: '', // String vacío al inicio
+    stock: '',      // <--- Para que el input empiece vacío
     is_taxable: true,
     icon_emoji: '🍔',
     barcode: '',
     status: 'ACTIVE',
-    expiration_date: '' // String vacío = No perecedero
+    expiration_date: '',
+    is_perishable: true // <--- Para que el checkbox funcione
 });
     
     // NUEVOS ESTADOS para búsqueda de inventario
@@ -571,9 +572,12 @@ function App() {
         setMovementType(type);
         setMovementForm({
             quantity: '',
+            reason: type === 'IN' ? 'COMPRA_PROVEEDOR' : 'VENTA',
             document_ref: '',
-            reason: type === 'IN' ? 'COMPRA_PROVEEDOR' : 'MERMA_DAÑO',
-            cost_usd: ''
+            new_expiration: '',
+            // IMPORTANTE: Cargamos el precio actual por defecto
+            cost_usd: product.price_usd, 
+            batch_id: ''
         });
         setIsMovementModalOpen(true);
     };
@@ -736,81 +740,206 @@ function App() {
         doc.save(`Kardex_${kardexProduct.name.replace(/\s+/g, '_')}.pdf`);
     };
 
+	const printInventoryAuditPDF = () => {
+        // Usamos 'inventory' que es tu estado actual
+        if (!inventory || inventory.length === 0) return Swal.fire('Vacío', 'No hay datos de inventario para generar el reporte.', 'info');
+
+        const doc = new jsPDF('l', 'mm', 'a4'); // Horizontal
+        const pageWidth = doc.internal.pageSize.width;
+
+        // --- PALETA ---
+        const colors = {
+            header: [30, 41, 59],    // Slate 800
+            accent: [225, 29, 43],   // Higea Red
+            text: [51, 65, 85],      // Slate 700
+            bg: [241, 245, 249]      // Slate 100
+        };
+
+        // 1. ENCABEZADO FORMAL
+        doc.setFillColor(...colors.header);
+        doc.rect(0, 0, pageWidth, 25, 'F');
+
+        doc.setFontSize(16);
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.text("REPORTE DE VALORIZACIÓN Y EXISTENCIAS", 14, 12);
+
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text("CONTROL DE INVENTARIO FÍSICO", 14, 18);
+
+        // Datos de Fecha y Tasa
+        const dateStr = new Date().toLocaleString('es-VE');
+        const rateStr = formatBs(bcvRate);
+        
+        doc.setFontSize(9);
+        doc.text(`Fecha de Corte: ${dateStr}`, pageWidth - 14, 10, { align: 'right' });
+        doc.text(`Tasa de Cambio BCV: Bs ${rateStr}`, pageWidth - 14, 16, { align: 'right' });
+        doc.text(`Expresado en: Bolívares (Bs) y Divisa Referencial (Ref)`, pageWidth - 14, 22, { align: 'right' });
+
+        // 2. CÁLCULO DE TOTALES (Usando tu estado 'inventory')
+        let totalStock = 0;
+        let totalValueUSD = 0;
+        let totalValueVES = 0;
+
+        inventory.forEach(item => {
+            const stock = parseInt(item.stock) || 0;
+            const price = parseFloat(item.price_usd) || 0;
+            const totalUSD = stock * price;
+            const totalVES = totalUSD * bcvRate;
+
+            totalStock += stock;
+            totalValueUSD += totalUSD;
+            totalValueVES += totalVES;
+        });
+
+        // Dibujar Totales
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(200, 200, 200);
+        doc.roundedRect(14, 30, pageWidth - 28, 20, 3, 3, 'S');
+
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(9);
+        doc.text("ITEMS TOTALES", 30, 36, { align: 'center' });
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${inventory.length}`, 30, 44, { align: 'center' });
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text("UNIDADES EN STOCK", 80, 36, { align: 'center' });
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${totalStock}`, 80, 44, { align: 'center' });
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text("VALOR TOTAL (BS)", 150, 36, { align: 'center' });
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...colors.accent); 
+        doc.text(`Bs ${formatBs(totalValueVES)}`, 150, 44, { align: 'center' });
+
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text("VALOR TOTAL (REF)", 230, 36, { align: 'center' });
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 86, 179); 
+        doc.text(`Ref ${formatUSD(totalValueUSD)}`, 230, 44, { align: 'center' });
+
+        // 3. TABLA DE DETALLE
+        autoTable(doc, {
+            startY: 55,
+            head: [['CÓDIGO', 'DESCRIPCIÓN DEL PRODUCTO', 'CATEGORÍA', 'STOCK', 'COSTO UNIT (BS)', 'TOTAL (BS)', 'TOTAL (REF)']],
+            body: inventory.map(item => {
+                const stock = parseInt(item.stock) || 0;
+                const price = parseFloat(item.price_usd) || 0;
+                const totalUSD = stock * price;
+                const totalVES = totalUSD * bcvRate;
+                const unitVES = price * bcvRate;
+
+                return [
+                    item.barcode || `INT-${item.id}`,
+                    item.name.substring(0, 45),
+                    item.category || 'General',
+                    stock,
+                    formatBs(unitVES), // Costo Unitario Bs
+                    formatBs(totalVES), // Total Bs
+                    formatUSD(totalUSD) // Total Ref
+                ];
+            }),
+            styles: { fontSize: 8, cellPadding: 2 },
+            headStyles: { fillColor: colors.header, textColor: 255, fontStyle: 'bold', halign: 'center' },
+            columnStyles: {
+                0: { cellWidth: 25 }, 
+                3: { halign: 'center', fontStyle: 'bold' }, 
+                4: { halign: 'right' },
+                5: { halign: 'right', fontStyle: 'bold' }, 
+                6: { halign: 'right', textColor: [0, 86, 179] } 
+            },
+            alternateRowStyles: { fillColor: colors.bg }
+        });
+
+        // 4. PIE DE PÁGINA LEGAL
+        const finalY = doc.lastAutoTable.finalY + 10;
+        doc.setFontSize(7);
+        doc.setTextColor(150);
+        doc.text("Este reporte refleja la valorización del inventario según los costos registrados en el sistema al momento de su emisión.", 14, finalY);
+        doc.text("Base Legal: Art. 177 Reglamento de la Ley de ISLR (Valuación de Inventarios).", 14, finalY + 4);
+
+        doc.save(`Auditoria_Inventario_${new Date().toISOString().split('T')[0]}.pdf`);
+    };
 
     // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta: Inventario, Ventas Detalle y Resumen Gerencial) ---
-    const downloadCSV = (data, fileName) => {
-        if (!data || data.length === 0) return Swal.fire('Vacío', 'No hay datos para exportar', 'info');
-
-        // 1. DETECTAR QUÉ TIPO DE DATA ES
-        const isInventory = data[0].hasOwnProperty('stock') && data[0].hasOwnProperty('name');
-        const isDailySummary = data[0].hasOwnProperty('sale_date') && data[0].hasOwnProperty('total_usd'); // Detectar Resumen Gerencial
+    const downloadCSV = (data, filename) => {
+        if (!data || data.length === 0) {
+            Swal.fire('Error', 'No hay datos para exportar', 'warning');
+            return;
+        }
 
         let orderedHeaders = [];
         let rowMapper = null;
 
+        // Detectar tipo de reporte según los datos
+        // Usamos una lógica simple: si tiene 'stock', es inventario
+        const isInventory = data[0].hasOwnProperty('stock');
+
         if (isInventory) {
-            // --- A. MODO INVENTARIO ---
-            orderedHeaders = ["ID", "Producto", "Categoría", "Estatus", "Stock", "Costo Ref", "Costo Bs", "Valor Total Ref"];
-            rowMapper = (row) => ({
-                "ID": row.id,
-                "Producto": row.name,
-                "Categoría": row.category,
-                "Estatus": row.status,
-                "Stock": row.stock,
-                "Costo Ref": parseFloat(row.price_usd).toFixed(2),
-                "Costo Bs": (parseFloat(row.price_usd) * bcvRate).toFixed(2),
-                "Valor Total Ref": parseFloat(row.total_value_usd).toFixed(2)
-            });
-
-        } else if (isDailySummary) {
-            // --- B. MODO RESUMEN GERENCIAL (Dashboard) ---
-            // Este es el que estaba fallando antes
-            orderedHeaders = ["Fecha", "Transacciones", "Total Recaudado (Ref)", "Total Recaudado (Bs)"];
-            rowMapper = (row) => ({
-                "Fecha": new Date(row.sale_date).toLocaleDateString(),
-                "Transacciones": row.tx_count,
-                "Total Recaudado (Ref)": parseFloat(row.total_usd).toFixed(2),
-                "Total Recaudado (Bs)": parseFloat(row.total_ves).toFixed(2)
-            });
-
+            // --- A. MODO INVENTARIO (CON TOTALES) ---
+            orderedHeaders = ["ID", "Producto", "Categoría", "Estatus", "Stock", "Costo Ref", "Costo Bs", "Valor Total Ref", "Valor Total Bs"];
+            rowMapper = (row) => {
+                const stock = parseInt(row.stock) || 0;
+                const price = parseFloat(row.price_usd) || 0;
+                const totalRef = stock * price;
+                const totalBs = totalRef * bcvRate;
+                
+                return {
+                    "ID": row.id,
+                    "Producto": row.name,
+                    "Categoría": row.category,
+                    "Estatus": row.status,
+                    "Stock": stock,
+                    "Costo Ref": price.toFixed(2),
+                    "Costo Bs": (price * bcvRate).toFixed(2),
+                    "Valor Total Ref": totalRef.toFixed(2),
+                    "Valor Total Bs": totalBs.toFixed(2)
+                };
+            };
         } else {
-            // --- C. MODO VENTAS DETALLADAS ---
-            orderedHeaders = ["Nro Factura", "Fecha", "Cliente", "Documento", "Ítems Comprados", "Estado", "Pago", "Total Ref", "Total Bs"];
-            rowMapper = (row) => ({
-                "Nro Factura": row.id || row.sale_id,
-                "Fecha": new Date(row.created_at).toLocaleString('es-VE'),
-                "Cliente": row.full_name || row.client_name || 'Consumidor Final',
-                "Documento": row.client_id || row.id_number || 'N/A',
-                "Ítems Comprados": row.items_comprados || 'Sin detalle',
-                "Estado": row.status,
-                "Pago": row.payment_method,
-                "Total Ref": parseFloat(row.total_usd).toFixed(2),
-                "Total Bs": parseFloat(row.total_ves).toFixed(2)
-            });
+            // --- B. OTROS REPORTES (Ventas/Caja - Genérico) ---
+            // Mantenemos tu lógica genérica para otros reportes
+            orderedHeaders = Object.keys(data[0]);
+            rowMapper = (row) => row;
         }
 
-        // 2. Construir el contenido CSV
+        // Generar CSV
         const csvContent = [
-            orderedHeaders.join(';'),
-            ...data.map(originalRow => {
-                const mappedRow = rowMapper(originalRow);
+            orderedHeaders.join(','), 
+            ...data.map(row => {
+                const mappedRow = rowMapper(row);
                 return orderedHeaders.map(header => {
-                    let value = mappedRow[header];
-                    if (value === null || value === undefined) value = '';
-                    return String(value).replace(/(\r\n|\n|\r)/gm, " ").replace(/;/g, ",");
-                }).join(';');
+                    let val = mappedRow[header];
+                    // Escapar comillas y manejar nulos
+                    if (val === null || val === undefined) return '';
+                    val = String(val).replace(/"/g, '""'); 
+                    return `"${val}"`;
+                }).join(',');
             })
-        ].join('\r\n');
+        ].join('\n');
 
-        // 3. Descargar
-        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement("a");
-        const url = URL.createObjectURL(blob);
-        link.setAttribute("href", url);
-        link.setAttribute("download", `${fileName}_${new Date().toISOString().split('T')[0]}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
     };
 
     const fetchSalesDetail = async (termInput) => {
@@ -4404,470 +4533,500 @@ function App() {
 
                         <button onClick={() => { setProductForm({ id: null, name: '', category: '', price_usd: 0.00, stock: 0, is_taxable: true, icon_emoji: '🍔', barcode: '', status: 'ACTIVE', expiration_date: '' }); setIsProductFormOpen(true); }} className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-higea-blue text-white rounded-full shadow-2xl flex items-center justify-center text-3xl font-light z-40 active:scale-90 transition-transform">+</button>
 
-                        {/* --- MODAL GESTIÓN DE STOCK (NIVEL 2: GESTIÓN DE LOTES ROBUSTA) --- */}
-                        {isMovementModalOpen && movementProduct && (
-                            <div className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+                        {/* --- MODAL GESTIÓN DE STOCK (MOVIMIENTOS / DEVOLUCIONES / MERMA) --- */}
+            {isMovementModalOpen && movementProduct && (
+                <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-white rounded-[2rem] w-full max-w-md shadow-2xl animate-scale-up overflow-hidden relative">
 
-                                {/* Card Principal */}
-                                <div className="bg-white rounded-[1.5rem] w-full max-w-md shadow-2xl animate-scale-up overflow-hidden relative">
+                        {/* Header con Código de Color */}
+                        <div className={`p-6 text-center text-white relative ${movementType === 'IN' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+                            <button onClick={() => setIsMovementModalOpen(false)} className="absolute top-4 right-4 text-white/80 hover:text-white bg-white/20 hover:bg-white/30 rounded-full w-8 h-8 flex items-center justify-center font-bold transition-all">✕</button>
+                            <h3 className="text-xl font-black uppercase tracking-wider">{movementType === 'IN' ? 'Registrar Entrada' : 'Registrar Salida'}</h3>
+                            <p className="text-white/90 text-sm font-medium mt-1">{movementProduct.name}</p>
+                        </div>
 
-                                    {/* Header de Color Sólido */}
-                                    <div className={`p-6 text-center text-white relative ${movementType === 'IN'
-                                        ? 'bg-gradient-to-r from-emerald-500 to-emerald-600'
-                                        : 'bg-gradient-to-r from-red-500 to-rose-600'
-                                        }`}>
-                                        {/* Botón Cerrar */}
-                                        <button
-                                            onClick={() => setIsMovementModalOpen(false)}
-                                            className="absolute top-3 right-3 z-50 w-10 h-10 flex items-center justify-center bg-white/20 hover:bg-white/40 rounded-full text-white transition-all text-lg font-bold backdrop-blur-md shadow-sm cursor-pointer active:scale-90"
-                                            title="Cerrar ventana"
-                                        >
-                                            ✕
-                                        </button>
+                        <form onSubmit={handleMovementSubmit} className="p-6 space-y-5">
+                            
+                            {/* 1. Cantidad (Con Indicador de Disponibilidad) */}
+                            <div className="flex flex-col items-center justify-center">
+                                <div className="w-1/2 relative text-center">
+                                    <input 
+                                        type="number" min="1" required autoFocus
+                                        value={movementForm.quantity}
+                                        onChange={(e) => setMovementForm({ ...movementForm, quantity: e.target.value })}
+                                        className={`w-full text-center text-5xl font-black border-b-2 outline-none py-2 bg-transparent transition-colors ${
+                                            // Validación Visual Roja si se pasa del stock en salidas
+                                            movementType === 'OUT' && parseInt(movementForm.quantity) > movementProduct.stock 
+                                            ? 'border-rose-500 text-rose-600' 
+                                            : 'border-gray-200 focus:border-gray-800'
+                                        }`}
+                                        placeholder="0"
+                                    />
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mt-1">Unidades</span>
+                                </div>
 
-                                        <div className="text-4xl mb-2 drop-shadow-sm select-none">
-                                            {movementType === 'IN' ? '📥' : '📤'}
-                                        </div>
-                                        <h3 className="text-xl font-black uppercase tracking-wider text-white">
-                                            {movementType === 'IN' ? 'Recepción de Lote' : 'Salida de Inventario'}
-                                        </h3>
-                                        <p className="text-white/90 text-sm font-medium mt-1 opacity-90">
-                                            {movementProduct.name}
-                                        </p>
+                                {/* MEJORA UX: INDICADOR DE STOCK DISPONIBLE */}
+                                {movementType === 'OUT' && (
+                                    <div className={`mt-2 text-xs font-bold px-3 py-1 rounded-full border ${
+                                        parseInt(movementForm.quantity) > movementProduct.stock 
+                                        ? 'bg-rose-50 text-rose-600 border-rose-200 animate-pulse' 
+                                        : 'bg-gray-50 text-gray-500 border-gray-200'
+                                    }`}>
+                                        Disponibles: {movementProduct.stock}
                                     </div>
+                                )}
+                            </div>
 
-                                    <form onSubmit={handleMovementSubmit} className="p-6 space-y-4">
+                            {/* 2. Motivo */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Motivo del Movimiento</label>
+                                <select 
+                                    value={movementForm.reason}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        // Lógica inteligente de Costos para Entradas
+                                        let newCost = movementForm.cost_usd;
+                                        if(val === 'DONACION_RECIBIDA') newCost = 0;
+                                        if(val === 'COMPRA_PROVEEDOR') newCost = movementProduct.price_usd;
 
-                                        {/* 1. SELECCIÓN DE MOTIVO */}
+                                        setMovementForm({ ...movementForm, reason: val, cost_usd: newCost });
+                                        
+                                        // Cargar lotes si es salida específica (Merma o Vencimiento)
+                                        if (['VENCIMIENTO', 'MERMA_DAÑO'].includes(val)) fetchBatches(movementProduct.id);
+                                    }}
+                                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-gray-200"
+                                >
+                                    {movementType === 'IN' ? (
+                                        <>
+                                            <option value="COMPRA_PROVEEDOR">📦 Compra / Nuevo Lote</option>
+                                            <option value="DEVOLUCION_CLIENTE">↩️ Devolución de Cliente (A Stock)</option>
+                                            <option value="AJUSTE_POSITIVO">🔧 Ajuste de Inventario (+)</option>
+                                            <option value="DONACION_RECIBIDA">🎁 Donación Recibida</option>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <option value="VENTA">💰 Venta (FEFO Automático)</option>
+                                            <option value="CONSUMO_INTERNO">☕ Consumo Interno</option>
+                                            <option value="MERMA_DAÑO">🗑️ Merma / Daño (Seleccionar Lote)</option>
+                                            <option value="VENCIMIENTO">📅 Retiro por Vencimiento (Seleccionar Lote)</option>
+                                            <option value="AJUSTE_NEGATIVO">🔧 Ajuste de Inventario (-)</option>
+                                        </>
+                                    )}
+                                </select>
+                                
+                                {movementForm.reason === 'DEVOLUCION_CLIENTE' && (
+                                    <p className="text-[10px] text-emerald-600 bg-emerald-50 p-2 rounded mt-2 font-medium">ℹ️ Retorno a inventario disponible.</p>
+                                )}
+                            </div>
+
+                            {/* 3. Datos Dinámicos (Grid para Entradas) */}
+                            {movementType === 'IN' ? (
+                                <div className="grid grid-cols-2 gap-4">
+                                    {/* Costo Unitario */}
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Costo Unitario ($)</label>
                                         <div className="relative">
-                                            <select
-                                                value={movementForm.reason}
-                                                onChange={(e) => {
-                                                    setMovementForm({ ...movementForm, reason: e.target.value });
-                                                    // SI ES VENCIMIENTO O MERMA, CARGAMOS LOS LOTES
-                                                    if (e.target.value === 'VENCIMIENTO' || e.target.value === 'MERMA_DAÑO') {
-                                                        fetchBatches(movementProduct.id);
-                                                    }
-                                                }}
-                                                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400 transition-all appearance-none cursor-pointer"
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                                            <input 
+                                                type="number" step="0.01" min="0"
+                                                value={movementForm.cost_usd}
+                                                onChange={(e) => setMovementForm({...movementForm, cost_usd: e.target.value})}
+                                                className={`w-full pl-6 pr-3 py-3 border rounded-xl text-sm font-bold outline-none transition-all ${movementForm.reason === 'DONACION_RECIBIDA' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 focus:border-gray-400'}`}
+                                            />
+                                        </div>
+                                    </div>
+                                    {/* Referencia */}
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Ref. / Factura</label>
+                                        <input 
+                                            type="text"
+                                            value={movementForm.document_ref}
+                                            onChange={(e) => setMovementForm({...movementForm, document_ref: e.target.value})}
+                                            placeholder="Ej: FAC-001"
+                                            className="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:border-gray-400"
+                                        />
+                                    </div>
+                                </div>
+                            ) : (
+                                // Solo Referencia para Salidas
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nota de Salida</label>
+                                    <input 
+                                        type="text"
+                                        value={movementForm.document_ref}
+                                        onChange={(e) => setMovementForm({...movementForm, document_ref: e.target.value})}
+                                        placeholder="Ej: Consumo gerencia"
+                                        className="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:border-gray-400"
+                                    />
+                                </div>
+                            )}
+
+                            {/* Fecha Vencimiento (Solo Entradas de Perecederos) */}
+                            {movementType === 'IN' && movementProduct.is_perishable && (
+                                <div className="bg-orange-50 p-3 rounded-xl border border-orange-100 animate-fade-in-up">
+                                    <label className="text-[10px] font-bold text-orange-800 uppercase mb-1 block">Vencimiento del Lote</label>
+                                    <input 
+                                        type="date"
+                                        required={movementForm.reason !== 'DEVOLUCION_CLIENTE'}
+                                        value={movementForm.new_expiration}
+                                        onChange={(e) => setMovementForm({...movementForm, new_expiration: e.target.value})}
+                                        className="w-full p-2 bg-white border border-orange-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-orange-200"
+                                    />
+                                </div>
+                            )}
+
+                            {/* Selector de Lote (Solo Salidas Específicas) */}
+                            {movementType === 'OUT' && ['VENCIMIENTO', 'MERMA_DAÑO'].includes(movementForm.reason) && (
+                                <div className="animate-fade-in-up">
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Seleccione lote a retirar:</p>
+                                    <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-xl bg-gray-50 p-2 space-y-1 custom-scrollbar">
+                                        {batches.length === 0 ? <p className="text-xs text-gray-400 text-center py-2">Sin lotes disponibles</p> : batches.map(batch => (
+                                            <div 
+                                                key={batch.id} 
+                                                onClick={() => setSelectedBatch(batch.id)}
+                                                className={`p-2 rounded-lg text-xs flex justify-between cursor-pointer border transition-all ${selectedBatch === batch.id ? 'bg-rose-50 border-rose-500 text-rose-700 ring-1 ring-rose-200' : 'bg-white border-gray-200 hover:border-gray-300'}`}
                                             >
-                                                {movementType === 'IN' ? (
+                                                <span>📅 Vence: {batch.expiration_date ? new Date(batch.expiration_date).toLocaleDateString() : 'N/A'}</span>
+                                                <span className="font-bold">Cant: {batch.stock}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {!selectedBatch && <p className="text-[10px] text-rose-500 mt-1 text-right">* Obligatorio</p>}
+                                </div>
+                            )}
+
+                            <button 
+                                type="submit"
+                                // Bloqueamos el botón si intenta sacar más de lo que tiene
+                                disabled={movementType === 'OUT' && parseInt(movementForm.quantity) > movementProduct.stock}
+                                className={`w-full py-4 rounded-xl text-white font-bold shadow-lg hover:shadow-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${movementType === 'IN' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}
+                            >
+                                {movementType === 'IN' ? 'CONFIRMAR ENTRADA' : 'CONFIRMAR SALIDA'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+                        {/* --- MODAL FORMULARIO DE PRODUCTO (VISTA ENTERPRISE MEJORADA + LOGICA BACKEND) --- */}
+            {isProductFormOpen && (
+                <div className="fixed inset-0 z-[70] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-white rounded-[32px] w-full max-w-4xl shadow-2xl shadow-slate-900/50 overflow-hidden flex flex-col max-h-[95vh] animate-scale-up border border-slate-100">
+
+                        {/* 1. Header Minimalista */}
+                        <div className="px-8 py-5 border-b border-slate-100 flex justify-between items-center bg-white/90 backdrop-blur-xl z-20 sticky top-0">
+                            <div>
+                                <h3 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-3">
+                                    {productForm.id ? (
+                                        <> <span className="bg-blue-100 text-blue-600 p-2 rounded-xl text-lg">✏️</span> <span>Editar Inventario</span> </>
+                                    ) : (
+                                        <> <span className="bg-green-100 text-green-600 p-2 rounded-xl text-lg">✨</span> <span>Nuevo Producto</span> </>
+                                    )}
+                                </h3>
+                                <p className="text-sm text-slate-400 font-medium mt-1 ml-12">Gestión de activos e identidad visual</p>
+                            </div>
+                            <button onClick={() => setIsProductFormOpen(false)} className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-full text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all transform hover:rotate-90 hover:scale-110 shadow-sm">✕</button>
+                        </div>
+
+                        {/* Cuerpo del Formulario */}
+                        <div className="p-8 overflow-y-auto custom-scrollbar bg-slate-50/30">
+                            <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
+
+                                {/* GRUPO A: GESTOR DE IDENTIDAD VISUAL (IMAGEN REAL vs EMOJI) */}
+                                <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 mb-8 relative">
+                                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+                                        1. Identidad del Producto
+                                    </h4>
+
+                                    <div className="flex flex-col lg:flex-row gap-8">
+
+                                        {/* COLUMNA IZQUIERDA: VISUALIZADOR */}
+                                        <div className="w-full lg:w-1/3 shrink-0 flex flex-col gap-4">
+
+                                            {/* Área de Carga / Visualización */}
+                                            <div
+                                                className="aspect-square w-full rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 relative overflow-hidden group hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer shadow-inner"
+                                                onClick={() => document.getElementById('file-upload').click()}
+                                            >
+                                                {/* CASO 1: IMAGEN REAL CARGADA */}
+                                                {productForm.icon_emoji && productForm.icon_emoji.startsWith('data:image') ? (
                                                     <>
-                                                        <option value="COMPRA_PROVEEDOR">📦 Compra / Nuevo Lote</option>
-                                                        <option value="DEVOLUCION_CLIENTE">↩️ Devolución de Cliente</option>
-                                                        <option value="AJUSTE_INVENTARIO_IN">🔧 Ajuste (+)</option>
-                                                        <option value="DONACION_RECIBIDA">🎁 Donación Recibida</option>
+                                                        <img src={productForm.icon_emoji} alt="Producto" className="w-full h-full object-cover animate-fade-in" />
+                                                        {/* Overlay al pasar el mouse */}
+                                                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white backdrop-blur-sm">
+                                                            <span className="text-2xl mb-2">🔄</span>
+                                                            <span className="text-xs font-bold uppercase">Cambiar Foto</span>
+                                                        </div>
                                                     </>
                                                 ) : (
-                                                    <>
-                                                        <option value="VENTA">💰 Venta (Automático FEFO)</option>
-                                                        <option value="AUTOCONSUMO">☕ Consumo Interno</option>
-                                                        <option value="AJUSTE_INVENTARIO_OUT">🔧 Ajuste (-)</option>
-                                                        <option value="VENCIMIENTO">📅 Retiro por Vencimiento (Seleccionar Lote)</option>
-                                                        <option value="MERMA_DAÑO">🗑️ Merma / Daño (Seleccionar Lote)</option>
-                                                    </>
-                                                )}
-                                            </select>
-                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</div>
-                                        </div>
-
-                                        {/* 2. LÓGICA INTELIGENTE SEGÚN TIPO */}
-
-                                        {/* CASO A: ENTRADA (NUEVO LOTE) */}
-                                        {movementType === 'IN' && (
-                                            <div className="space-y-3 animate-fade-in-up">
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    {/* Input Factura */}
-                                                    <div className="relative group">
-                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg grayscale group-focus-within:grayscale-0 transition-all">🧾</span>
-                                                        <input
-                                                            type="text"
-                                                            required
-                                                            value={movementForm.document_ref}
-                                                            onChange={(e) => setMovementForm({ ...movementForm, document_ref: e.target.value })}
-                                                            className="w-full pl-10 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-emerald-500 transition-all"
-                                                            placeholder="Nro. Factura *"
-                                                        />
+                                                    // CASO 2: EMOJI O VACÍO
+                                                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 group-hover:text-blue-400 transition-colors">
+                                                        {productForm.icon_emoji && !productForm.icon_emoji.startsWith('data:image') ? (
+                                                            <span className="text-[6rem] animate-scale-up leading-none drop-shadow-md">{productForm.icon_emoji}</span>
+                                                        ) : (
+                                                            <>
+                                                                <span className="text-5xl mb-3">📷</span>
+                                                                <span className="text-[10px] font-bold uppercase tracking-wide">Subir Foto Real</span>
+                                                            </>
+                                                        )}
                                                     </div>
-                                                    {/* Input Costo */}
-                                                    <div className="relative group">
-                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">Ref</span>
-                                                        <input
-                                                            type="number"
-                                                            step="0.01"
-                                                            value={movementForm.cost_usd}
-                                                            onChange={(e) => setMovementForm({ ...movementForm, cost_usd: e.target.value })}
-                                                            className="w-full pl-8 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-emerald-500 transition-all"
-                                                            placeholder="Costo"
-                                                        />
+                                                )}
+
+                                                {/* Input Invisible */}
+                                                <input
+                                                    id="file-upload"
+                                                    type="file"
+                                                    accept="image/*"
+                                                    className="hidden"
+                                                    onChange={(e) => handleImageRead(e.target.files[0], (base64) => setProductForm({ ...productForm, icon_emoji: base64 }))}
+                                                />
+                                            </div>
+
+                                            {/* Botones Auxiliares */}
+                                            {productForm.icon_emoji?.startsWith('data:image') ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); setProductForm({ ...productForm, icon_emoji: '📦' }); }}
+                                                    className="text-[10px] font-bold text-red-500 hover:text-red-700 hover:bg-red-50 py-2 rounded-lg transition-colors"
+                                                >
+                                                    🗑️ Eliminar Foto y usar Emoji
+                                                </button>
+                                            ) : (
+                                                <div className="text-center text-[10px] text-slate-400 font-medium">
+                                                    Click arriba para subir foto o selecciona un emoji abajo 👇
+                                                </div>
+                                            )}
+
+                                            {/* LISTA COMPLETA DE EMOJIS (OPTIMIZADA) */}
+                                            {!productForm.icon_emoji?.startsWith('data:image') && (
+                                                <div className="mt-2">
+                                                    <div className="flex justify-between items-center mb-2 px-1">
+                                                        <label className="text-[9px] font-bold text-slate-400 uppercase">Catálogo de Iconos</label>
+                                                        <span className="text-[9px] text-slate-300">{EMOJI_OPTIONS.length} disponibles</span>
+                                                    </div>
+
+                                                    <div className="h-40 overflow-y-auto custom-scrollbar bg-slate-50 rounded-xl p-2 border border-slate-100 shadow-inner">
+                                                        <div className="grid grid-cols-5 gap-1.5 place-items-center">
+                                                            {EMOJI_OPTIONS.map((emoji, index) => (
+                                                                <button
+                                                                    key={index}
+                                                                    type="button"
+                                                                    onClick={() => setProductForm({ ...productForm, icon_emoji: emoji })}
+                                                                    className={`w-10 h-10 flex items-center justify-center text-xl rounded-lg transition-all active:scale-95 ${productForm.icon_emoji === emoji ? 'bg-white shadow-md ring-2 ring-blue-400 scale-110 z-10' : 'hover:bg-white hover:shadow-sm hover:scale-105 opacity-80 hover:opacity-100'}`}
+                                                                    title="Seleccionar icono"
+                                                                >
+                                                                    {emoji}
+                                                                </button>
+                                                            ))}
+                                                        </div>
                                                     </div>
                                                 </div>
+                                            )}
+                                        </div>
 
-                                                <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100">
-                                                    <label className="text-[10px] font-bold text-emerald-800 block mb-1">📅 Vencimiento del Nuevo Lote</label>
+                                        {/* COLUMNA DERECHA: DATOS DE TEXTO */}
+                                        <div className="flex-1 flex flex-col gap-6">
+                                            <div>
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Nombre del Producto (*)</label>
+                                                <input
+                                                    type="text" name="name" placeholder="Ej: Harina de Maíz Precocida"
+                                                    value={productForm.name} onChange={handleProductFormChange}
+                                                    className="w-full h-14 px-5 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none font-bold text-slate-700 text-lg placeholder-slate-300 transition-all"
+                                                    required autoFocus
+                                                />
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-5">
+                                                <div className="relative group">
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Categoría</label>
+                                                    <div className="relative">
+                                                        <input
+                                                            type="text" name="category" list="category-list"
+                                                            value={productForm.category} onChange={handleProductFormChange}
+                                                            className="w-full h-12 pl-10 pr-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-medium shadow-sm group-hover:border-slate-300 transition-all"
+                                                            placeholder="Seleccionar..."
+                                                        />
+                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300">🏷️</span>
+                                                    </div>
+                                                    <datalist id="category-list">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist>
+                                                </div>
+                                                <div className="relative group">
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Código Barras</label>
+                                                    <div className="relative">
+                                                        <input
+                                                            type="text" name="barcode" value={productForm.barcode} onChange={handleProductFormChange}
+                                                            className="w-full h-12 pl-10 pr-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-mono text-slate-500 shadow-sm group-hover:border-slate-300 transition-all"
+                                                            placeholder="Escanee aquí..."
+                                                        />
+                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300">🔎</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* GRUPO B: ESTRUCTURA DE PRECIOS (DISEÑO FINTECH & FORMATOS BS/REF) */}
+                                <div className="mb-8">
+                                    <div className="relative overflow-hidden bg-white border border-slate-200 rounded-[24px] shadow-xl shadow-slate-200/50 transition-all hover:shadow-2xl hover:shadow-slate-200/60">
+
+                                        <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-3 border-b border-slate-100 flex justify-between items-center">
+                                            <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                                                Definición de Costos
+                                            </h4>
+                                            <div className="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+                                                Tasa BCV: {formatBs(bcvRate)}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                                            {/* PRECIO REF (Editable) */}
+                                            <div className="flex-1 p-6 group hover:bg-blue-50/20 transition-colors relative">
+                                                <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wide mb-2 block">Precio (Ref) *</label>
+                                                <div className="relative flex items-baseline">
+                                                    <span className="text-3xl font-light text-slate-300 mr-2">$</span>
                                                     <input
-                                                        type="date"
-                                                        required
-                                                        value={movementForm.new_expiration || ''}
-                                                        onChange={(e) => setMovementForm({ ...movementForm, new_expiration: e.target.value })}
-                                                        className="w-full p-2 bg-white border border-emerald-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:border-emerald-500"
+                                                        type="number" step="0.01" min="0" required name="price_usd"
+                                                        value={productForm.price_usd}
+                                                        onChange={(e) => setProductForm(prev => ({ ...prev, price_usd: e.target.value }))}
+                                                        className="w-full bg-transparent text-4xl font-black text-slate-800 outline-none placeholder:text-slate-200 font-mono tracking-tight"
+                                                        placeholder="0.00"
                                                     />
                                                 </div>
+                                                <p className="text-[10px] text-slate-400 mt-2 font-medium">Base de cálculo del sistema</p>
+                                                <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-blue-500 group-hover:w-full transition-all duration-700 ease-out"></div>
                                             </div>
-                                        )}
 
-                                        {/* CASO B: SALIDA ESPECÍFICA (VENCIMIENTO / MERMA) */}
-                                        {movementType === 'OUT' && (movementForm.reason === 'VENCIMIENTO' || movementForm.reason === 'MERMA_DAÑO') && (
-                                            <div className="space-y-2 animate-fade-in-up">
-                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Selecciona el lote a retirar:</p>
-                                                <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl bg-slate-50 p-2 custom-scrollbar">
-                                                    {batches.length === 0 ? (
-                                                        <p className="text-xs text-center p-4 text-slate-400 italic">Cargando lotes o sin stock...</p>
-                                                    ) : (
-                                                        batches.map(batch => (
-                                                            <div
-                                                                key={batch.id}
-                                                                onClick={() => setSelectedBatch(batch.id)}
-                                                                className={`p-2 mb-1.5 rounded-lg text-xs flex justify-between items-center cursor-pointer border transition-all ${selectedBatch === batch.id
-                                                                        ? 'bg-rose-100 border-rose-500 text-rose-800 shadow-sm ring-1 ring-rose-200'
-                                                                        : 'bg-white border-slate-200 hover:border-rose-300 hover:bg-rose-50'
-                                                                    }`}
-                                                            >
-                                                                <div className="flex flex-col">
-                                                                    <span className="font-bold">📅 Vence: {batch.expiration_date ? new Date(batch.expiration_date).toLocaleDateString('es-VE') : 'Sin fecha'}</span>
-                                                                    <span className="text-[9px] opacity-75">Entrada: {new Date(batch.created_at).toLocaleDateString()}</span>
-                                                                </div>
-                                                                <div className="text-right">
-                                                                    <span className="block font-black text-sm">x{batch.stock}</span>
-                                                                    <span className="text-[9px]">Disp.</span>
-                                                                </div>
-                                                            </div>
-                                                        ))
-                                                    )}
+                                            {/* ÍCONO DE CONVERSIÓN */}
+                                            <div className="relative flex items-center justify-center -my-3 md:my-0">
+                                                <div className="absolute z-10 bg-white border border-slate-100 text-slate-300 p-2 rounded-full shadow-lg">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
                                                 </div>
-                                                {!selectedBatch && batches.length > 0 && <p className="text-[9px] text-red-500 font-bold text-center animate-pulse">* Debes tocar un lote para seleccionarlo</p>}
                                             </div>
-                                        )}
 
-                                        {/* 3. INPUT DE CANTIDAD (GIGANTE) */}
-                                        <div className="text-center space-y-1 pt-2">
-                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CANTIDAD</label>
-                                            <div className="relative max-w-[150px] mx-auto">
-                                                <input
-                                                    type="number" min="1" required autoFocus
-                                                    className={`w-full text-center text-5xl font-black bg-transparent outline-none transition-colors placeholder-slate-200 ${movementType === 'IN' ? 'text-emerald-600 caret-emerald-500' : 'text-rose-600 caret-rose-500'
-                                                        }`}
-                                                    placeholder="0"
-                                                    value={movementForm.quantity}
-                                                    onChange={(e) => setMovementForm({ ...movementForm, quantity: e.target.value })}
-                                                />
-                                                {/* Feedback Stock Actual */}
-                                                <div className="absolute -right-12 top-1/2 -translate-y-1/2 flex flex-col items-center opacity-50">
-                                                    <span className="text-[9px] font-bold uppercase">Total</span>
-                                                    <span className="text-xs font-black">{movementProduct.stock}</span>
+                                            {/* PRECIO BS (Calculado & Editable Formato Vzla) */}
+                                            <div className="flex-1 p-6 bg-slate-50/30 group hover:bg-slate-50 transition-colors relative">
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 block">Equivalente (Bs)</label>
+                                                <div className="relative flex items-baseline">
+                                                    <span className="text-2xl font-light text-slate-300 mr-2">Bs</span>
+                                                    <input
+                                                        type="text"
+                                                        value={productForm.price_usd ? formatBs(parseFloat(productForm.price_usd) * bcvRate) : ''}
+                                                        onChange={(e) => {
+                                                            let valClean = e.target.value.replace(/\./g, '').replace(',', '.');
+                                                            let valBs = parseFloat(valClean);
+                                                            if (!isNaN(valBs) && bcvRate > 0) {
+                                                                setProductForm(prev => ({ ...prev, price_usd: (valBs / bcvRate).toFixed(2) }));
+                                                            } else {
+                                                                setProductForm(prev => ({ ...prev, price_usd: '' }));
+                                                            }
+                                                        }}
+                                                        className="w-full bg-transparent text-3xl font-bold text-slate-600 outline-none placeholder:text-slate-200 font-mono"
+                                                        placeholder="0,00"
+                                                    />
                                                 </div>
+                                                <p className="text-[10px] text-slate-400 mt-2 font-medium flex items-center gap-1">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-green-400"></span> Actualización auto. (BCV)
+                                                </p>
+                                                <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-slate-300 group-hover:w-full transition-all duration-700 ease-out"></div>
                                             </div>
                                         </div>
-
-                                        {/* 4. BOTÓN DE ACCIÓN */}
-                                        <button
-                                            type="submit"
-                                            className={`w-full py-3.5 rounded-xl text-white font-bold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-95 flex items-center justify-center gap-2 ${movementType === 'IN'
-                                                ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-200'
-                                                : 'bg-slate-800 hover:bg-slate-700 shadow-slate-300'
-                                                }`}
-                                        >
-                                            <span>CONFIRMAR ACCIÓN</span>
-                                        </button>
-
-                                    </form>
+                                    </div>
                                 </div>
-                            </div>
-                        )}
 
-                        {/* --- MODAL FORMULARIO DE PRODUCTO (VISTA ENTERPRISE: IMÁGENES + EMOJIS) --- */}
-                        {isProductFormOpen && (
-                            <div className="fixed inset-0 z-[70] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-                                <div className="bg-white rounded-[32px] w-full max-w-4xl shadow-2xl shadow-slate-900/50 overflow-hidden flex flex-col max-h-[95vh] animate-scale-up border border-slate-100">
+                                {/* GRUPO C: CONTROL & LOGÍSTICA (AQUÍ ESTÁN LOS CAMBIOS IMPORTANTES DE LÓGICA) */}
+                                <div className="bg-white p-6 rounded-[24px] border border-slate-100 shadow-sm">
+                                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+                                        2. Configuración Logística
+                                    </h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                                    {/* 1. Header Minimalista */}
-                                    <div className="px-8 py-5 border-b border-slate-100 flex justify-between items-center bg-white/90 backdrop-blur-xl z-20 sticky top-0">
-                                        <div>
-                                            <h3 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-3">
-                                                {productForm.id ? (
-                                                    <> <span className="bg-blue-100 text-blue-600 p-2 rounded-xl text-lg">✏️</span> <span>Editar Inventario</span> </>
-                                                ) : (
-                                                    <> <span className="bg-green-100 text-green-600 p-2 rounded-xl text-lg">✨</span> <span>Nuevo Producto</span> </>
+                                        {/* COLUMNA IZQ: Stock y Vencimiento */}
+                                        <div className="space-y-6">
+                                            {/* CAMPO DE STOCK (AGREGADO) */}
+                                            <div className="relative group">
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Stock Inicial</label>
+                                                <div className="relative">
+                                                    <input
+                                                        type="number"
+                                                        disabled={!!productForm.id} // Bloqueado si se está editando
+                                                        value={productForm.stock}
+                                                        onChange={e => setProductForm({ ...productForm, stock: e.target.value })}
+                                                        className={`w-full h-12 pl-4 pr-4 border rounded-xl outline-none text-sm font-bold shadow-sm transition-all ${productForm.id ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-50 text-slate-700'}`}
+                                                        placeholder="0"
+                                                    />
+                                                </div>
+                                                {productForm.id && (
+                                                    <p className="text-[10px] text-blue-500 mt-2 font-medium flex items-center gap-1">
+                                                        <span>ℹ️</span> Para ajustar inventario, use el módulo de "Movimientos".
+                                                    </p>
                                                 )}
-                                            </h3>
-                                            <p className="text-sm text-slate-400 font-medium mt-1 ml-12">Gestión de activos e identidad visual</p>
+                                            </div>
+
+                                            {/* Vencimiento (Control is_perishable) */}
+                                            <div className={`p-5 rounded-2xl border transition-all duration-300 ${productForm.is_perishable ? 'bg-orange-50/50 border-orange-200 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
+                                                <div className="flex justify-between items-center mb-3">
+                                                    <label className={`text-xs font-bold uppercase tracking-wide flex items-center gap-2 ${productForm.is_perishable ? 'text-orange-700' : 'text-slate-400'}`}>📅 Vencimiento</label>
+                                                    <label className="relative inline-flex items-center cursor-pointer">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="sr-only peer"
+                                                            checked={productForm.is_perishable}
+                                                            onChange={(e) => setProductForm(p => ({ ...p, is_perishable: e.target.checked }))}
+                                                        />
+                                                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500 shadow-inner"></div>
+                                                    </label>
+                                                </div>
+
+                                                {productForm.is_perishable ? (
+                                                    <div className="animate-fade-in-up">
+                                                        <input
+                                                            type="date"
+                                                            name="expiration_date"
+                                                            value={productForm.expiration_date || ''}
+                                                            onChange={handleProductFormChange}
+                                                            className="w-full p-2 bg-white border border-orange-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-orange-200 shadow-sm"
+                                                        />
+                                                        <p className="text-[10px] text-orange-600 mt-2 font-medium">* Se activarán alertas de caducidad.</p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="h-[42px] flex items-center justify-center text-xs text-slate-400 italic bg-white/50 rounded-lg border border-dashed border-slate-300">
+                                                        Producto sin fecha de caducidad
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                        <button onClick={() => setIsProductFormOpen(false)} className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-full text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all transform hover:rotate-90 hover:scale-110 shadow-sm">✕</button>
-                                    </div>
 
-                                    {/* Cuerpo del Formulario */}
-                                    <div className="p-8 overflow-y-auto custom-scrollbar bg-slate-50/30">
-                                        <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
-
-                                            {/* GRUPO A: GESTOR DE IDENTIDAD VISUAL (IMAGEN REAL vs EMOJI) */}
-                                            <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 mb-8 relative">
-                                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                                                    1. Identidad del Producto
-                                                </h4>
-
-                                                <div className="flex flex-col lg:flex-row gap-8">
-
-                                                    {/* COLUMNA IZQUIERDA: VISUALIZADOR */}
-                                                    <div className="w-full lg:w-1/3 shrink-0 flex flex-col gap-4">
-
-                                                        {/* Área de Carga / Visualización */}
-                                                        <div
-                                                            className="aspect-square w-full rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 relative overflow-hidden group hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer shadow-inner"
-                                                            onClick={() => document.getElementById('file-upload').click()}
-                                                        >
-                                                            {/* CASO 1: IMAGEN REAL CARGADA */}
-                                                            {productForm.icon_emoji && productForm.icon_emoji.startsWith('data:image') ? (
-                                                                <>
-                                                                    <img src={productForm.icon_emoji} alt="Producto" className="w-full h-full object-cover animate-fade-in" />
-                                                                    {/* Overlay al pasar el mouse */}
-                                                                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white backdrop-blur-sm">
-                                                                        <span className="text-2xl mb-2">🔄</span>
-                                                                        <span className="text-xs font-bold uppercase">Cambiar Foto</span>
-                                                                    </div>
-                                                                </>
-                                                            ) : (
-                                                                // CASO 2: EMOJI O VACÍO
-                                                                <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 group-hover:text-blue-400 transition-colors">
-                                                                    {productForm.icon_emoji && !productForm.icon_emoji.startsWith('data:image') ? (
-                                                                        <span className="text-[6rem] animate-scale-up leading-none drop-shadow-md">{productForm.icon_emoji}</span>
-                                                                    ) : (
-                                                                        <>
-                                                                            <span className="text-5xl mb-3">📷</span>
-                                                                            <span className="text-[10px] font-bold uppercase tracking-wide">Subir Foto Real</span>
-                                                                        </>
-                                                                    )}
-                                                                </div>
-                                                            )}
-
-                                                            {/* Input Invisible */}
-                                                            <input
-                                                                id="file-upload"
-                                                                type="file"
-                                                                accept="image/*"
-                                                                className="hidden"
-                                                                onChange={(e) => handleImageRead(e.target.files[0], (base64) => setProductForm({ ...productForm, icon_emoji: base64 }))}
-                                                            />
-                                                        </div>
-
-                                                        {/* Botones Auxiliares */}
-                                                        {productForm.icon_emoji?.startsWith('data:image') ? (
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => { e.stopPropagation(); setProductForm({ ...productForm, icon_emoji: '📦' }); }}
-                                                                className="text-[10px] font-bold text-red-500 hover:text-red-700 hover:bg-red-50 py-2 rounded-lg transition-colors"
-                                                            >
-                                                                🗑️ Eliminar Foto y usar Emoji
-                                                            </button>
-                                                        ) : (
-                                                            <div className="text-center text-[10px] text-slate-400 font-medium">
-                                                                Click arriba para subir foto o selecciona un emoji abajo 👇
-                                                            </div>
-                                                        )}
-
-                                                        {/* LISTA COMPLETA DE EMOJIS (OPTIMIZADA) */}
-                                                        {!productForm.icon_emoji?.startsWith('data:image') && (
-                                                            <div className="mt-2">
-                                                                <div className="flex justify-between items-center mb-2 px-1">
-                                                                    <label className="text-[9px] font-bold text-slate-400 uppercase">Catálogo de Iconos</label>
-                                                                    <span className="text-[9px] text-slate-300">{EMOJI_OPTIONS.length} disponibles</span>
-                                                                </div>
-
-                                                                {/* CORRECCIÓN UX: Grid ajustado sin espacios muertos a la derecha */}
-                                                                <div className="h-40 overflow-y-auto custom-scrollbar bg-slate-50 rounded-xl p-2 border border-slate-100 shadow-inner">
-                                                                    <div className="grid grid-cols-5 gap-1.5 place-items-center"> {/* Ajustado a 5 columnas para mejor simetría */}
-                                                                        {EMOJI_OPTIONS.map((emoji, index) => (
-                                                                            <button
-                                                                                key={index}
-                                                                                type="button"
-                                                                                onClick={() => setProductForm({ ...productForm, icon_emoji: emoji })}
-                                                                                className={`w-10 h-10 flex items-center justify-center text-xl rounded-lg transition-all active:scale-95 ${productForm.icon_emoji === emoji ? 'bg-white shadow-md ring-2 ring-blue-400 scale-110 z-10' : 'hover:bg-white hover:shadow-sm hover:scale-105 opacity-80 hover:opacity-100'}`}
-                                                                                title="Seleccionar icono"
-                                                                            >
-                                                                                {emoji}
-                                                                            </button>
-                                                                        ))}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* COLUMNA DERECHA: DATOS DE TEXTO */}
-                                                    <div className="flex-1 flex flex-col gap-6">
-                                                        <div>
-                                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Nombre del Producto (*)</label>
-                                                            <input
-                                                                type="text" name="name" placeholder="Ej: Harina de Maíz Precocida"
-                                                                value={productForm.name} onChange={handleProductFormChange}
-                                                                className="w-full h-14 px-5 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none font-bold text-slate-700 text-lg placeholder-slate-300 transition-all"
-                                                                required autoFocus
-                                                            />
-                                                        </div>
-
-                                                        <div className="grid grid-cols-2 gap-5">
-                                                            <div className="relative group">
-                                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Categoría</label>
-                                                                <div className="relative">
-                                                                    <input
-                                                                        type="text" name="category" list="category-list"
-                                                                        value={productForm.category} onChange={handleProductFormChange}
-                                                                        className="w-full h-12 pl-10 pr-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-medium shadow-sm group-hover:border-slate-300 transition-all"
-                                                                        placeholder="Seleccionar..."
-                                                                    />
-                                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300">🏷️</span>
-                                                                </div>
-                                                                <datalist id="category-list">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist>
-                                                            </div>
-                                                            <div className="relative group">
-                                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Código Barras</label>
-                                                                <div className="relative">
-                                                                    <input
-                                                                        type="text" name="barcode" value={productForm.barcode} onChange={handleProductFormChange}
-                                                                        className="w-full h-12 pl-10 pr-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-mono text-slate-500 shadow-sm group-hover:border-slate-300 transition-all"
-                                                                        placeholder="Escanee aquí..."
-                                                                    />
-                                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300">🔎</span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                        {/* COLUMNA DER: Impuestos y Estatus */}
+                                        <div className="space-y-4">
+                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
+                                                <div><label className="text-[10px] font-bold text-slate-500 uppercase block">Impuesto (IVA)</label><span className="text-xs text-slate-400 font-medium">Gravado al 16%</span></div>
+                                                <select name="is_taxable" value={productForm.is_taxable} onChange={handleProductFormChange} className="bg-slate-50 border-none text-xs font-bold text-slate-700 rounded-lg py-2 pl-3 pr-8 focus:ring-2 focus:ring-blue-100 cursor-pointer"><option value="true">SÍ (Aplica)</option><option value="false">NO (Exento)</option></select>
                                             </div>
-
-                                            {/* GRUPO B: ESTRUCTURA DE PRECIOS (DISEÑO FINTECH & FORMATOS BS/REF) */}
-                                            <div className="mb-8">
-                                                <div className="relative overflow-hidden bg-white border border-slate-200 rounded-[24px] shadow-xl shadow-slate-200/50 transition-all hover:shadow-2xl hover:shadow-slate-200/60">
-
-                                                    <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-3 border-b border-slate-100 flex justify-between items-center">
-                                                        <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                                                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-                                                            Definición de Costos
-                                                        </h4>
-                                                        <div className="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-                                                            Tasa BCV: {formatBs(bcvRate)}
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-100">
-                                                        {/* PRECIO REF (Editable) */}
-                                                        <div className="flex-1 p-6 group hover:bg-blue-50/20 transition-colors relative">
-                                                            <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wide mb-2 block">Precio (Ref) *</label>
-                                                            <div className="relative flex items-baseline">
-                                                                <span className="text-3xl font-light text-slate-300 mr-2">$</span>
-                                                                <input
-                                                                    type="number" step="0.01" min="0" required name="price_usd"
-                                                                    value={productForm.price_usd}
-                                                                    onChange={(e) => setProductForm(prev => ({ ...prev, price_usd: e.target.value }))}
-                                                                    className="w-full bg-transparent text-4xl font-black text-slate-800 outline-none placeholder:text-slate-200 font-mono tracking-tight"
-                                                                    placeholder="0.00"
-                                                                />
-                                                            </div>
-                                                            <p className="text-[10px] text-slate-400 mt-2 font-medium">Base de cálculo del sistema</p>
-                                                            <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-blue-500 group-hover:w-full transition-all duration-700 ease-out"></div>
-                                                        </div>
-
-                                                        {/* ÍCONO DE CONVERSIÓN */}
-                                                        <div className="relative flex items-center justify-center -my-3 md:my-0">
-                                                            <div className="absolute z-10 bg-white border border-slate-100 text-slate-300 p-2 rounded-full shadow-lg">
-                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* PRECIO BS (Calculado & Editable Formato Vzla) */}
-                                                        <div className="flex-1 p-6 bg-slate-50/30 group hover:bg-slate-50 transition-colors relative">
-                                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 block">Equivalente (Bs)</label>
-                                                            <div className="relative flex items-baseline">
-                                                                <span className="text-2xl font-light text-slate-300 mr-2">Bs</span>
-                                                                <input
-                                                                    type="text"
-                                                                    value={productForm.price_usd ? formatBs(parseFloat(productForm.price_usd) * bcvRate) : ''}
-                                                                    onChange={(e) => {
-                                                                        // Limpieza de formato Vzla (1.000,00 -> 1000.00)
-                                                                        let valClean = e.target.value.replace(/\./g, '').replace(',', '.');
-                                                                        let valBs = parseFloat(valClean);
-                                                                        if (!isNaN(valBs) && bcvRate > 0) {
-                                                                            setProductForm(prev => ({ ...prev, price_usd: (valBs / bcvRate).toFixed(2) }));
-                                                                        } else {
-                                                                            setProductForm(prev => ({ ...prev, price_usd: '' }));
-                                                                        }
-                                                                    }}
-                                                                    className="w-full bg-transparent text-3xl font-bold text-slate-600 outline-none placeholder:text-slate-200 font-mono"
-                                                                    placeholder="0,00"
-                                                                />
-                                                            </div>
-                                                            <p className="text-[10px] text-slate-400 mt-2 font-medium flex items-center gap-1">
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-green-400"></span> Actualización auto. (BCV)
-                                                            </p>
-                                                            <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-slate-300 group-hover:w-full transition-all duration-700 ease-out"></div>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
+                                                <div><label className="text-[10px] font-bold text-slate-500 uppercase block">Estatus</label><span className="text-xs text-slate-400 font-medium">Visibilidad global</span></div>
+                                                <select name="status" value={productForm.status} onChange={handleProductFormChange} className={`border-none text-xs font-bold rounded-lg py-2 pl-3 pr-8 focus:ring-2 cursor-pointer ${productForm.status === 'ACTIVE' ? 'bg-green-50 text-green-700 ring-green-100' : 'bg-red-50 text-red-700 ring-red-100'}`}><option value="ACTIVE">ACTIVO</option><option value="INACTIVE">INACTIVO</option></select>
                                             </div>
+                                        </div>
 
-                                            {/* GRUPO C: CONTROL & LOGÍSTICA */}
-                                            <div className="bg-white p-6 rounded-[24px] border border-slate-100 shadow-sm">
-                                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                                                    2. Configuración Logística
-                                                </h4>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-
-                                                    {/* Vencimiento */}
-                                                    <div className={`p-5 rounded-2xl border transition-all duration-300 ${productForm.expiration_date ? 'bg-orange-50/50 border-orange-200 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
-                                                        <div className="flex justify-between items-center mb-3">
-                                                            <label className={`text-xs font-bold uppercase tracking-wide flex items-center gap-2 ${productForm.expiration_date ? 'text-orange-700' : 'text-slate-400'}`}>📅 Vencimiento</label>
-                                                            <label className="relative inline-flex items-center cursor-pointer">
-                                                                <input type="checkbox" className="sr-only peer" checked={!!productForm.expiration_date} onChange={(e) => setProductForm(p => ({ ...p, expiration_date: e.target.checked ? new Date().toISOString().split('T')[0] : '' }))} />
-                                                                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500 shadow-inner"></div>
-                                                            </label>
-                                                        </div>
-                                                        {productForm.expiration_date ? (
-                                                            <div className="animate-fade-in-up">
-                                                                <input type="date" name="expiration_date" value={productForm.expiration_date} onChange={handleProductFormChange} className="w-full p-2 bg-white border border-orange-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-orange-200 shadow-sm" />
-                                                                <p className="text-[10px] text-orange-600 mt-2 font-medium">* Se activarán alertas de caducidad.</p>
-                                                            </div>
-                                                        ) : (
-                                                            <div className="h-[42px] flex items-center justify-center text-xs text-slate-400 italic bg-white/50 rounded-lg border border-dashed border-slate-300">Producto sin fecha de caducidad</div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Impuestos y Estatus */}
-                                                    <div className="space-y-4">
-                                                        <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
-                                                            <div><label className="text-[10px] font-bold text-slate-500 uppercase block">Impuesto (IVA)</label><span className="text-xs text-slate-400 font-medium">Gravado al 16%</span></div>
-                                                            <select name="is_taxable" value={productForm.is_taxable} onChange={handleProductFormChange} className="bg-slate-50 border-none text-xs font-bold text-slate-700 rounded-lg py-2 pl-3 pr-8 focus:ring-2 focus:ring-blue-100 cursor-pointer"><option value="true">SÍ (Aplica)</option><option value="false">NO (Exento)</option></select>
-                                                        </div>
-                                                        <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
-                                                            <div><label className="text-[10px] font-bold text-slate-500 uppercase block">Estatus</label><span className="text-xs text-slate-400 font-medium">Visibilidad global</span></div>
-                                                            <select name="status" value={productForm.status} onChange={handleProductFormChange} className={`border-none text-xs font-bold rounded-lg py-2 pl-3 pr-8 focus:ring-2 cursor-pointer ${productForm.status === 'ACTIVE' ? 'bg-green-50 text-green-700 ring-green-100' : 'bg-red-50 text-red-700 ring-red-100'}`}><option value="ACTIVE">ACTIVO</option><option value="INACTIVE">INACTIVO</option></select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* Botón Guardar Flotante */}
-                                            <div className="pt-6 sticky bottom-0 bg-gradient-to-t from-white via-white to-transparent pb-2 z-20">
-                                                <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] transition-all flex justify-center items-center gap-3 text-lg border border-slate-800 relative overflow-hidden group">
-                                                    <div className="absolute top-0 -left-full w-full h-full bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-[30deg] group-hover:animate-shine" />
-                                                    <span>💾</span>
-                                                    <span>{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</span>
-                                                </button>
-                                            </div>
-
-                                        </form>
                                     </div>
                                 </div>
-                            </div>
-                        )}
+
+                                {/* Botón Guardar Flotante */}
+                                <div className="pt-6 sticky bottom-0 bg-gradient-to-t from-white via-white to-transparent pb-2 z-20">
+                                    <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] transition-all flex justify-center items-center gap-3 text-lg border border-slate-800 relative overflow-hidden group">
+                                        <div className="absolute top-0 -left-full w-full h-full bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-[30deg] group-hover:animate-shine" />
+                                        <span>💾</span>
+                                        <span>{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</span>
+                                    </button>
+                                </div>
+
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
                     </div>
                 ) : view === 'ADVANCED_REPORTS' ? (
                     /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO + DRILL DOWN + CIERRES) --- */
@@ -5205,96 +5364,87 @@ function App() {
                             </div>
                         )}
 
-                        {/* PESTAÑA 3: INVENTARIO (AUDITORÍA) */}
-                        {reportTab === 'INVENTORY' && (
-                            <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
-                                <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50">
-                                    <div className="relative w-full md:w-96">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-                                        <input type="text" placeholder="Buscar producto, categoría..." value={inventorySearch} onChange={(e) => { setInventorySearch(e.target.value); setInventoryReportPage(1); }} className="w-full border p-3 pl-10 rounded-xl text-sm outline-none focus:border-indigo-500 shadow-sm" />
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-xs font-bold text-slate-500 uppercase bg-white px-3 py-1.5 rounded-lg border border-slate-200">
-                                            {inventoryFilteredData.length} / {detailedInventory.length} Artículos
-                                        </span>
-                                        <button onClick={() => downloadCSV(inventoryFilteredData, 'Reporte_Inventario_Higea')} className="bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 shadow-md flex items-center gap-2 transition-all active:scale-95">
-                                            <span>📥</span> Exportar CSV
-                                        </button>
-                                    </div>
+                        {/* --- 3. TABLA DE AUDITORÍA DE INVENTARIO (TAB 'INVENTORY') --- */}
+                    {reportTab === 'INVENTORY' && (
+                        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in">
+                            {/* Encabezado con Controles */}
+                            <div className="p-5 border-b border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50">
+                                <div>
+                                    <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                                        📦 Auditoría de Existencias
+                                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full">{inventory.length} Ítems</span>
+                                    </h3>
+                                    <p className="text-xs text-gray-500">Valorización en tiempo real (Bs y Ref)</p>
                                 </div>
-
-                                <div className="overflow-x-auto flex-1 custom-scrollbar bg-slate-50/50">
-                                    <table className="w-full text-left text-xs text-gray-600">
-                                        <thead className="bg-white text-gray-500 font-bold uppercase sticky top-0 shadow-sm z-10 text-[11px] tracking-wider">
-                                            <tr>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Producto</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100">Categoría</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Estatus</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Ref)</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Costo Unit (Bs)</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-center">Stock</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Ref)</th>
-                                                <th className="px-6 py-4 bg-slate-50 border-b border-slate-100 text-right">Valor Total (Bs)</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100 bg-white">
-                                            {(() => {
-                                                const ITEMS_PER_PAGE = 50;
-                                                const filteredData = inventoryFilteredData;
-                                                const indexOfLast = inventoryReportPage * ITEMS_PER_PAGE;
-                                                const indexOfFirst = indexOfLast - ITEMS_PER_PAGE;
-                                                const currentData = filteredData.slice(indexOfFirst, indexOfLast);
-                                                const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
-
-                                                if (currentData.length === 0) return <tr><td colSpan="8" className="p-10 text-center italic text-gray-400">Sin resultados</td></tr>;
-
-                                                return (
-                                                    <>
-                                                        {currentData.map((prod) => (
-                                                            <tr
-                                                                key={prod.id}
-                                                                onClick={() => {
-                                                                    setSelectedAuditProduct(prod);
-                                                                    setAuditTab('INFO');
-                                                                }}
-                                                                className="hover:bg-indigo-50 transition-colors cursor-pointer group"
-                                                            >
-                                                                <td className="px-6 py-4 font-bold text-gray-700 flex items-center gap-2">
-                                                                    {prod.barcode && <span className="text-[9px] bg-gray-100 px-1 border rounded text-gray-400 font-mono">|||</span>}
-                                                                    {prod.name}
-                                                                </td>
-                                                                <td className="px-6 py-4">{prod.category}</td>
-                                                                <td className="px-6 py-4 text-center">
-                                                                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${prod.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
-                                                                        {prod.status === 'ACTIVE' ? 'ACTIVO' : 'INACTIVO'}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-6 py-4 text-right font-medium">Ref {parseFloat(prod.price_usd).toFixed(2)}</td>
-                                                                <td className="px-6 py-4 text-right text-gray-500">Bs {(parseFloat(prod.price_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</td>
-                                                                <td className={`px-6 py-4 text-center font-bold ${prod.stock < 5 ? 'text-red-500 bg-red-50 rounded' : ''}`}>{prod.stock}</td>
-                                                                <td className="px-6 py-4 text-right font-black text-indigo-900">Ref {parseFloat(prod.total_value_usd).toFixed(2)}</td>
-                                                                <td className="px-6 py-4 text-right text-indigo-600 font-bold">Bs {(parseFloat(prod.total_value_usd) * bcvRate).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</td>
-                                                            </tr>
-                                                        ))}
-                                                        {totalPages > 1 && (
-                                                            <tr>
-                                                                <td colSpan="8" className="p-4 bg-slate-50 border-t border-slate-200">
-                                                                    <div className="flex justify-center items-center gap-4">
-                                                                        <button onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.max(1, p - 1)); }} disabled={inventoryReportPage === 1} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Anterior</button>
-                                                                        <span className="text-xs font-bold text-gray-600">Página {inventoryReportPage} de {totalPages}</span>
-                                                                        <button onClick={(e) => { e.stopPropagation(); setInventoryReportPage(p => Math.min(totalPages, p + 1)); }} disabled={inventoryReportPage === totalPages} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-gray-50">Siguiente</button>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        )}
-                                                    </>
-                                                );
-                                            })()}
-                                        </tbody>
-                                    </table>
+                                
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={printInventoryAuditPDF} 
+                                        className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 shadow-md transition-all active:scale-95"
+                                    >
+                                        <span>📄</span> PDF Legal
+                                    </button>
+                                    <button 
+                                        onClick={() => downloadCSV(inventory, 'Auditoria_Inventario')} 
+                                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-xl hover:bg-green-700 shadow-md transition-all active:scale-95"
+                                    >
+                                        <span>📊</span> Excel / CSV
+                                    </button>
                                 </div>
                             </div>
-                        )}
+
+                            {/* Tabla de Datos */}
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm text-gray-600">
+                                    <thead className="bg-slate-100 text-gray-500 uppercase font-bold text-xs">
+                                        <tr>
+                                            <th className="px-6 py-3">Producto</th>
+                                            <th className="px-6 py-3">Categoría</th>
+                                            <th className="px-6 py-3 text-center">Stock</th>
+                                            <th className="px-6 py-3 text-right">Costo Unit. (Bs)</th>
+                                            <th className="px-6 py-3 text-right">Valor Total (Bs)</th>
+                                            <th className="px-6 py-3 text-right">Valor Total (Ref)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {/* Usamos inventoryFilteredData si tienes buscador, o inventory directo */}
+                                        {inventory.map((item) => {
+                                            const stock = parseInt(item.stock) || 0;
+                                            const price = parseFloat(item.price_usd) || 0;
+                                            const totalRef = stock * price;
+                                            const totalBs = totalRef * bcvRate;
+                                            const unitBs = price * bcvRate;
+
+                                            return (
+                                                <tr key={item.id} className="hover:bg-blue-50 transition-colors">
+                                                    <td className="px-6 py-3 font-bold text-gray-800">
+                                                        {item.name}
+                                                        <div className="text-[10px] text-gray-400 font-mono">{item.barcode || 'S/C'}</div>
+                                                    </td>
+                                                    <td className="px-6 py-3 text-xs">{item.category}</td>
+                                                    <td className="px-6 py-3 text-center">
+                                                        <span className={`px-2 py-1 rounded text-xs font-bold ${stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                                                            {stock}
+                                                        </span>
+                                                    </td>
+                                                    {/* Columnas Financieras Coherentes */}
+                                                    <td className="px-6 py-3 text-right font-mono text-xs">
+                                                        Bs {formatBs(unitBs)}
+                                                    </td>
+                                                    <td className="px-6 py-3 text-right font-bold text-gray-800">
+                                                        Bs {formatBs(totalBs)}
+                                                    </td>
+                                                    <td className="px-6 py-3 text-right font-bold text-blue-600">
+                                                        Ref {formatUSD(totalRef)}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
 
                         {/* PESTAÑA 4: CIERRES (VENEZUELA: BS PREDOMINANTE) */}
                         {reportTab === 'CLOSINGS' && (

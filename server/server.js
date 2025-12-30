@@ -822,19 +822,33 @@ app.get('/api/reports/sales-detail', async (req, res) => {
     }
 });
 
-// N. REPORTE DETALLADO DE INVENTARIO (Todo)
+// N. REPORTE DETALLADO DE INVENTARIO (AUDITORÍA / VALORIZACIÓN)
 app.get('/api/reports/inventory-detail', async (req, res) => {
     try {
-        // AGREGAMOS 'last_stock_update' AQUI 👇
+        // Obtenemos productos y calculamos su valor total basado en Stock * Precio Base
         const result = await pool.query(`
             SELECT 
-                id, name, category, stock, price_usd, status, is_taxable, barcode, last_stock_update,
-                (stock * price_usd) as total_value_usd
+                id, name, category, barcode, status,
+                stock, price_usd,
+                (stock * price_usd) as total_value_usd,
+                is_taxable, is_perishable,
+                last_stock_update
             FROM products 
-            ORDER BY status, name ASC
+            WHERE status = 'ACTIVE' -- Generalmente se audita lo activo
+            ORDER BY category ASC, name ASC
         `);
-        res.json(result.rows);
+
+        // Enriquecemos con los valores en Bolívares usando la tasa actual
+        const enriched = result.rows.map(p => ({
+            ...p,
+            price_ves: (parseFloat(p.price_usd) * globalBCVRate).toFixed(2),
+            total_value_ves: (parseFloat(p.total_value_usd) * globalBCVRate).toFixed(2),
+            bcv_rate_snapshot: globalBCVRate
+        }));
+
+        res.json(enriched);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: err.message });
     }
 });
