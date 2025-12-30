@@ -1113,15 +1113,23 @@ app.post('/api/inventory/movement', async (req, res) => {
         
         if (isNaN(qty) || qty <= 0) throw new Error("Cantidad inválida");
 
-        await client.query('BEGIN'); // Iniciar transacción segura
+        await client.query('BEGIN'); 
 
-        // 1. GESTIÓN DE LOTES (Primero movemos los lotes)
+        // 1. GESTIÓN DE LOTES
         if (type === 'IN') {
-            // --- ENTRADA ---
-            const expDate = new_expiration || null;
+            // --- ENTRADAS (Compras, Devoluciones, Ajustes +) ---
             
-            // Buscar si ya existe un lote igual (Mismo producto y fecha)
-            // Usamos 'IS NOT DISTINCT FROM' para comparar fechas incluso si son NULL
+            // Si es DEVOLUCION_CLIENTE y no mandan fecha, intentamos usar NULL (Sin vencimiento) o la fecha del lote más nuevo
+            let expDate = new_expiration || null; 
+            
+            // Si no mandan costo (ej. devolución), buscamos el costo actual del producto
+            let finalCost = cost_usd;
+            if (!finalCost) {
+                const prodData = await client.query('SELECT price_usd FROM products WHERE id = $1', [product_id]);
+                finalCost = prodData.rows[0].price_usd; // Asumimos costo de reposición actual
+            }
+
+            // Buscar si ya existe un lote idéntico (Mismo producto y fecha) para agrupar
             const existingBatch = await client.query(
                 'SELECT id FROM product_batches WHERE product_id = $1 AND expiration_date IS NOT DISTINCT FROM $2', 
                 [product_id, expDate]
@@ -1132,17 +1140,17 @@ app.post('/api/inventory/movement', async (req, res) => {
             } else {
                 await client.query(
                     'INSERT INTO product_batches (product_id, expiration_date, stock, cost_usd) VALUES ($1, $2, $3, $4)',
-                    [product_id, expDate, qty, cost_usd || 0]
+                    [product_id, expDate, qty, finalCost]
                 );
             }
 
         } else {
-            // --- SALIDA ---
+            // --- SALIDAS (Ventas, Mermas, Vencimientos, Ajustes -) ---
+            
             if (reason === 'VENCIMIENTO' || reason === 'MERMA_DAÑO') {
-                // Salida Manual de un Lote Específico
-                if (!specific_batch_id) throw new Error("Debe seleccionar el lote específico.");
+                // Salida Manual de un Lote Específico (Obligatorio seleccionar lote)
+                if (!specific_batch_id) throw new Error("Para mermas o vencimientos debe seleccionar un lote específico.");
                 
-                // Verificar stock del lote
                 const batchCheck = await client.query('SELECT stock FROM product_batches WHERE id = $1', [specific_batch_id]);
                 if (batchCheck.rows.length === 0 || batchCheck.rows[0].stock < qty) {
                     throw new Error("No hay suficiente stock en el lote seleccionado.");
@@ -1151,23 +1159,21 @@ app.post('/api/inventory/movement', async (req, res) => {
                 await client.query('UPDATE product_batches SET stock = stock - $1 WHERE id = $2', [qty, specific_batch_id]);
 
             } else {
-                // SALIDA AUTOMÁTICA (VENTA): FEFO
+                // SALIDA AUTOMÁTICA (FEFO) - Consumo Interno, Ajustes Negativos
                 let remainingQty = qty;
                 
-                // Traer lotes ordenados: Primero los que tienen fecha (más viejos), luego los sin fecha
+                // Ordenar: Primero vencen (con fecha), luego los que no tienen fecha (NULLS LAST)
                 const batches = await client.query(`
                     SELECT id, stock FROM product_batches 
                     WHERE product_id = $1 AND stock > 0 
                     ORDER BY expiration_date ASC NULLS LAST
                 `, [product_id]);
 
-                // Verificar stock total antes de empezar
                 const totalStock = batches.rows.reduce((sum, b) => sum + b.stock, 0);
-                if (totalStock < qty) throw new Error(`Stock insuficiente. Tienes ${totalStock}, intentas sacar ${qty}.`);
+                if (totalStock < qty) throw new Error(`Stock insuficiente. Disponibles: ${totalStock}`);
 
                 for (let batch of batches.rows) {
                     if (remainingQty <= 0) break;
-
                     const take = Math.min(batch.stock, remainingQty);
                     await client.query('UPDATE product_batches SET stock = stock - $1 WHERE id = $2', [take, batch.id]);
                     remainingQty -= take;
@@ -1175,26 +1181,22 @@ app.post('/api/inventory/movement', async (req, res) => {
             }
         }
 
-        // 2. ACTUALIZAR HISTORIAL Y REFLEJAR EN TABLA PRODUCTS (Para consistencia)
-        // Recalculamos el stock total real después de los movimientos
+        // 2. ACTUALIZAR STOCK TOTAL Y KARDEX
         const finalStockRes = await client.query('SELECT COALESCE(SUM(stock),0) as total FROM product_batches WHERE product_id = $1', [product_id]);
         const finalTotal = parseInt(finalStockRes.rows[0].total);
 
-        // Guardamos en el historial (Kardex)
         await client.query(`
             INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, cost_usd, new_stock)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
         `, [product_id, type, qty, reason, document_ref || '', cost_usd || 0, finalTotal]);
 
-        // Actualizamos la tabla padre 'products' para que tenga el dato fresco rápido
-        // (Aunque el GET lo calcula, esto ayuda a otras consultas simples)
         await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalTotal, product_id]);
 
-        await client.query('COMMIT'); // Guardar cambios
+        await client.query('COMMIT');
         res.json({ success: true, new_stock: finalTotal });
 
     } catch (err) {
-        await client.query('ROLLBACK'); // Cancelar si hay error
+        await client.query('ROLLBACK');
         console.error("Error en movimiento:", err);
         res.status(500).json({ error: err.message });
     } finally {
