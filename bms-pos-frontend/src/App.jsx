@@ -4557,198 +4557,257 @@ function App() {
                 </div>
             )}
 
-                        {/* --- MODAL FORMULARIO DE PRODUCTO MEJORADO --- */}
+                        {/* --- MODAL FORMULARIO DE PRODUCTO (DISEÑO SUPREMO UX/UI) --- */}
 {isProductFormOpen && (
-    <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-        <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl animate-scale-up overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[70] bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+        {/* Contenedor Principal con efecto de profundidad */}
+        <div className="bg-white rounded-[32px] w-full max-w-3xl shadow-2xl shadow-slate-900/50 overflow-hidden flex flex-col max-h-[95vh] animate-scale-up border border-slate-100">
             
-            {/* Header */}
-            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+            {/* 1. Header Minimalista */}
+            <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-sm z-10">
                 <div>
-                    <h3 className="text-xl font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Ítem'}</h3>
-                    <p className="text-xs text-gray-400 font-medium">Complete la ficha técnica del inventario</p>
+                    <h3 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
+                        {productForm.id ? '✏️ Editar Inventario' : '✨ Nuevo Producto'}
+                    </h3>
+                    <p className="text-sm text-slate-400 font-medium mt-1">Gestión de Ficha Técnica</p>
                 </div>
-                <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold transition-colors">✕</button>
+                <button 
+                    onClick={() => setIsProductFormOpen(false)} 
+                    className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-full text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all transform hover:rotate-90 hover:scale-110 shadow-sm"
+                >
+                    ✕
+                </button>
             </div>
 
-            <div className="p-6 overflow-y-auto custom-scrollbar">
+            {/* Cuerpo del Formulario con Scroll Suave */}
+            <div className="p-8 overflow-y-auto custom-scrollbar bg-slate-50/50">
                 <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
 
-                    {/* SECCIÓN 1: IDENTIDAD VISUAL Y NOMBRE */}
-                    <div className="flex gap-4 mb-6">
-                        <div className="w-1/4">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Icono</label>
+                    {/* GRUPO A: IDENTIDAD DEL PRODUCTO */}
+                    <div className="flex flex-col md:flex-row gap-6 mb-8">
+                        {/* Selector de Icono */}
+                        <div className="w-full md:w-28 shrink-0 flex flex-col gap-2">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Icono</label>
                             <input 
                                 type="text" 
                                 name="icon_emoji" 
                                 value={productForm.icon_emoji} 
                                 onChange={handleProductFormChange} 
-                                className="w-full h-14 text-center text-3xl border-2 border-gray-100 rounded-2xl focus:border-higea-blue outline-none bg-gray-50 focus:bg-white transition-all" 
+                                className="w-full h-24 text-center text-5xl bg-white border-2 border-dashed border-slate-200 rounded-3xl focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all cursor-pointer shadow-sm hover:shadow-md" 
                             />
-                            {/* Selector Rápido */}
-                             <div className="flex gap-1 mt-2 overflow-x-auto no-scrollbar pb-1">
-                                {EMOJI_OPTIONS.slice(0, 5).map((e,i) => <button key={i} type="button" onClick={()=>handleEmojiSelect(e)} className="text-lg hover:scale-125 transition-transform">{e}</button>)}
+                            {/* Accesos rápidos Emoji */}
+                            <div className="flex justify-between gap-1 overflow-x-auto no-scrollbar py-1">
+                                {EMOJI_OPTIONS.slice(0, 4).map((e,i) => (
+                                    <button key={i} type="button" onClick={()=>handleEmojiSelect(e)} className="text-lg hover:scale-125 transition-transform bg-white border border-slate-100 rounded-lg w-7 h-7 flex items-center justify-center shadow-sm">{e}</button>
+                                ))}
                             </div>
                         </div>
-                        <div className="w-3/4">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Nombre del Producto (*)</label>
-                            <input 
-                                type="text" 
-                                name="name" 
-                                placeholder="Ej: Harina Pan 1kg" 
-                                value={productForm.name} 
-                                onChange={handleProductFormChange} 
-                                className="w-full h-14 px-4 border-2 border-gray-100 rounded-2xl focus:border-higea-blue outline-none font-bold text-gray-700 text-lg placeholder-gray-300 transition-all" 
-                                required 
-                                autoFocus 
-                            />
-                        </div>
-                    </div>
 
-                    {/* SECCIÓN 2: PRECIOS (CÁLCULO AUTOMÁTICO) */}
-                    <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100 mb-6">
-                        <h4 className="text-xs font-bold text-blue-800 uppercase mb-3 flex items-center gap-2">
-                            <span>💰</span> Estructura de Costos y Precios
-                        </h4>
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* PRECIO REF */}
+                        {/* Campos de Texto */}
+                        <div className="flex-1 space-y-5">
                             <div>
-                                <label className="text-[10px] font-bold text-blue-400 uppercase block mb-1">Precio (Ref) *</label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-300 font-bold">$</span>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Nombre del Producto (*)</label>
+                                <input 
+                                    type="text" 
+                                    name="name" 
+                                    placeholder="Ej: Harina de Maíz Precocida" 
+                                    value={productForm.name} 
+                                    onChange={handleProductFormChange} 
+                                    className="w-full h-12 px-5 bg-white border border-slate-200 rounded-2xl focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none font-bold text-slate-700 text-lg placeholder-slate-300 transition-all shadow-sm" 
+                                    required 
+                                    autoFocus 
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-5">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Categoría</label>
                                     <input 
-                                        type="number" step="0.01" min="0"
-                                        name="price_usd"
-                                        value={productForm.price_usd} 
-                                        onChange={(e) => {
-                                            const val = parseFloat(e.target.value) || 0;
-                                            setProductForm(prev => ({ ...prev, price_usd: val }));
-                                            // NO guardamos Bs en DB, pero visualmente podríamos mostrarlo
-                                        }}
-                                        className="w-full pl-7 py-3 rounded-xl border border-blue-200 text-blue-900 font-black outline-none focus:ring-2 focus:ring-blue-200"
-                                        placeholder="0.00"
-                                        required
+                                        type="text" name="category" list="category-list"
+                                        value={productForm.category} onChange={handleProductFormChange}
+                                        className="w-full h-11 px-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-medium shadow-sm"
+                                        placeholder="Seleccionar..."
+                                    />
+                                    <datalist id="category-list">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Código Barras</label>
+                                    <input 
+                                        type="text" name="barcode" value={productForm.barcode} onChange={handleProductFormChange} 
+                                        className="w-full h-11 px-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-mono text-slate-500 shadow-sm"
+                                        placeholder="Opcional"
                                     />
                                 </div>
                             </div>
-                            {/* PRECIO BS (CALCULADO) */}
-                            <div>
-                                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Equivalente (Bs)</label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">Bs</span>
+                        </div>
+                    </div>
+
+                    {/* GRUPO B: ESTRUCTURA DE PRECIOS (DISEÑO FINTECH / PUNTO 4) */}
+                    <div className="mb-8">
+                        <div className="relative overflow-hidden bg-white border border-slate-200 rounded-[24px] shadow-xl shadow-slate-200/50 transition-all hover:shadow-2xl hover:shadow-slate-200/60">
+                            
+                            {/* Header de la Tarjeta de Precios */}
+                            <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-3 border-b border-slate-100 flex justify-between items-center">
+                                <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                                    Definición de Costos
+                                </h4>
+                                <div className="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+                                    Tasa BCV: {bcvRate}
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                                
+                                {/* LADO IZQUIERDO: PRECIO REFERENCIAL (Principal) */}
+                                <div className="flex-1 p-6 group hover:bg-blue-50/20 transition-colors relative">
+                                    <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wide mb-2 block">Precio (Ref) *</label>
+                                    <div className="relative flex items-baseline">
+                                        <span className="text-3xl font-light text-slate-300 mr-2">$</span>
+                                        <input 
+                                            type="number" step="0.01" min="0" required
+                                            name="price_usd"
+                                            value={productForm.price_usd} 
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                setProductForm(prev => ({ ...prev, price_usd: val }));
+                                            }}
+                                            className="w-full bg-transparent text-4xl font-black text-slate-800 outline-none placeholder:text-slate-200 font-mono tracking-tight"
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-2 font-medium">Base de cálculo del sistema</p>
+                                    <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-blue-500 group-hover:w-full transition-all duration-700 ease-out"></div>
+                                </div>
+
+                                {/* ÍCONO DE CONVERSIÓN */}
+                                <div className="relative flex items-center justify-center -my-3 md:my-0">
+                                    <div className="absolute z-10 bg-white border border-slate-100 text-slate-300 p-2 rounded-full shadow-lg">
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                        </svg>
+                                    </div>
+                                </div>
+
+                                {/* LADO DERECHO: PRECIO BOLÍVARES (Calculado) */}
+                                <div className="flex-1 p-6 bg-slate-50/30 group hover:bg-slate-50 transition-colors relative">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 block">Equivalente (Bs)</label>
+                                    <div className="relative flex items-baseline">
+                                        <span className="text-2xl font-light text-slate-300 mr-2">Bs</span>
+                                        <input 
+                                            type="number" step="0.01"
+                                            // LÓGICA DE VISUALIZACIÓN
+                                            value={productForm.price_usd ? (parseFloat(productForm.price_usd) * bcvRate).toFixed(2) : ''} 
+                                            onChange={(e) => {
+                                                // LÓGICA INVERSA (PUNTO 4)
+                                                const valBs = parseFloat(e.target.value);
+                                                if (!isNaN(valBs) && bcvRate > 0) {
+                                                    setProductForm(prev => ({ ...prev, price_usd: (valBs / bcvRate).toFixed(2) }));
+                                                } else {
+                                                    setProductForm(prev => ({ ...prev, price_usd: '' }));
+                                                }
+                                            }}
+                                            className="w-full bg-transparent text-3xl font-bold text-slate-600 outline-none placeholder:text-slate-200 font-mono"
+                                            placeholder="0,00"
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-2 font-medium flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+                                        Actualización auto. (BCV)
+                                    </p>
+                                    <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-slate-300 group-hover:w-full transition-all duration-700 ease-out"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* GRUPO C: CONTROL & LOGÍSTICA */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                        
+                        {/* Control de Vencimiento (Toggle iOS) */}
+                        <div className={`p-5 rounded-2xl border transition-all duration-300 ${productForm.expiration_date ? 'bg-orange-50/50 border-orange-200 shadow-sm' : 'bg-white border-slate-200'}`}>
+                            <div className="flex justify-between items-center mb-3">
+                                <label className={`text-xs font-bold uppercase tracking-wide flex items-center gap-2 ${productForm.expiration_date ? 'text-orange-700' : 'text-slate-400'}`}>
+                                    📅 Vencimiento
+                                </label>
+                                {/* Toggle Switch */}
+                                <label className="relative inline-flex items-center cursor-pointer">
                                     <input 
-                                        type="number" step="0.01"
-                                        value={(parseFloat(productForm.price_usd || 0) * bcvRate).toFixed(2)} 
+                                        type="checkbox" 
+                                        className="sr-only peer"
+                                        checked={!!productForm.expiration_date}
                                         onChange={(e) => {
-                                            // Cálculo inverso: Si edita Bs, calculamos Ref
-                                            const val = parseFloat(e.target.value) || 0;
-                                            if(bcvRate > 0) {
-                                                setProductForm(prev => ({ ...prev, price_usd: (val / bcvRate).toFixed(2) }));
+                                            if(e.target.checked) {
+                                                setProductForm(p => ({...p, expiration_date: new Date().toISOString().split('T')[0]}));
+                                            } else {
+                                                setProductForm(p => ({...p, expiration_date: ''}));
                                             }
                                         }}
-                                        className="w-full pl-8 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold outline-none focus:border-gray-400 bg-white"
-                                        placeholder="0.00"
                                     />
+                                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500 shadow-inner"></div>
+                                </label>
+                            </div>
+
+                            {productForm.expiration_date ? (
+                                <div className="animate-fade-in-up">
+                                    <input 
+                                        type="date" 
+                                        name="expiration_date" 
+                                        value={productForm.expiration_date} 
+                                        onChange={handleProductFormChange} 
+                                        className="w-full p-2 bg-white border border-orange-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-orange-200 shadow-sm" 
+                                    />
+                                    <p className="text-[10px] text-orange-600 mt-2 font-medium">* Se activarán alertas de caducidad.</p>
                                 </div>
-                                <p className="text-[9px] text-gray-400 mt-1 text-right">Tasa: {bcvRate} Bs/$</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* SECCIÓN 3: DETALLES Y CATEGORÍA */}
-                    <div className="grid grid-cols-2 gap-4 mb-6">
-                        <div>
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Categoría</label>
-                            <input 
-                                type="text" 
-                                name="category" 
-                                list="category-list"
-                                value={productForm.category} 
-                                onChange={handleProductFormChange}
-                                className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-medium text-sm"
-                                placeholder="Seleccione..."
-                            />
-                            <datalist id="category-list">
-                                {uniqueCategories.map(c => <option key={c} value={c} />)}
-                            </datalist>
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Código Barras</label>
-                            <input 
-                                type="text" 
-                                name="barcode" 
-                                value={productForm.barcode} 
-                                onChange={handleProductFormChange} 
-                                className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm"
-                                placeholder="Opcional"
-                            />
-                        </div>
-                    </div>
-
-                    {/* SECCIÓN 4: CONTROL SANITARIO (FECHA OPCIONAL) */}
-                    <div className="mb-6 bg-orange-50 p-4 rounded-2xl border border-orange-100">
-                         <div className="flex justify-between items-center mb-2">
-                            <label className="text-xs font-bold text-orange-800 flex items-center gap-2">
-                                📅 Control de Vencimiento
-                            </label>
-                            {/* Toggle Switch */}
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input 
-                                    type="checkbox" 
-                                    className="sr-only peer"
-                                    checked={!!productForm.expiration_date}
-                                    onChange={(e) => {
-                                        if(e.target.checked) {
-                                            // Poner fecha de hoy por defecto si activa
-                                            setProductForm(p => ({...p, expiration_date: new Date().toISOString().split('T')[0]}));
-                                        } else {
-                                            // Poner NULL/Vacío si desactiva
-                                            setProductForm(p => ({...p, expiration_date: ''}));
-                                        }
-                                    }}
-                                />
-                                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
-                            </label>
+                            ) : (
+                                <div className="h-[42px] flex items-center justify-center text-xs text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                                    Producto sin fecha de caducidad
+                                </div>
+                            )}
                         </div>
 
-                        {productForm.expiration_date ? (
-                            <div className="animate-fade-in-up">
-                                <input 
-                                    type="date" 
-                                    name="expiration_date" 
-                                    value={productForm.expiration_date} 
+                        {/* Configuración Adicional */}
+                        <div className="space-y-4">
+                            <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Impuesto (IVA)</label>
+                                    <span className="text-xs text-slate-400 font-medium">Gravado al 16%</span>
+                                </div>
+                                <select 
+                                    name="is_taxable" 
+                                    value={productForm.is_taxable} 
                                     onChange={handleProductFormChange} 
-                                    className="w-full p-2 bg-white border border-orange-200 rounded-xl text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-orange-200" 
-                                />
-                                <p className="text-[10px] text-orange-600 mt-1">* Este producto generará alertas de vencimiento.</p>
+                                    className="bg-slate-50 border-none text-xs font-bold text-slate-700 rounded-lg py-2 pl-3 pr-8 focus:ring-2 focus:ring-blue-100 cursor-pointer"
+                                >
+                                    <option value="true">SÍ (Aplica)</option>
+                                    <option value="false">NO (Exento)</option>
+                                </select>
                             </div>
-                        ) : (
-                            <p className="text-xs text-gray-400 italic">Producto no perecedero (Sin fecha).</p>
-                        )}
-                    </div>
 
-                    {/* SECCIÓN 5: IMPUESTO Y ESTATUS */}
-                    <div className="grid grid-cols-2 gap-4 mb-6">
-                        <div className="bg-gray-50 p-3 rounded-xl">
-                            <label className="text-[10px] font-bold text-gray-400 block mb-1">IVA</label>
-                            <select name="is_taxable" value={productForm.is_taxable} onChange={handleProductFormChange} className="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-                                <option value="true">SÍ (Gravado 16%)</option>
-                                <option value="false">NO (Exento)</option>
-                            </select>
-                        </div>
-                         <div className="bg-gray-50 p-3 rounded-xl">
-                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Estatus</label>
-                            <select name="status" value={productForm.status} onChange={handleProductFormChange} className="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
-                                <option value="ACTIVE">ACTIVO</option>
-                                <option value="INACTIVE">INACTIVO</option>
-                            </select>
+                            <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase block">Estatus</label>
+                                    <span className="text-xs text-slate-400 font-medium">Visibilidad global</span>
+                                </div>
+                                <select 
+                                    name="status" 
+                                    value={productForm.status} 
+                                    onChange={handleProductFormChange} 
+                                    className={`border-none text-xs font-bold rounded-lg py-2 pl-3 pr-8 focus:ring-2 cursor-pointer ${productForm.status === 'ACTIVE' ? 'bg-green-50 text-green-700 ring-green-100' : 'bg-red-50 text-red-700 ring-red-100'}`}
+                                >
+                                    <option value="ACTIVE">ACTIVO</option>
+                                    <option value="INACTIVE">INACTIVO</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                     
-                    {/* Botón Guardar */}
-                    <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2">
-                        <span>💾</span> Guardar Producto
-                    </button>
+                    {/* Botón Guardar Flotante */}
+                    <div className="pt-2 sticky bottom-0 bg-gradient-to-t from-white via-white to-transparent pb-2">
+                        <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] transition-all flex justify-center items-center gap-3 text-lg border border-slate-800">
+                            <span>💾</span>
+                            <span>{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</span>
+                        </button>
+                    </div>
 
                 </form>
             </div>
