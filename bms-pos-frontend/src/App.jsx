@@ -321,6 +321,7 @@ function App() {
 
     // --- ESTADOS REPORTE GERENCIAL AVANZADO ---
     const [analyticsData, setAnalyticsData] = useState(null);
+	
 
     // 💡 MEJORA UX: Rango de fechas AUTOMÁTICO (Desde el 1° del mes hasta Hoy)
     const [reportDateRange, setReportDateRange] = useState(() => {
@@ -740,9 +741,10 @@ function App() {
         doc.save(`Kardex_${kardexProduct.name.replace(/\s+/g, '_')}.pdf`);
     };
 
-	const printInventoryAuditPDF = () => {
-        // Usamos 'inventory' que es tu estado actual
-        if (!inventory || inventory.length === 0) return Swal.fire('Vacío', 'No hay datos de inventario para generar el reporte.', 'info');
+	// --- 1. FUNCIÓN DE REPORTE DE AUDITORÍA (CORREGIDA) ---
+    const printInventoryAuditPDF = () => {
+        // CORRECCIÓN: Usamos 'products' en lugar de 'inventory'
+        if (!products || products.length === 0) return Swal.fire('Vacío', 'No hay datos de inventario para generar el reporte.', 'info');
 
         const doc = new jsPDF('l', 'mm', 'a4'); // Horizontal
         const pageWidth = doc.internal.pageSize.width;
@@ -777,12 +779,12 @@ function App() {
         doc.text(`Tasa de Cambio BCV: Bs ${rateStr}`, pageWidth - 14, 16, { align: 'right' });
         doc.text(`Expresado en: Bolívares (Bs) y Divisa Referencial (Ref)`, pageWidth - 14, 22, { align: 'right' });
 
-        // 2. CÁLCULO DE TOTALES (Usando tu estado 'inventory')
+        // 2. CÁLCULO DE TOTALES (Usando 'products')
         let totalStock = 0;
         let totalValueUSD = 0;
         let totalValueVES = 0;
 
-        inventory.forEach(item => {
+        products.forEach(item => {
             const stock = parseInt(item.stock) || 0;
             const price = parseFloat(item.price_usd) || 0;
             const totalUSD = stock * price;
@@ -803,7 +805,7 @@ function App() {
         doc.text("ITEMS TOTALES", 30, 36, { align: 'center' });
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
-        doc.text(`${inventory.length}`, 30, 44, { align: 'center' });
+        doc.text(`${products.length}`, 30, 44, { align: 'center' });
 
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
@@ -833,7 +835,7 @@ function App() {
         autoTable(doc, {
             startY: 55,
             head: [['CÓDIGO', 'DESCRIPCIÓN DEL PRODUCTO', 'CATEGORÍA', 'STOCK', 'COSTO UNIT (BS)', 'TOTAL (BS)', 'TOTAL (REF)']],
-            body: inventory.map(item => {
+            body: products.map(item => {
                 const stock = parseInt(item.stock) || 0;
                 const price = parseFloat(item.price_usd) || 0;
                 const totalUSD = stock * price;
@@ -845,9 +847,9 @@ function App() {
                     item.name.substring(0, 45),
                     item.category || 'General',
                     stock,
-                    formatBs(unitVES), // Costo Unitario Bs
-                    formatBs(totalVES), // Total Bs
-                    formatUSD(totalUSD) // Total Ref
+                    formatBs(unitVES),
+                    formatBs(totalVES),
+                    formatUSD(totalUSD)
                 ];
             }),
             styles: { fontSize: 8, cellPadding: 2 },
@@ -5364,7 +5366,7 @@ function App() {
                             </div>
                         )}
 
-                        {/* --- 3. TABLA DE AUDITORÍA DE INVENTARIO (TAB 'INVENTORY') --- */}
+                        {/* --- 3. TABLA DE AUDITORÍA DE INVENTARIO (CORREGIDA) --- */}
                     {reportTab === 'INVENTORY' && (
                         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in">
                             {/* Encabezado con Controles */}
@@ -5372,7 +5374,8 @@ function App() {
                                 <div>
                                     <h3 className="font-bold text-gray-800 flex items-center gap-2">
                                         📦 Auditoría de Existencias
-                                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full">{inventory.length} Ítems</span>
+                                        {/* CORRECCIÓN: products.length */}
+                                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full">{products.length} Ítems</span>
                                     </h3>
                                     <p className="text-xs text-gray-500">Valorización en tiempo real (Bs y Ref)</p>
                                 </div>
@@ -5385,7 +5388,8 @@ function App() {
                                         <span>📄</span> PDF Legal
                                     </button>
                                     <button 
-                                        onClick={() => downloadCSV(inventory, 'Auditoria_Inventario')} 
+                                        // CORRECCIÓN: downloadCSV(products, ...)
+                                        onClick={() => downloadCSV(products, 'Auditoria_Inventario')} 
                                         className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-xl hover:bg-green-700 shadow-md transition-all active:scale-95"
                                     >
                                         <span>📊</span> Excel / CSV
@@ -5407,8 +5411,8 @@ function App() {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {/* Usamos inventoryFilteredData si tienes buscador, o inventory directo */}
-                                        {inventory.map((item) => {
+                                        {/* CORRECCIÓN: products.map(...) */}
+                                        {products.map((item) => {
                                             const stock = parseInt(item.stock) || 0;
                                             const price = parseFloat(item.price_usd) || 0;
                                             const totalRef = stock * price;
@@ -5416,7 +5420,13 @@ function App() {
                                             const unitBs = price * bcvRate;
 
                                             return (
-                                                <tr key={item.id} className="hover:bg-blue-50 transition-colors">
+                                                <tr 
+                                                    key={item.id} 
+                                                    // ✅ AQUÍ ESTÁ LA MAGIA RESTAURADA:
+                                                    onClick={() => viewKardexHistory(item)}
+                                                    className="hover:bg-blue-50 transition-colors cursor-pointer group"
+                                                    title="🖱️ Clic para ver Movimientos y Kardex"
+                                                >
                                                     <td className="px-6 py-3 font-bold text-gray-800">
                                                         {item.name}
                                                         <div className="text-[10px] text-gray-400 font-mono">{item.barcode || 'S/C'}</div>
@@ -5427,7 +5437,6 @@ function App() {
                                                             {stock}
                                                         </span>
                                                     </td>
-                                                    {/* Columnas Financieras Coherentes */}
                                                     <td className="px-6 py-3 text-right font-mono text-xs">
                                                         Bs {formatBs(unitBs)}
                                                     </td>
