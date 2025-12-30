@@ -96,28 +96,27 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-// 2. Obtener Productos (CORREGIDO: AHORA INCLUYE STATUS Y BARCODE)
+// --- 2. Obtener Productos (ACTUALIZADO) ---
 app.get('/api/products', async (req, res) => {
     try {
+        // Agregamos 'p.is_perishable' al SELECT
         const query = `
             SELECT 
                 p.id, p.name, p.category, p.price_usd, 
-                -- SUMA REAL: Sumamos solo los lotes con stock positivo
                 COALESCE((SELECT SUM(stock) FROM product_batches WHERE product_id = p.id AND stock > 0), 0) as stock,
-                -- FECHA REAL: Tomamos la fecha más próxima de los lotes con stock
                 (SELECT MIN(expiration_date) FROM product_batches WHERE product_id = p.id AND stock > 0) as expiration_date,
-                p.icon_emoji, p.is_taxable, p.barcode, p.status, p.last_stock_update
+                p.icon_emoji, p.is_taxable, p.barcode, p.status, p.last_stock_update, p.is_perishable
             FROM products p
             ORDER BY p.id ASC
         `;
-        
         const result = await pool.query(query);
         
+        // Mapeamos para agregar el precio en Bolívares calculado
         const productsWithVes = result.rows.map(product => ({
             ...product,
             price_ves: (parseFloat(product.price_usd) * globalBCVRate).toFixed(2),
-            stock: parseInt(product.stock) || 0, // Asegura que sea número
-            // Convertir fecha a string ISO para que el input date la entienda
+            stock: parseInt(product.stock) || 0,
+            // Formato de fecha seguro
             expiration_date: product.expiration_date ? new Date(product.expiration_date).toISOString().split('T')[0] : null
         }));
         
@@ -127,7 +126,6 @@ app.get('/api/products', async (req, res) => {
         res.status(500).json({ error: 'Error al obtener productos' });
     }
 });
-
 app.get('/api/inventory/batches/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -142,49 +140,55 @@ app.get('/api/inventory/batches/:id', async (req, res) => {
     }
 });
 
-// 3. Crear/Actualizar Producto (CORREGIDO CON VENCIMIENTO)
+// --- 3. Crear/Actualizar Producto (ADAPTADO Y SEGURO) ---
 app.post('/api/products', async (req, res) => {
-    // 1. Extraemos TODOS los campos, INCLUYENDO expiration_date
-    const { id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date } = req.body;
+    // 1. Extraemos TODOS los campos, agregando 'is_perishable'
+    const { id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date, is_perishable } = req.body;
     
-    // Validaciones básicas
-    if (!name || !price_usd || price_usd <= 0) return res.status(400).json({ error: 'Datos inválidos.' });
+    // Validaciones básicas (Mantenemos tu lógica original)
+    if (!name || !price_usd || price_usd <= 0) return res.status(400).json({ error: 'Datos inválidos: Nombre y Precio son obligatorios.' });
     
     try {
         let result;
-        const isTaxableValue = typeof is_taxable === 'boolean' ? is_taxable : (is_taxable === 'true');
+        // Normalización de banderas booleanas
+        const isTaxableValue = (String(is_taxable) === 'true'); // Convierte "true" o true a booleano
+        // Si no envían is_perishable, asumimos TRUE por seguridad (para no ocultar fechas por error)
+        const isPerishableValue = is_perishable === undefined ? true : (String(is_perishable) === 'true');
+        
         const statusValue = status ? status : 'ACTIVE'; 
         const barcodeValue = barcode || '';
         
-        // Manejo de fecha vacía: Si viene vacía, enviamos NULL a la base de datos
-        const expirationValue = expiration_date ? expiration_date : null;
+        // LÓGICA CLAVE: Si es perecedero, usamos la fecha enviada (o null). Si NO es perecedero, forzamos null.
+        const expirationValue = isPerishableValue ? (expiration_date || null) : null;
 
         if (id) {
-            // UPDATE: Agregamos expiration_date = $9 (y rodamos el ID a $10)
+            // UPDATE: Agregamos is_perishable = $10 y rodamos el ID a $11
             const query = `
                 UPDATE products 
-                SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, is_taxable = $6, barcode = $7, status = $8, expiration_date = $9, last_stock_update = CURRENT_TIMESTAMP 
-                WHERE id = $10 RETURNING *`;
+                SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, 
+                    is_taxable = $6, barcode = $7, status = $8, expiration_date = $9, is_perishable = $10,
+                    last_stock_update = CURRENT_TIMESTAMP 
+                WHERE id = $11 RETURNING *`;
             
-            // EL ORDEN DE LOS VALORES ES CRÍTICO AQUÍ 👇
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue, id];
+            // EL ORDEN DEBE COINCIDIR EXACTAMENTE
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue, isPerishableValue, id];
             
             result = await pool.query(query, values);
             
             if (result.rowCount === 0) return res.status(404).json({ error: 'Producto no encontrado' });
         } else {
-            // INSERT: Agregamos la columna y el valor $9
+            // INSERT: Agregamos la columna is_perishable y el valor $10
             const query = `
-                INSERT INTO products (name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`;
+                INSERT INTO products (name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date, is_perishable) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`;
                 
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue];
+            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue, isPerishableValue];
             
             result = await pool.query(query, values);
         }
         res.json(result.rows[0]);
     } catch (err) {
-        console.error(err); 
+        console.error("Error en guardar producto:", err); 
         res.status(500).json({ error: err.message });
     }
 });
