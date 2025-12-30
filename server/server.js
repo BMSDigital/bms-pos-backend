@@ -1104,35 +1104,33 @@ app.get('/api/reports/closings', async (req, res) => {
 // ==========================================
 
 // 1. Registrar Movimiento (Entrada/Salida con Auditoría)
-// EN server.js - Reemplaza la ruta de movimiento completa
+// SERVER.JS
+
 app.post('/api/inventory/movement', async (req, res) => {
     const client = await pool.connect();
     try {
         const { product_id, type, quantity, document_ref, reason, cost_usd, new_expiration, specific_batch_id } = req.body;
         const qty = parseInt(quantity);
-        
         if (isNaN(qty) || qty <= 0) throw new Error("Cantidad inválida");
 
-        await client.query('BEGIN'); 
+        await client.query('BEGIN');
 
-        // 1. GESTIÓN DE LOTES
+        // 1. Obtener Costo Actual si no se envía (para devoluciones automáticas)
+        let currentCost = cost_usd;
+        if (!currentCost) {
+            const prod = await client.query('SELECT price_usd FROM products WHERE id = $1', [product_id]);
+            currentCost = prod.rows[0]?.price_usd || 0;
+        }
+
+        // 2. Lógica de Stock (Entradas y Salidas)
         if (type === 'IN') {
-            // --- ENTRADAS (Compras, Devoluciones, Ajustes +) ---
+            // ENTRADAS: Compra, Devolución Cliente, Ajuste (+)
+            let expDate = new_expiration || null; // Permite NULL
             
-            // Si es DEVOLUCION_CLIENTE y no mandan fecha, intentamos usar NULL (Sin vencimiento) o la fecha del lote más nuevo
-            let expDate = new_expiration || null; 
-            
-            // Si no mandan costo (ej. devolución), buscamos el costo actual del producto
-            let finalCost = cost_usd;
-            if (!finalCost) {
-                const prodData = await client.query('SELECT price_usd FROM products WHERE id = $1', [product_id]);
-                finalCost = prodData.rows[0].price_usd; // Asumimos costo de reposición actual
-            }
-
-            // Buscar si ya existe un lote idéntico (Mismo producto y fecha) para agrupar
+            // Buscar lote similar para agrupar (misma fecha o ambos sin fecha)
             const existingBatch = await client.query(
-                'SELECT id FROM product_batches WHERE product_id = $1 AND expiration_date IS NOT DISTINCT FROM $2', 
-                [product_id, expDate]
+                'SELECT id FROM product_batches WHERE product_id = $1 AND expiration_date IS NOT DISTINCT FROM $2 AND cost_usd = $3', 
+                [product_id, expDate, currentCost]
             );
 
             if (existingBatch.rows.length > 0) {
@@ -1140,64 +1138,51 @@ app.post('/api/inventory/movement', async (req, res) => {
             } else {
                 await client.query(
                     'INSERT INTO product_batches (product_id, expiration_date, stock, cost_usd) VALUES ($1, $2, $3, $4)',
-                    [product_id, expDate, qty, finalCost]
+                    [product_id, expDate, qty, currentCost]
                 );
             }
-
         } else {
-            // --- SALIDAS (Ventas, Mermas, Vencimientos, Ajustes -) ---
-            
-            if (reason === 'VENCIMIENTO' || reason === 'MERMA_DAÑO') {
-                // Salida Manual de un Lote Específico (Obligatorio seleccionar lote)
-                if (!specific_batch_id) throw new Error("Para mermas o vencimientos debe seleccionar un lote específico.");
-                
-                const batchCheck = await client.query('SELECT stock FROM product_batches WHERE id = $1', [specific_batch_id]);
-                if (batchCheck.rows.length === 0 || batchCheck.rows[0].stock < qty) {
-                    throw new Error("No hay suficiente stock en el lote seleccionado.");
-                }
-
+            // SALIDAS: Venta, Merma, Vencimiento, Consumo Interno
+            if (specific_batch_id) {
+                // Salida de lote específico (Vencimiento/Merma)
                 await client.query('UPDATE product_batches SET stock = stock - $1 WHERE id = $2', [qty, specific_batch_id]);
-
             } else {
-                // SALIDA AUTOMÁTICA (FEFO) - Consumo Interno, Ajustes Negativos
-                let remainingQty = qty;
-                
-                // Ordenar: Primero vencen (con fecha), luego los que no tienen fecha (NULLS LAST)
+                // Salida FEFO Automática (Ventas)
+                let remaining = qty;
                 const batches = await client.query(`
                     SELECT id, stock FROM product_batches 
                     WHERE product_id = $1 AND stock > 0 
                     ORDER BY expiration_date ASC NULLS LAST
                 `, [product_id]);
 
-                const totalStock = batches.rows.reduce((sum, b) => sum + b.stock, 0);
-                if (totalStock < qty) throw new Error(`Stock insuficiente. Disponibles: ${totalStock}`);
-
                 for (let batch of batches.rows) {
-                    if (remainingQty <= 0) break;
-                    const take = Math.min(batch.stock, remainingQty);
+                    if (remaining <= 0) break;
+                    const take = Math.min(batch.stock, remaining);
                     await client.query('UPDATE product_batches SET stock = stock - $1 WHERE id = $2', [take, batch.id]);
-                    remainingQty -= take;
+                    remaining -= take;
                 }
+                if (remaining > 0) throw new Error("Stock insuficiente en el sistema.");
             }
         }
 
-        // 2. ACTUALIZAR STOCK TOTAL Y KARDEX
-        const finalStockRes = await client.query('SELECT COALESCE(SUM(stock),0) as total FROM product_batches WHERE product_id = $1', [product_id]);
-        const finalTotal = parseInt(finalStockRes.rows[0].total);
+        // 3. Registrar Movimiento en Kardex
+        // Recalcular stock total para el snapshot
+        const stockRes = await client.query('SELECT COALESCE(SUM(stock),0) as total FROM product_batches WHERE product_id = $1', [product_id]);
+        const finalStock = parseInt(stockRes.rows[0].total);
 
         await client.query(`
             INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, cost_usd, new_stock)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `, [product_id, type, qty, reason, document_ref || '', cost_usd || 0, finalTotal]);
+        `, [product_id, type, qty, reason, document_ref, currentCost, finalStock]);
 
-        await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalTotal, product_id]);
+        // 4. Actualizar Producto Maestro
+        await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalStock, product_id]);
 
         await client.query('COMMIT');
-        res.json({ success: true, new_stock: finalTotal });
+        res.json({ success: true, new_stock: finalStock });
 
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error("Error en movimiento:", err);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();

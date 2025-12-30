@@ -8,6 +8,24 @@ import autoTable from 'jspdf-autotable';
 
 // --- NUEVAS FUNCIONES DE VALIDACIÓN Y FORMATO ---
 
+// Formateador Financiero Venezuela (Bs. 1.234,56)
+const formatBs = (amount) => {
+    if (amount === null || amount === undefined) return '0,00';
+    return new Intl.NumberFormat('es-VE', { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 2 
+    }).format(amount);
+};
+
+// Formateador USD (Ref $1,234.56)
+const formatUSD = (amount) => {
+    if (amount === null || amount === undefined) return '0.00';
+    return new Intl.NumberFormat('en-US', { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 2 
+    }).format(amount);
+};
+
 // 1. Capitalizar la primera letra de cada palabra
 const capitalizeWords = (str) => {
     if (!str) return '';
@@ -646,6 +664,9 @@ function App() {
         doc.text(`Categoría: ${kardexProduct.category || 'General'}`, 14, 40);
         doc.text(`Stock Actual: ${kardexProduct.stock} Unidades`, 14, 45);
         doc.text(`Costo Actual: Ref ${parseFloat(kardexProduct.price_usd).toFixed(2)}`, 14, 50);
+		
+		const costBs = (parseFloat(kardexProduct.price_usd) * bcvRate).toFixed(2);
+		doc.text(`Costo Actual: Bs ${costBs}`, 14, 55); // Bajamos un poco la coordenada Y
 
         // 3. TABLA DE MOVIMIENTOS
         autoTable(doc, {
@@ -4536,188 +4557,204 @@ function App() {
                 </div>
             )}
 
-                        {/* --- MODAL FORMULARIO DE EDICIÓN (UX AUDITORÍA: STOCK BLOQUEADO EN EDICIÓN) --- */}
-                        {isProductFormOpen && (
-                            <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                                <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden max-h-[95vh] flex flex-col">
-                                    <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
-                                        <h3 className="text-lg font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Producto'}</h3>
-                                        <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold">✕</button>
-                                    </div>
+                        {/* --- MODAL FORMULARIO DE PRODUCTO MEJORADO --- */}
+{isProductFormOpen && (
+    <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+        <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl animate-scale-up overflow-hidden flex flex-col max-h-[90vh]">
+            
+            {/* Header */}
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+                <div>
+                    <h3 className="text-xl font-black text-gray-800">{productForm.id ? 'Editar Producto' : 'Nuevo Ítem'}</h3>
+                    <p className="text-xs text-gray-400 font-medium">Complete la ficha técnica del inventario</p>
+                </div>
+                <button onClick={() => setIsProductFormOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-500 shadow-sm hover:text-red-500 font-bold transition-colors">✕</button>
+            </div>
 
-                                    <div className="p-6 overflow-y-auto custom-scrollbar">
-                                        <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
+            <div className="p-6 overflow-y-auto custom-scrollbar">
+                <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
 
-                                            {/* NOMBRE */}
-                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Nombre (*)</label>
-                                            <input type="text" name="name" placeholder="Ej: Pizza Margarita" value={productForm.name} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl mb-4 focus:border-higea-blue outline-none font-medium" required autoFocus />
-
-                                            {/* PRECIO Y CATEGORÍA */}
-                                            <div className="grid grid-cols-2 gap-4 mb-4">
-                                                <div>
-                                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Precio Ref (*)</label>
-                                                    <input type="number" name="price_usd" placeholder="0.00" value={productForm.price_usd} onChange={handleProductFormChange} step="0.01" min="0.01" className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700" required />
-                                                </div>
-                                                {/* CATEGORÍA */}
-                                                <div className="animate-fade-in-up">
-                                                    <div className="flex justify-between items-center mb-1 ml-1">
-                                                        <label className="text-xs font-bold text-gray-500 block">Categoría</label>
-                                                        <span className="text-[10px] text-higea-blue font-bold bg-blue-50 px-2 py-0.5 rounded-full">
-                                                            {uniqueCategories.length} opciones
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex gap-2 overflow-x-auto pb-3 mb-1 custom-scrollbar snap-x scroll-smooth">
-                                                        {uniqueCategories.map((cat) => (
-                                                            <button
-                                                                type="button"
-                                                                key={cat}
-                                                                onClick={() => setProductForm(prev => ({ ...prev, category: cat }))}
-                                                                className={`snap-start whitespace-nowrap px-4 py-2 rounded-xl text-[10px] font-bold border-2 transition-all active:scale-95 shadow-sm hover:shadow-md ${productForm.category === cat
-                                                                    ? 'bg-higea-blue text-white border-higea-blue scale-105'
-                                                                    : 'bg-white text-gray-500 border-gray-100 hover:border-higea-blue hover:text-higea-blue'
-                                                                    }`}
-                                                            >
-                                                                {cat}
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                    <div className="relative group">
-                                                        <input
-                                                            type="text"
-                                                            name="category"
-                                                            list="category-suggestions"
-                                                            placeholder="Escribe o selecciona arriba..."
-                                                            value={productForm.category}
-                                                            onChange={handleProductFormChange}
-                                                            className="w-full border-2 border-gray-100 p-3 pl-4 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-700 bg-gray-50 focus:bg-white transition-all group-hover:bg-white shadow-sm"
-                                                        />
-                                                        <datalist id="category-suggestions">
-                                                            {uniqueCategories.map(cat => <option key={cat} value={cat} />)}
-                                                        </datalist>
-                                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 group-focus-within:text-higea-blue transition-colors pointer-events-none text-lg">📂</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* CÓDIGO DE BARRAS */}
-                                            <div className="mb-4">
-                                                <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Código de Barras (Opcional)</label>
-                                                <div className="relative">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">|||</span>
-                                                    <input type="text" name="barcode" placeholder="Escanear o escribir..." value={productForm.barcode} onChange={handleProductFormChange} className="w-full pl-8 pr-4 py-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm" />
-                                                </div>
-                                            </div>
-
-                                            {/* STOCK (CONTROLADO) E ICONO */}
-                                            <div className="grid grid-cols-2 gap-4 mb-4">
-                                                {/* INPUT STOCK CON LÓGICA DE AUDITORÍA */}
-                                                <div>
-                                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">
-                                                        {productForm.id ? 'Stock Actual (Controlado)' : 'Stock Inicial'}
-                                                    </label>
-                                                    <div className="relative">
-                                                        <input
-                                                            type="number"
-                                                            name="stock"
-                                                            value={productForm.stock}
-                                                            onChange={handleProductFormChange}
-                                                            min="0"
-                                                            disabled={!!productForm.id} // SE BLOQUEA SI ES EDICIÓN
-                                                            className={`w-full border-2 p-3 rounded-xl outline-none font-bold transition-colors ${productForm.id
-                                                                    ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed'
-                                                                    : 'bg-white border-gray-100 focus:border-higea-blue text-gray-800'
-                                                                }`}
-                                                            required
-                                                        />
-                                                        {/* CANDADO VISUAL */}
-                                                        {productForm.id && (
-                                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                                                                <span className="text-lg" title="Para modificar el stock, utilice los botones de Entrada o Salida en el listado.">
-                                                                    🔒
-                                                                </span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                    {productForm.id && (
-                                                        <p className="text-[9px] text-blue-500 mt-1 ml-1 leading-tight">
-                                                            * Use Entrada/Salida para modificar.
-                                                        </p>
-                                                    )}
-                                                </div>
-                                                {/* SECCIÓN: CONTROL SANITARIO (FECHA DE VENCIMIENTO) */}
-                    <div className="mb-4 bg-orange-50 p-3 rounded-xl border border-orange-100 animate-fade-in-up">
-                        <div className="flex justify-between items-center mb-1">
-                            <label className="text-xs font-bold text-orange-800 flex items-center gap-1">
-                                📅 Fecha de Vencimiento
-                            </label>
-                            {/* Botón para BORRAR la fecha si fue un error */}
-                            {productForm.expiration_date && (
-                                <button
-                                    type="button"
-                                    onClick={() => setProductForm({ ...productForm, expiration_date: '' })}
-                                    className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded border border-red-200 hover:bg-red-200 transition-colors font-bold"
-                                >
-                                    ✖ Quitar Fecha
-                                </button>
-                            )}
-                        </div>
-                        
-                        <div className="flex gap-2">
+                    {/* SECCIÓN 1: IDENTIDAD VISUAL Y NOMBRE */}
+                    <div className="flex gap-4 mb-6">
+                        <div className="w-1/4">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Icono</label>
                             <input 
-                                type="date" 
-                                name="expiration_date" 
-                                value={productForm.expiration_date || ''} 
+                                type="text" 
+                                name="icon_emoji" 
+                                value={productForm.icon_emoji} 
                                 onChange={handleProductFormChange} 
-                                className="w-full border-2 border-orange-200 p-2 rounded-lg focus:border-orange-500 outline-none text-sm font-bold text-gray-700 bg-white" 
+                                className="w-full h-14 text-center text-3xl border-2 border-gray-100 rounded-2xl focus:border-higea-blue outline-none bg-gray-50 focus:bg-white transition-all" 
+                            />
+                            {/* Selector Rápido */}
+                             <div className="flex gap-1 mt-2 overflow-x-auto no-scrollbar pb-1">
+                                {EMOJI_OPTIONS.slice(0, 5).map((e,i) => <button key={i} type="button" onClick={()=>handleEmojiSelect(e)} className="text-lg hover:scale-125 transition-transform">{e}</button>)}
+                            </div>
+                        </div>
+                        <div className="w-3/4">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Nombre del Producto (*)</label>
+                            <input 
+                                type="text" 
+                                name="name" 
+                                placeholder="Ej: Harina Pan 1kg" 
+                                value={productForm.name} 
+                                onChange={handleProductFormChange} 
+                                className="w-full h-14 px-4 border-2 border-gray-100 rounded-2xl focus:border-higea-blue outline-none font-bold text-gray-700 text-lg placeholder-gray-300 transition-all" 
+                                required 
+                                autoFocus 
                             />
                         </div>
-
-                        <p className="text-[9px] text-orange-600 mt-1 ml-1 font-medium flex justify-between">
-                            <span>* Requerido para alimentos y perecederos.</span>
-                            {!productForm.expiration_date && <span className="text-gray-400 italic">Sin vencimiento</span>}
-                        </p>
                     </div>
 
-                                                {/* INPUT EMOJI */}
-                                                <div>
-                                                    <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Emoji</label>
-                                                    <input type="text" name="icon_emoji" value={productForm.icon_emoji} onChange={handleProductFormChange} className="w-full border-2 border-gray-100 p-3 rounded-xl focus:border-higea-blue outline-none text-center text-xl" />
-                                                </div>
-                                            </div>
-
-                                            {/* SELECTOR EMOJI */}
-                                            <div className="bg-gray-50 p-2 rounded-xl border border-gray-200 mb-4">
-                                                <div className="grid grid-cols-8 gap-1 max-h-20 overflow-y-auto custom-scrollbar">
-                                                    {EMOJI_OPTIONS.map((emoji, index) => (
-                                                        <button type="button" key={index} onClick={() => handleEmojiSelect(emoji)} className={`text-lg p-1 rounded hover:bg-white ${productForm.icon_emoji === emoji ? 'bg-higea-blue text-white' : ''}`}>{emoji}</button>
-                                                    ))}
-                                                </div>
-                                            </div>
-
-                                            {/* ESTATUS Y FISCAL */}
-                                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                                <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
-                                                    <label className="text-[10px] font-bold text-gray-400 block mb-2 uppercase">Disponibilidad</label>
-                                                    <div className="flex bg-white rounded-lg p-1 border border-gray-200">
-                                                        <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'ACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'ACTIVE' ? 'bg-green-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>ACTIVO</button>
-                                                        <button type="button" onClick={() => setProductForm(p => ({ ...p, status: 'INACTIVE' }))} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${productForm.status === 'INACTIVE' ? 'bg-gray-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>INACTIVO</button>
-                                                    </div>
-                                                </div>
-                                                <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
-                                                    <label className="text-[10px] font-bold text-blue-400 block mb-2 uppercase">Impuesto (IVA)</label>
-                                                    <select name="is_taxable" value={productForm.is_taxable.toString()} onChange={handleProductFormChange} className="w-full bg-white border border-blue-200 text-blue-800 text-xs font-bold rounded-lg p-2 outline-none">
-                                                        <option value="true">SÍ (Gravado)</option>
-                                                        <option value="false">NO (Exento)</option>
-                                                    </select>
-                                                </div>
-                                            </div>
-
-                                            <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all">{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</button>
-                                        </form>
-                                    </div>
+                    {/* SECCIÓN 2: PRECIOS (CÁLCULO AUTOMÁTICO) */}
+                    <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100 mb-6">
+                        <h4 className="text-xs font-bold text-blue-800 uppercase mb-3 flex items-center gap-2">
+                            <span>💰</span> Estructura de Costos y Precios
+                        </h4>
+                        <div className="grid grid-cols-2 gap-4">
+                            {/* PRECIO REF */}
+                            <div>
+                                <label className="text-[10px] font-bold text-blue-400 uppercase block mb-1">Precio (Ref) *</label>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-300 font-bold">$</span>
+                                    <input 
+                                        type="number" step="0.01" min="0"
+                                        name="price_usd"
+                                        value={productForm.price_usd} 
+                                        onChange={(e) => {
+                                            const val = parseFloat(e.target.value) || 0;
+                                            setProductForm(prev => ({ ...prev, price_usd: val }));
+                                            // NO guardamos Bs en DB, pero visualmente podríamos mostrarlo
+                                        }}
+                                        className="w-full pl-7 py-3 rounded-xl border border-blue-200 text-blue-900 font-black outline-none focus:ring-2 focus:ring-blue-200"
+                                        placeholder="0.00"
+                                        required
+                                    />
                                 </div>
                             </div>
+                            {/* PRECIO BS (CALCULADO) */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Equivalente (Bs)</label>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">Bs</span>
+                                    <input 
+                                        type="number" step="0.01"
+                                        value={(parseFloat(productForm.price_usd || 0) * bcvRate).toFixed(2)} 
+                                        onChange={(e) => {
+                                            // Cálculo inverso: Si edita Bs, calculamos Ref
+                                            const val = parseFloat(e.target.value) || 0;
+                                            if(bcvRate > 0) {
+                                                setProductForm(prev => ({ ...prev, price_usd: (val / bcvRate).toFixed(2) }));
+                                            }
+                                        }}
+                                        className="w-full pl-8 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold outline-none focus:border-gray-400 bg-white"
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <p className="text-[9px] text-gray-400 mt-1 text-right">Tasa: {bcvRate} Bs/$</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* SECCIÓN 3: DETALLES Y CATEGORÍA */}
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Categoría</label>
+                            <input 
+                                type="text" 
+                                name="category" 
+                                list="category-list"
+                                value={productForm.category} 
+                                onChange={handleProductFormChange}
+                                className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-medium text-sm"
+                                placeholder="Seleccione..."
+                            />
+                            <datalist id="category-list">
+                                {uniqueCategories.map(c => <option key={c} value={c} />)}
+                            </datalist>
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1 block">Código Barras</label>
+                            <input 
+                                type="text" 
+                                name="barcode" 
+                                value={productForm.barcode} 
+                                onChange={handleProductFormChange} 
+                                className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none font-mono text-sm"
+                                placeholder="Opcional"
+                            />
+                        </div>
+                    </div>
+
+                    {/* SECCIÓN 4: CONTROL SANITARIO (FECHA OPCIONAL) */}
+                    <div className="mb-6 bg-orange-50 p-4 rounded-2xl border border-orange-100">
+                         <div className="flex justify-between items-center mb-2">
+                            <label className="text-xs font-bold text-orange-800 flex items-center gap-2">
+                                📅 Control de Vencimiento
+                            </label>
+                            {/* Toggle Switch */}
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={!!productForm.expiration_date}
+                                    onChange={(e) => {
+                                        if(e.target.checked) {
+                                            // Poner fecha de hoy por defecto si activa
+                                            setProductForm(p => ({...p, expiration_date: new Date().toISOString().split('T')[0]}));
+                                        } else {
+                                            // Poner NULL/Vacío si desactiva
+                                            setProductForm(p => ({...p, expiration_date: ''}));
+                                        }
+                                    }}
+                                />
+                                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
+                            </label>
+                        </div>
+
+                        {productForm.expiration_date ? (
+                            <div className="animate-fade-in-up">
+                                <input 
+                                    type="date" 
+                                    name="expiration_date" 
+                                    value={productForm.expiration_date} 
+                                    onChange={handleProductFormChange} 
+                                    className="w-full p-2 bg-white border border-orange-200 rounded-xl text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-orange-200" 
+                                />
+                                <p className="text-[10px] text-orange-600 mt-1">* Este producto generará alertas de vencimiento.</p>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-gray-400 italic">Producto no perecedero (Sin fecha).</p>
                         )}
+                    </div>
+
+                    {/* SECCIÓN 5: IMPUESTO Y ESTATUS */}
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="bg-gray-50 p-3 rounded-xl">
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">IVA</label>
+                            <select name="is_taxable" value={productForm.is_taxable} onChange={handleProductFormChange} className="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
+                                <option value="true">SÍ (Gravado 16%)</option>
+                                <option value="false">NO (Exento)</option>
+                            </select>
+                        </div>
+                         <div className="bg-gray-50 p-3 rounded-xl">
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Estatus</label>
+                            <select name="status" value={productForm.status} onChange={handleProductFormChange} className="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none">
+                                <option value="ACTIVE">ACTIVO</option>
+                                <option value="INACTIVE">INACTIVO</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    {/* Botón Guardar */}
+                    <button type="submit" className="w-full bg-higea-blue text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2">
+                        <span>💾</span> Guardar Producto
+                    </button>
+
+                </form>
+            </div>
+        </div>
+    </div>
+)}
                     </div>
                 ) : view === 'ADVANCED_REPORTS' ? (
                     /* --- VISTA: INTELIGENCIA DE NEGOCIOS (REDISEÑO PRO + DRILL DOWN + CIERRES) --- */
