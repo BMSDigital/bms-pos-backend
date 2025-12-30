@@ -277,19 +277,20 @@ function App() {
     // ESTADOS para el módulo de Productos (Esqueleto CRUD)
     const [customerForm, setCustomerForm] = useState({ id: null, full_name: '', id_number: '', phone: '', institution: '', status: 'ACTIVO' });
 
+    // ESTADO ACTUALIZADO
     const [productForm, setProductForm] = useState({
-        id: null,
-        name: '',
-        category: '',
-        price_usd: 0.00,
-        stock: 0,
-        is_taxable: true,
-        icon_emoji: EMOJI_OPTIONS[0] || '🍔',
-        barcode: '',
-        status: 'ACTIVE',
-        expiration_date: '' // <--- NUEVO CAMPO OBLIGATORIO PARA SACS/SUNDDE
-    });
-
+    id: null,
+    name: '',
+    category: '',
+    price_usd: '',
+    stock: '', // String vacío al inicio
+    is_taxable: true,
+    icon_emoji: '🍔',
+    barcode: '',
+    status: 'ACTIVE',
+    expiration_date: '' // String vacío = No perecedero
+});
+    
     // NUEVOS ESTADOS para búsqueda de inventario
     const [productSearchQuery, setProductSearchQuery] = useState('');
     const [filteredInventory, setFilteredInventory] = useState([]);

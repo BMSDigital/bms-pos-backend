@@ -126,6 +126,7 @@ app.get('/api/products', async (req, res) => {
         res.status(500).json({ error: 'Error al obtener productos' });
     }
 });
+
 app.get('/api/inventory/batches/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -140,56 +141,78 @@ app.get('/api/inventory/batches/:id', async (req, res) => {
     }
 });
 
-// --- 3. Crear/Actualizar Producto (ADAPTADO Y SEGURO) ---
+// --- 3. Crear/Actualizar Producto (CON GESTIÓN AUTOMÁTICA DE LOTE INICIAL) ---
 app.post('/api/products', async (req, res) => {
-    // 1. Extraemos TODOS los campos, agregando 'is_perishable'
-    const { id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date, is_perishable } = req.body;
+    const { id, name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date } = req.body;
     
-    // Validaciones básicas (Mantenemos tu lógica original)
-    if (!name || !price_usd || price_usd <= 0) return res.status(400).json({ error: 'Datos inválidos: Nombre y Precio son obligatorios.' });
+    if (!name || !price_usd) return res.status(400).json({ error: 'Nombre y Precio son obligatorios.' });
+
+    const client = await pool.connect();
     
     try {
+        await client.query('BEGIN'); // Iniciamos transacción de seguridad
+
+        // Normalización de datos
+        const isTaxableVal = (is_taxable === 'true' || is_taxable === true);
+        const statusVal = status || 'ACTIVE';
+        // Si la fecha viene vacía o es string vacío, la guardamos como NULL
+        const expirationVal = (expiration_date && expiration_date !== '') ? expiration_date : null;
+        // Determinamos si es perecedero: Si tiene fecha, es perecedero. Si no, no.
+        const isPerishableVal = !!expirationVal; 
+
+        let productId;
         let result;
-        // Normalización de banderas booleanas
-        const isTaxableValue = (String(is_taxable) === 'true'); // Convierte "true" o true a booleano
-        // Si no envían is_perishable, asumimos TRUE por seguridad (para no ocultar fechas por error)
-        const isPerishableValue = is_perishable === undefined ? true : (String(is_perishable) === 'true');
-        
-        const statusValue = status ? status : 'ACTIVE'; 
-        const barcodeValue = barcode || '';
-        
-        // LÓGICA CLAVE: Si es perecedero, usamos la fecha enviada (o null). Si NO es perecedero, forzamos null.
-        const expirationValue = isPerishableValue ? (expiration_date || null) : null;
 
         if (id) {
-            // UPDATE: Agregamos is_perishable = $10 y rodamos el ID a $11
+            // --- MODO EDICIÓN ---
+            // NOTA: En edición NO tocamos el stock ni los lotes. Eso se hace por "Movimientos".
+            // Solo actualizamos la info descriptiva.
             const query = `
                 UPDATE products 
-                SET name = $1, category = $2, price_usd = $3, stock = $4, icon_emoji = $5, 
-                    is_taxable = $6, barcode = $7, status = $8, expiration_date = $9, is_perishable = $10,
+                SET name = $1, category = $2, price_usd = $3, icon_emoji = $4, 
+                    is_taxable = $5, barcode = $6, status = $7, expiration_date = $8, is_perishable = $9,
                     last_stock_update = CURRENT_TIMESTAMP 
-                WHERE id = $11 RETURNING *`;
-            
-            // EL ORDEN DEBE COINCIDIR EXACTAMENTE
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue, isPerishableValue, id];
-            
-            result = await pool.query(query, values);
-            
-            if (result.rowCount === 0) return res.status(404).json({ error: 'Producto no encontrado' });
+                WHERE id = $10 RETURNING *`;
+            const values = [name, category, price_usd, icon_emoji, isTaxableVal, barcode, statusVal, expirationVal, isPerishableVal, id];
+            result = await client.query(query, values);
+            productId = id;
         } else {
-            // INSERT: Agregamos la columna is_perishable y el valor $10
+            // --- MODO CREACIÓN (NUEVO PRODUCTO) ---
+            // Aquí sí leemos el stock inicial para crear el primer lote
+            const initialStock = parseInt(stock) || 0;
+            
             const query = `
                 INSERT INTO products (name, category, price_usd, stock, icon_emoji, is_taxable, barcode, status, expiration_date, is_perishable) 
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`;
-                
-            const values = [name, category || null, price_usd, stock || 0, icon_emoji || '🍔', isTaxableValue, barcodeValue, statusValue, expirationValue, isPerishableValue];
-            
-            result = await pool.query(query, values);
+            const values = [name, category, price_usd, initialStock, icon_emoji, isTaxableVal, barcode, statusVal, expirationVal, isPerishableVal];
+            result = await client.query(query, values);
+            productId = result.rows[0].id;
+
+            // MAGIA: Si el usuario puso stock inicial, creamos el lote y el kardex automáticamente
+            if (initialStock > 0) {
+                // 1. Crear el Lote Inicial
+                await client.query(`
+                    INSERT INTO product_batches (product_id, stock, expiration_date, cost_usd, batch_code)
+                    VALUES ($1, $2, $3, $4, $5)
+                `, [productId, initialStock, expirationVal, price_usd, 'LOTE-INICIAL']);
+
+                // 2. Registrar en Movimientos (Kardex)
+                await client.query(`
+                    INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, cost_usd, new_stock)
+                    VALUES ($1, 'IN', $2, 'INVENTARIO_INICIAL', 'CARGA_SISTEMA', $3, $4)
+                `, [productId, initialStock, price_usd, initialStock]);
+            }
         }
+
+        await client.query('COMMIT');
         res.json(result.rows[0]);
+
     } catch (err) {
-        console.error("Error en guardar producto:", err); 
+        await client.query('ROLLBACK');
+        console.error("Error al guardar producto:", err);
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 
@@ -1110,70 +1133,79 @@ app.get('/api/reports/closings', async (req, res) => {
 // 1. Registrar Movimiento (Entrada/Salida con Auditoría)
 // SERVER.JS
 
-// --- ENDPOINT MAESTRO DE MOVIMIENTOS DE INVENTARIO ---
+// --- ENDPOINT MAESTRO DE MOVIMIENTOS DE INVENTARIO (CON TRANSACCIÓN SEGURA) ---
 app.post('/api/inventory/movement', async (req, res) => {
-    const client = await pool.connect();
+    const { product_id, type, quantity, document_ref, reason, cost_usd, new_expiration, specific_batch_id } = req.body;
+    
+    // Validaciones iniciales
+    const qty = parseInt(quantity);
+    if (!product_id || isNaN(qty) || qty <= 0) {
+        return res.status(400).json({ error: "Datos incompletos o cantidad inválida" });
+    }
+
+    const client = await pool.connect(); // Usamos cliente para transacción
     try {
-        const { product_id, type, quantity, document_ref, reason, cost_usd, new_expiration, specific_batch_id } = req.body;
-        const qty = parseInt(quantity);
+        await client.query('BEGIN'); // Iniciamos transacción (todo o nada)
+
+        // 1. Obtener info del producto (Precio base y si es perecedero)
+        const prodRes = await client.query('SELECT price_usd, is_perishable FROM products WHERE id = $1', [product_id]);
+        if (prodRes.rows.length === 0) throw new Error('Producto no existe');
         
-        if (isNaN(qty) || qty <= 0) throw new Error("La cantidad debe ser mayor a 0");
+        const product = prodRes.rows[0];
+        // Costo del movimiento: Si no envían costo (ej. venta), usamos el precio base del producto
+        let currentCost = cost_usd !== undefined && cost_usd !== "" ? parseFloat(cost_usd) : parseFloat(product.price_usd);
 
-        await client.query('BEGIN');
-
-        // 1. Obtener Costo Actual si no se envía (Para devoluciones o ajustes automáticos)
-        let currentCost = cost_usd;
-        if (!currentCost) {
-            const prod = await client.query('SELECT price_usd FROM products WHERE id = $1', [product_id]);
-            currentCost = prod.rows[0]?.price_usd || 0;
-        }
-
-        // --- LÓGICA DE ENTRADAS (IN) ---
-        // Aplica para: Compras, Devolución Cliente (Punto 3), Ajuste (+)
+        // --- ENTRADAS (IN) ---
         if (type === 'IN') {
-            // Manejo de fecha (Punto 2: Puede ser NULL)
-            let expDate = new_expiration ? new_expiration : null;
+            // Validar fecha solo si el producto es perecedero
+            let expDate = null;
+            if (product.is_perishable) {
+                // Si es devolución y no trajo fecha, intentamos usar null o fecha actual, pero idealmente debe venir del front
+                expDate = new_expiration || null; 
+            }
 
-            // Intentar agrupar en un lote existente (Mismo precio y fecha)
+            // Lógica inteligente: ¿Ya existe un lote con esa fecha y costo? Sumamos ahí.
+            // Si no, creamos lote nuevo.
             const existingBatch = await client.query(
                 'SELECT id FROM product_batches WHERE product_id = $1 AND expiration_date IS NOT DISTINCT FROM $2 AND cost_usd = $3', 
                 [product_id, expDate, currentCost]
             );
 
             if (existingBatch.rows.length > 0) {
+                // Actualizar lote existente
                 await client.query('UPDATE product_batches SET stock = stock + $1 WHERE id = $2', [qty, existingBatch.rows[0].id]);
             } else {
+                // Crear nuevo lote
                 await client.query(
-                    'INSERT INTO product_batches (product_id, expiration_date, stock, cost_usd) VALUES ($1, $2, $3, $4)',
-                    [product_id, expDate, qty, currentCost]
+                    'INSERT INTO product_batches (product_id, expiration_date, stock, cost_usd, batch_code) VALUES ($1, $2, $3, $4, $5)',
+                    [product_id, expDate, qty, currentCost, document_ref || 'ENTRADA']
                 );
             }
         } 
         
-        // --- LÓGICA DE SALIDAS (OUT) ---
-        // Aplica para: Ventas, Mermas, Vencimientos, Consumo Interno
+        // --- SALIDAS (OUT) ---
         else {
-            // Punto 5: Salida Específica (Obligatoria para Mermas/Vencidos)
+            // Caso A: Salida de Lote Específico (Requerido para Merma/Vencimiento/Daño)
             if (specific_batch_id) {
                 const batchCheck = await client.query('SELECT stock FROM product_batches WHERE id = $1', [specific_batch_id]);
-                if (batchCheck.rows.length === 0 || batchCheck.rows[0].stock < qty) {
-                    throw new Error("El lote seleccionado no tiene suficiente stock.");
-                }
+                if (batchCheck.rows.length === 0) throw new Error("El lote seleccionado no existe.");
+                if (batchCheck.rows[0].stock < qty) throw new Error("El lote no tiene suficiente stock.");
+                
                 await client.query('UPDATE product_batches SET stock = stock - $1 WHERE id = $2', [qty, specific_batch_id]);
             } 
-            // Punto 5: Salida Automática FEFO (Para Ventas y Consumo)
+            // Caso B: Salida Automática FEFO/FIFO (Para Ventas o Consumo General)
             else {
-                let remaining = qty;
-                // Ordenar por fecha de vencimiento (los NULL van al final)
+                // Buscamos lotes con stock, ordenados por fecha (los nulos o más lejanos al final)
                 const batches = await client.query(`
                     SELECT id, stock FROM product_batches 
                     WHERE product_id = $1 AND stock > 0 
                     ORDER BY expiration_date ASC NULLS LAST
                 `, [product_id]);
 
-                // Verificar stock total antes de empezar
+                let remaining = qty;
                 const totalStock = batches.rows.reduce((sum, b) => sum + b.stock, 0);
-                if (totalStock < qty) throw new Error(`Stock insuficiente. Disponibles: ${totalStock}`);
+                
+                if (totalStock < qty) throw new Error(`Stock insuficiente. Disponibles: ${totalStock}, Solicitados: ${qty}`);
 
                 for (let batch of batches.rows) {
                     if (remaining <= 0) break;
@@ -1184,26 +1216,27 @@ app.post('/api/inventory/movement', async (req, res) => {
             }
         }
 
-        // 3. ACTUALIZAR STOCK TOTAL Y KARDEX (Punto 1: Refresco inmediato)
+        // 3. Actualizar Stock Total en la tabla maestra 'products' (para consultas rápidas)
         const stockRes = await client.query('SELECT COALESCE(SUM(stock),0) as total FROM product_batches WHERE product_id = $1', [product_id]);
         const finalStock = parseInt(stockRes.rows[0].total);
 
+        await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalStock, product_id]);
+
+        // 4. Registrar en el Kardex (Historial imborrable)
         await client.query(`
             INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, cost_usd, new_stock)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
         `, [product_id, type, qty, reason, document_ref || '', currentCost, finalStock]);
 
-        await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalStock, product_id]);
-
-        await client.query('COMMIT');
+        await client.query('COMMIT'); // Guardar cambios
         res.json({ success: true, new_stock: finalStock });
 
     } catch (err) {
-        await client.query('ROLLBACK');
-        console.error("Error movimiento:", err.message);
+        await client.query('ROLLBACK'); // Deshacer cambios si algo falló
+        console.error("Error en movimiento inventario:", err.message);
         res.status(500).json({ error: err.message });
     } finally {
-        client.release();
+        client.release(); // Liberar conexión
     }
 });
 
