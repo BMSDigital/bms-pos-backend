@@ -39,6 +39,14 @@ const handleImageRead = (file, callback) => {
     reader.readAsDataURL(file);
 };
 
+// 4. Validar Nombre de PRODUCTO (Permite Letras, Números, Puntos, Guiones y Comas)
+const validateProductName = (value) => {
+    if (!value) return '';
+    // Permite letras, números, espacios y caracteres comunes de medidas (.,-/)
+    // Elimina emojis o símbolos raros
+    return value.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\.\,\-\/]/g, '');
+};
+
 // 1. Capitalizar la primera letra de cada palabra
 const capitalizeWords = (str) => {
     if (!str) return '';
@@ -667,83 +675,151 @@ function App() {
         }
     };
 
-    // --- FUNCIÓN: IMPRIMIR REPORTE KARDEX INDIVIDUAL (PDF) ---
+    // --- FUNCIÓN: IMPRIMIR REPORTE KARDEX (ADAPTADO A LEYES VENEZOLANAS - BS) ---
     const printKardexReport = () => {
         if (!kardexProduct || kardexHistory.length === 0) return Swal.fire('Error', 'No hay datos para exportar', 'warning');
 
-        const doc = new jsPDF();
+        const doc = new jsPDF('l', 'mm', 'a4'); 
         const pageWidth = doc.internal.pageSize.width;
 
-        // 1. ENCABEZADO
-        doc.setFillColor(30, 41, 59); // Slate 800
-        doc.rect(0, 0, pageWidth, 25, 'F');
+        // --- PALETA ---
+        const colors = {
+            header: [30, 41, 59],    // Slate 800
+            green: [22, 163, 74],    // Green 600
+            red: [220, 38, 38],      // Red 600
+            blue: [37, 99, 235]      // Blue 600
+        };
+
+        // 1. ENCABEZADO FISCAL
+        doc.setFillColor(...colors.header);
+        doc.rect(0, 0, pageWidth, 30, 'F');
 
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(16);
         doc.setFont('helvetica', 'bold');
-        doc.text("KARDEX DE INVENTARIO ANALÍTICO", 14, 16);
+        doc.text("KARDEX DE INVENTARIO VALORIZADO", 14, 12); // Nombre técnico contable
 
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
-        doc.text(`Generado: ${new Date().toLocaleString('es-VE')}`, pageWidth - 14, 16, { align: 'right' });
+        doc.text("CONTROL DE MOVIMIENTOS Y EXISTENCIAS (EXPRESADO EN BOLÍVARES)", 14, 18);
+        
+        // Datos de la Empresa y Tasa
+        doc.setFontSize(9);
+        doc.text("RIF: J-30521322-4", pageWidth - 14, 10, { align: 'right' });
+        doc.text("Razón Social: VOLUNTARIADO HIGEA", pageWidth - 14, 15, { align: 'right' });
+        doc.text(`Emisión: ${new Date().toLocaleString('es-VE')}`, pageWidth - 14, 20, { align: 'right' });
+        doc.text(`Tasa de Cambio Base: Bs ${formatBs(bcvRate)}`, pageWidth - 14, 25, { align: 'right' });
 
         // 2. DATOS DEL PRODUCTO
         doc.setTextColor(0, 0, 0);
+        doc.setDrawColor(200, 200, 200);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(14, 35, pageWidth - 28, 20, 2, 2, 'FD');
+
         doc.setFontSize(11);
         doc.setFont('helvetica', 'bold');
-        doc.text(`PRODUCTO: ${kardexProduct.name.toUpperCase()}`, 14, 35);
+        doc.text(`PRODUCTO: ${kardexProduct.name.toUpperCase()}`, 20, 42);
 
-        doc.setFontSize(10);
+        doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
-        doc.text(`Categoría: ${kardexProduct.category || 'General'}`, 14, 40);
-        doc.text(`Stock Actual: ${kardexProduct.stock} Unidades`, 14, 45);
-        doc.text(`Costo Actual: Ref ${parseFloat(kardexProduct.price_usd).toFixed(2)}`, 14, 50);
+        doc.text(`CÓDIGO: ${kardexProduct.barcode || 'S/C'}`, 20, 48);
+        doc.text(`CATEGORÍA: ${kardexProduct.category || 'General'}`, 20, 52);
 
-        const costBs = (parseFloat(kardexProduct.price_usd) * bcvRate).toFixed(2);
-        doc.text(`Costo Actual: Bs ${costBs}`, 14, 55); // Bajamos un poco la coordenada Y
+        // Saldos Actuales Valorizados
+        const stockActual = kardexProduct.stock;
+        const costoUnitRef = parseFloat(kardexProduct.price_usd);
+        const costoUnitBs = costoUnitRef * bcvRate;
+        const valorTotalBs = stockActual * costoUnitBs;
 
-        // 3. TABLA DE MOVIMIENTOS
+        doc.text(`EXISTENCIA: ${stockActual} UND`, 120, 48);
+        // Costo Unitario en Bs (Obligatorio)
+        doc.text(`COSTO UNITARIO: Bs ${formatBs(costoUnitBs)}`, 120, 52);
+
+        // Valor Total en Bs (Activo Realizable)
+        doc.setFont('helvetica', 'bold');
+        doc.text(`VALOR TOTAL (BS): Bs ${formatBs(valorTotalBs)}`, 200, 48);
+        
+        // Referencia en Divisa (Auxiliar para Gerencia)
+        doc.setTextColor(...colors.blue);
+        doc.setFontSize(8);
+        doc.text(`(Ref. Total: $${formatUSD(stockActual * costoUnitRef)})`, 200, 52);
+        doc.setTextColor(0, 0, 0); // Reset color
+
+        // 3. TABLA ANALÍTICA (CUMPLIMIENTO LEGAL)
         autoTable(doc, {
-            startY: 55,
-            head: [['Fecha', 'Hora', 'Tipo', 'Concepto', 'Doc. Ref', 'Cant.', 'Saldo']],
-            body: kardexHistory.map(mov => [
-                new Date(mov.created_at).toLocaleDateString('es-VE'),
-                new Date(mov.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                mov.type === 'IN' ? 'ENTRADA' : 'SALIDA',
-                mov.reason.replace(/_/g, ' '),
-                mov.document_ref || '-',
-                mov.quantity,
-                mov.new_stock
-            ]),
-            styles: { fontSize: 9, cellPadding: 2 },
-            headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
-            alternateRowStyles: { fillColor: [241, 245, 249] },
+            startY: 60,
+            head: [[
+                'FECHA', 'DOC. REF', 'CONCEPTO', // Datos Operativos
+                'TIPO', 'CANT', 
+                'COSTO UNIT (BS)', 'TOTAL OP (BS)', // Datos Financieros Legales
+                'TOTAL OP (REF)', // Dato Gerencial (Opcional pero útil)
+                'SALDO'
+            ]],
+            body: kardexHistory.map(mov => {
+                // Cálculos Financieros
+                const costRef = mov.cost_usd ? parseFloat(mov.cost_usd) : 0;
+                const costBs = costRef * bcvRate; // Convertimos a Bs a la tasa del reporte (o histórica si la tuvieras)
+                
+                const totalRef = costRef * mov.quantity;
+                const totalBs = totalRef * bcvRate;
+                
+                return [
+                    new Date(mov.created_at).toLocaleDateString('es-VE'),
+                    mov.document_ref || '-',
+                    mov.reason ? mov.reason.replace(/_/g, ' ') : 'MOVIMIENTO',
+                    mov.type === 'IN' ? 'ENTRADA' : 'SALIDA',
+                    mov.quantity,
+                    // Columnas Financieras en Bolívares (Prioridad)
+                    formatBs(costBs),
+                    formatBs(totalBs),
+                    // Columna Financiera en Divisa (Secundaria)
+                    formatUSD(totalRef),
+                    mov.new_stock
+                ];
+            }),
+            styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
+            headStyles: { 
+                fillColor: colors.header, 
+                textColor: 255, 
+                fontStyle: 'bold', 
+                halign: 'center' 
+            },
             columnStyles: {
-                2: { fontStyle: 'bold' }, // Tipo
-                5: { halign: 'right', fontStyle: 'bold' }, // Cantidad
-                6: { halign: 'right', fontStyle: 'bold', fillColor: [240, 253, 244] } // Saldo (Verde claro)
+                0: { cellWidth: 20 }, // Fecha
+                3: { fontStyle: 'bold', halign: 'center' }, // Tipo
+                4: { halign: 'center', fontStyle: 'bold' }, // Cant
+                5: { halign: 'right' }, // Unit Bs
+                6: { halign: 'right', fontStyle: 'bold' }, // Total Bs
+                7: { halign: 'right', textColor: colors.blue }, // Total Ref
+                8: { halign: 'center', fontStyle: 'bold', fillColor: [241, 245, 249] } // Saldo
             },
             didParseCell: function (data) {
-                // Colorear Entradas (Verde) y Salidas (Rojo)
-                if (data.section === 'body' && data.column.index === 2) {
-                    if (data.cell.raw === 'ENTRADA') data.cell.styles.textColor = [22, 163, 74];
-                    else data.cell.styles.textColor = [220, 38, 38];
+                // Colorear Entradas y Salidas
+                if (data.section === 'body' && data.column.index === 3) {
+                    if (data.cell.raw === 'ENTRADA') data.cell.styles.textColor = colors.green;
+                    else data.cell.styles.textColor = colors.red;
                 }
             }
         });
 
-        // Pie de página
+        // 4. PIE DE PÁGINA LEGAL (FUNDAMENTO JURÍDICO)
         const finalY = doc.lastAutoTable.finalY + 10;
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        doc.text("Este reporte es un documento de control interno válido para auditoría de inventarios.", 14, finalY);
+        doc.setFontSize(7);
+        doc.setTextColor(100);
+        
+        doc.text("NOTA: Los valores en Bolívares se calculan en base a la tasa de cambio vigente a la fecha de emisión de este reporte, conforme a lo establecido en la normativa legal.", 14, finalY);
+        doc.text("BASE LEGAL: Art. 177 Reglamento ISLR (Sistema de Inventarios Permanentes) y Providencia Administrativa SNAT/2011/0071.", 14, finalY + 4);
 
-        doc.save(`Kardex_${kardexProduct.name.replace(/\s+/g, '_')}.pdf`);
+        // Líneas de Firma para Auditoría
+        doc.setDrawColor(0, 0, 0);
+        doc.line(200, finalY + 15, 270, finalY + 15);
+        doc.text("Conformado Por (Firma y Sello)", 220, finalY + 20);
+
+        doc.save(`Kardex_Valorizado_${kardexProduct.name.replace(/\s+/g, '_')}.pdf`);
     };
 
-	// --- 1. FUNCIÓN DE REPORTE DE AUDITORÍA (CORREGIDA) ---
+	// --- 1. FUNCIÓN DE REPORTE DE AUDITORÍA (CORREGIDA Y CON DATOS FISCALES) ---
     const printInventoryAuditPDF = () => {
-        // CORRECCIÓN: Usamos 'products' en lugar de 'inventory'
         if (!products || products.length === 0) return Swal.fire('Vacío', 'No hay datos de inventario para generar el reporte.', 'info');
 
         const doc = new jsPDF('l', 'mm', 'a4'); // Horizontal
@@ -757,10 +833,11 @@ function App() {
             bg: [241, 245, 249]      // Slate 100
         };
 
-        // 1. ENCABEZADO FORMAL
+        // 1. ENCABEZADO FORMAL (AMPLIADO CON DATOS FISCALES)
         doc.setFillColor(...colors.header);
-        doc.rect(0, 0, pageWidth, 25, 'F');
+        doc.rect(0, 0, pageWidth, 35, 'F'); // Aumentamos altura a 35
 
+        // Título Principal
         doc.setFontSize(16);
         doc.setTextColor(255, 255, 255);
         doc.setFont('helvetica', 'bold');
@@ -770,16 +847,20 @@ function App() {
         doc.setFont('helvetica', 'normal');
         doc.text("CONTROL DE INVENTARIO FÍSICO", 14, 18);
 
-        // Datos de Fecha y Tasa
+        // --- DATOS FISCALES DE LA EMPRESA (NUEVO) ---
+        doc.setFontSize(9);
+        doc.text("RIF: J-30521322-4", 14, 24); // Ajustar con tu RIF real
+        doc.text("Razón Social: VOLUNTARIADO HIGEA", 14, 29); // Ajustar nombre
+
+        // Datos de Fecha y Tasa (Alineados a la derecha)
         const dateStr = new Date().toLocaleString('es-VE');
         const rateStr = formatBs(bcvRate);
         
-        doc.setFontSize(9);
-        doc.text(`Fecha de Corte: ${dateStr}`, pageWidth - 14, 10, { align: 'right' });
-        doc.text(`Tasa de Cambio BCV: Bs ${rateStr}`, pageWidth - 14, 16, { align: 'right' });
-        doc.text(`Expresado en: Bolívares (Bs) y Divisa Referencial (Ref)`, pageWidth - 14, 22, { align: 'right' });
+        doc.text(`Fecha de Corte: ${dateStr}`, pageWidth - 14, 12, { align: 'right' });
+        doc.text(`Tasa de Cambio BCV: Bs ${rateStr}`, pageWidth - 14, 18, { align: 'right' });
+        doc.text(`Expresado en: Bolívares (Bs) y Divisa Referencial (Ref)`, pageWidth - 14, 24, { align: 'right' });
 
-        // 2. CÁLCULO DE TOTALES (Usando 'products')
+        // 2. CÁLCULO DE TOTALES
         let totalStock = 0;
         let totalValueUSD = 0;
         let totalValueVES = 0;
@@ -795,45 +876,46 @@ function App() {
             totalValueVES += totalVES;
         });
 
-        // Dibujar Totales
+        // Dibujar Totales (Bajamos la coordenada Y porque el header es más alto)
+        const startYTotals = 40;
         doc.setFillColor(255, 255, 255);
         doc.setDrawColor(200, 200, 200);
-        doc.roundedRect(14, 30, pageWidth - 28, 20, 3, 3, 'S');
+        doc.roundedRect(14, startYTotals, pageWidth - 28, 20, 3, 3, 'S');
 
         doc.setTextColor(0, 0, 0);
         doc.setFontSize(9);
-        doc.text("ITEMS TOTALES", 30, 36, { align: 'center' });
+        doc.text("ITEMS TOTALES", 30, startYTotals + 6, { align: 'center' });
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
-        doc.text(`${products.length}`, 30, 44, { align: 'center' });
+        doc.text(`${products.length}`, 30, startYTotals + 14, { align: 'center' });
 
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
-        doc.text("UNIDADES EN STOCK", 80, 36, { align: 'center' });
+        doc.text("UNIDADES EN STOCK", 80, startYTotals + 6, { align: 'center' });
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
-        doc.text(`${totalStock}`, 80, 44, { align: 'center' });
+        doc.text(`${totalStock}`, 80, startYTotals + 14, { align: 'center' });
 
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
-        doc.text("VALOR TOTAL (BS)", 150, 36, { align: 'center' });
+        doc.text("VALOR TOTAL (BS)", 150, startYTotals + 6, { align: 'center' });
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(...colors.accent); 
-        doc.text(`Bs ${formatBs(totalValueVES)}`, 150, 44, { align: 'center' });
+        doc.text(`Bs ${formatBs(totalValueVES)}`, 150, startYTotals + 14, { align: 'center' });
 
         doc.setTextColor(0, 0, 0);
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
-        doc.text("VALOR TOTAL (REF)", 230, 36, { align: 'center' });
+        doc.text("VALOR TOTAL (REF)", 230, startYTotals + 6, { align: 'center' });
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(0, 86, 179); 
-        doc.text(`Ref ${formatUSD(totalValueUSD)}`, 230, 44, { align: 'center' });
+        doc.text(`Ref ${formatUSD(totalValueUSD)}`, 230, startYTotals + 14, { align: 'center' });
 
         // 3. TABLA DE DETALLE
         autoTable(doc, {
-            startY: 55,
+            startY: startYTotals + 25,
             head: [['CÓDIGO', 'DESCRIPCIÓN DEL PRODUCTO', 'CATEGORÍA', 'STOCK', 'COSTO UNIT (BS)', 'TOTAL (BS)', 'TOTAL (REF)']],
             body: products.map(item => {
                 const stock = parseInt(item.stock) || 0;
@@ -869,79 +951,208 @@ function App() {
         doc.setFontSize(7);
         doc.setTextColor(150);
         doc.text("Este reporte refleja la valorización del inventario según los costos registrados en el sistema al momento de su emisión.", 14, finalY);
-        doc.text("Base Legal: Art. 177 Reglamento de la Ley de ISLR (Valuación de Inventarios).", 14, finalY + 4);
+        doc.text("Base Legal: Art. 177 Reglamento de la Ley de ISLR (Valuación de Inventarios) y Providencia Administrativa 0071.", 14, finalY + 4);
+
+        // Espacio para firmas (Opcional pero recomendado para auditoría)
+        doc.setDrawColor(200, 200, 200);
+        doc.line(200, finalY + 15, 270, finalY + 15);
+        doc.text("Revisado por (Firma y Sello)", 215, finalY + 19);
 
         doc.save(`Auditoria_Inventario_${new Date().toISOString().split('T')[0]}.pdf`);
     };
+	
+	// --- FUNCIÓN: REPORTE DE TOMA DE INVENTARIO FÍSICO (CONTEO CIEGO - CON DATOS FISCALES) ---
+    const printPhysicalCountReport = () => {
+        // Usamos inventoryFilteredData si quieres imprimir solo lo filtrado, o products para todo
+        const dataToPrint = inventoryFilteredData.length > 0 ? inventoryFilteredData : products;
+        
+        if (!dataToPrint || dataToPrint.length === 0) return Swal.fire('Error', 'No hay datos para generar el acta', 'warning');
 
-    // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta: Inventario, Ventas Detalle y Resumen Gerencial) ---
-    const downloadCSV = (data, filename) => {
-        if (!data || data.length === 0) {
-            Swal.fire('Error', 'No hay datos para exportar', 'warning');
-            return;
+        const doc = new jsPDF('p', 'mm', 'a4'); // Vertical
+        const pageWidth = doc.internal.pageSize.width;
+
+        // --- PALETA ---
+        const colors = {
+            header: [51, 65, 85],    // Slate 700
+            bg: [255, 255, 255]      // Blanco
+        };
+
+        // 1. ENCABEZADO FISCAL (Igual que los otros reportes)
+        doc.setFillColor(...colors.header);
+        doc.rect(0, 0, pageWidth, 30, 'F'); // Altura ajustada
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text("ACTA DE TOMA DE INVENTARIO FÍSICO", 14, 12);
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text("INSTRUMENTO DE CONTEO CIEGO (AUDITORÍA)", 14, 18);
+
+        // --- DATOS DE LA EMPRESA ---
+        doc.setFontSize(9);
+        doc.text("RIF: J-00000000-0", 14, 24); 
+        doc.text("Razón Social: VOLUNTARIADO HIGEA", 14, 28);
+
+        // Datos de la Jornada (Alineados a la derecha)
+        const fecha = new Date().toLocaleDateString('es-VE');
+        doc.text(`Fecha de Emisión: ${fecha}`, pageWidth - 14, 12, { align: 'right' });
+        doc.text("Responsable de Conteo: ___________________", pageWidth - 14, 18, { align: 'right' });
+        doc.text("Auditor Supervisor: ___________________", pageWidth - 14, 24, { align: 'right' });
+
+        // 2. TABLA DE CONTEO (SIN CANTIDADES NI COSTOS)
+        autoTable(doc, {
+            startY: 35, // Bajamos un poco por el encabezado más alto
+            head: [['CÓDIGO', 'CATEGORÍA', 'DESCRIPCIÓN DEL PRODUCTO', 'UNIDAD', 'CONTEO REAL (FÍSICO)']],
+            body: dataToPrint.map(item => [
+                item.barcode || `INT-${item.id}`,
+                item.category || 'General',
+                item.name,
+                'UND',
+                '' // <--- CAMPO VACÍO INTENCIONAL PARA ESCRIBIR
+            ]),
+            styles: { fontSize: 9, cellPadding: 3, valign: 'middle', lineColor: [200, 200, 200], lineWidth: 0.1 },
+            headStyles: { 
+                fillColor: colors.header, 
+                textColor: 255, 
+                fontStyle: 'bold', 
+                halign: 'center' 
+            },
+            columnStyles: {
+                0: { cellWidth: 25 }, 
+                1: { cellWidth: 30 },
+                2: { cellWidth: 'auto' }, 
+                3: { cellWidth: 20, halign: 'center' },
+                4: { cellWidth: 40, minCellHeight: 10 } // Espacio alto para escribir números a mano
+            },
+            // Dibujar la línea para escribir en la columna de conteo
+            didDrawCell: function (data) {
+                if (data.section === 'body' && data.column.index === 4) {
+                    const x = data.cell.x;
+                    const y = data.cell.y;
+                    const w = data.cell.width;
+                    const h = data.cell.height;
+                    // Dibujamos una línea en la parte inferior de la celda
+                    doc.setDrawColor(100, 100, 100);
+                    doc.setLineWidth(0.5);
+                    doc.line(x + 5, y + h - 2, x + w - 5, y + h - 2);
+                }
+            },
+            alternateRowStyles: { fillColor: [250, 250, 250] } 
+        });
+
+        // 3. PIE DE PÁGINA (DECLARACIÓN JURADA)
+        const finalY = doc.lastAutoTable.finalY + 15;
+        doc.setFontSize(8);
+        doc.setTextColor(0, 0, 0);
+        
+        doc.text("Certifico que he realizado el conteo físico de los artículos listados, verificando su existencia real en los almacenes.", 14, finalY);
+        doc.text("Este documento es propiedad exclusiva de VOLUNTARIADO HIGEA y sirve de soporte para el cierre contable.", 14, finalY + 4);
+
+        // Espacio para firmas al final del documento
+        if (finalY < 250) { 
+            doc.line(40, finalY + 20, 90, finalY + 20);
+            doc.text("Firma Responsable", 65, finalY + 24, { align: 'center' });
+
+            doc.line(120, finalY + 20, 170, finalY + 20);
+            doc.text("Firma Auditor", 145, finalY + 24, { align: 'center' });
         }
+
+        doc.save(`Toma_Fisica_Inventario_${new Date().toISOString().split('T')[0]}.pdf`);
+    };
+
+    // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta: Inventario, Ventas, Historial y Resumen) ---
+    const downloadCSV = (data, fileName) => {
+        if (!data || data.length === 0) return Swal.fire('Vacío', 'No hay datos para exportar', 'info');
+
+        // 1. DETECTAR QUÉ TIPO DE DATA ES
+        const first = data[0];
+        const isInventory = first.hasOwnProperty('stock') && first.hasOwnProperty('name');
+        const isDailySummary = first.hasOwnProperty('sale_date') && first.hasOwnProperty('total_usd');
+        // DETECCIÓN NUEVA PARA KARDEX:
+        const isKardex = first.hasOwnProperty('new_stock') && first.hasOwnProperty('reason'); 
 
         let orderedHeaders = [];
         let rowMapper = null;
 
-        // Detectar tipo de reporte según los datos
-        // Usamos una lógica simple: si tiene 'stock', es inventario
-        const isInventory = data[0].hasOwnProperty('stock');
-
         if (isInventory) {
-            // --- A. MODO INVENTARIO (CON TOTALES) ---
+            // --- A. MODO INVENTARIO ---
             orderedHeaders = ["ID", "Producto", "Categoría", "Estatus", "Stock", "Costo Ref", "Costo Bs", "Valor Total Ref", "Valor Total Bs"];
-            rowMapper = (row) => {
-                const stock = parseInt(row.stock) || 0;
-                const price = parseFloat(row.price_usd) || 0;
-                const totalRef = stock * price;
-                const totalBs = totalRef * bcvRate;
-                
-                return {
-                    "ID": row.id,
-                    "Producto": row.name,
-                    "Categoría": row.category,
-                    "Estatus": row.status,
-                    "Stock": stock,
-                    "Costo Ref": price.toFixed(2),
-                    "Costo Bs": (price * bcvRate).toFixed(2),
-                    "Valor Total Ref": totalRef.toFixed(2),
-                    "Valor Total Bs": totalBs.toFixed(2)
-                };
-            };
+            rowMapper = (row) => ({
+                "ID": row.id,
+                "Producto": row.name,
+                "Categoría": row.category,
+                "Estatus": row.status,
+                "Stock": row.stock,
+                "Costo Ref": parseFloat(row.price_usd).toFixed(2),
+                "Costo Bs": (parseFloat(row.price_usd) * bcvRate).toFixed(2),
+                "Valor Total Ref": parseFloat(row.total_value_usd || 0).toFixed(2),
+                "Valor Total Bs": (parseFloat(row.total_value_usd || 0) * bcvRate).toFixed(2)
+            });
+
+        } else if (isDailySummary) {
+            // --- B. MODO RESUMEN GERENCIAL ---
+            orderedHeaders = ["Fecha", "Transacciones", "Total Recaudado (Ref)", "Total Recaudado (Bs)"];
+            rowMapper = (row) => ({
+                "Fecha": new Date(row.sale_date).toLocaleDateString(),
+                "Transacciones": row.tx_count,
+                "Total Recaudado (Ref)": parseFloat(row.total_usd).toFixed(2),
+                "Total Recaudado (Bs)": parseFloat(row.total_ves).toFixed(2)
+            });
+
+        } else if (isKardex) {
+            // --- C. MODO KARDEX (HISTORIAL) - RESTAURADO ---
+            orderedHeaders = ["Fecha", "Hora", "Tipo", "Concepto", "Referencia", "Costo Lote ($)", "Cantidad", "Saldo Final"];
+            rowMapper = (row) => ({
+                "Fecha": new Date(row.created_at).toLocaleDateString('es-VE'),
+                "Hora": new Date(row.created_at).toLocaleTimeString('es-VE'),
+                "Tipo": row.type === 'IN' ? 'ENTRADA' : 'SALIDA',
+                "Concepto": row.reason ? row.reason.replace(/_/g, ' ') : '-',
+                "Referencia": row.document_ref || '-',
+                "Costo Lote ($)": row.cost_usd ? parseFloat(row.cost_usd).toFixed(2) : '-',
+                "Cantidad": row.quantity,
+                "Saldo Final": row.new_stock
+            });
+
         } else {
-            // --- B. OTROS REPORTES (Ventas/Caja - Genérico) ---
-            // Mantenemos tu lógica genérica para otros reportes
-            orderedHeaders = Object.keys(data[0]);
-            rowMapper = (row) => row;
+            // --- D. MODO VENTAS DETALLADAS (Fallback) ---
+            orderedHeaders = ["Nro Factura", "Fecha", "Cliente", "Documento", "Ítems", "Estado", "Pago", "Total Ref", "Total Bs"];
+            rowMapper = (row) => ({
+                "Nro Factura": row.id || row.sale_id,
+                "Fecha": new Date(row.created_at).toLocaleString('es-VE'),
+                "Cliente": row.full_name || row.client_name || 'Consumidor Final',
+                "Documento": row.client_id || row.id_number || 'N/A',
+                "Ítems": row.items_comprados || 'Sin detalle',
+                "Estado": row.status,
+                "Pago": row.payment_method,
+                "Total Ref": parseFloat(row.total_usd).toFixed(2),
+                "Total Bs": parseFloat(row.total_ves).toFixed(2)
+            });
         }
 
-        // Generar CSV
+        // 2. Construir el contenido CSV
         const csvContent = [
-            orderedHeaders.join(','), 
-            ...data.map(row => {
-                const mappedRow = rowMapper(row);
+            orderedHeaders.join(';'),
+            ...data.map(originalRow => {
+                const mappedRow = rowMapper(originalRow);
                 return orderedHeaders.map(header => {
-                    let val = mappedRow[header];
-                    // Escapar comillas y manejar nulos
-                    if (val === null || val === undefined) return '';
-                    val = String(val).replace(/"/g, '""'); 
-                    return `"${val}"`;
-                }).join(',');
+                    let value = mappedRow[header];
+                    if (value === null || value === undefined) value = '';
+                    return String(value).replace(/(\r\n|\n|\r)/gm, " ").replace(/;/g, ",");
+                }).join(';');
             })
-        ].join('\n');
+        ].join('\r\n');
 
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        if (link.download !== undefined) {
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
+        // 3. Descargar con BOM para compatibilidad Excel
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `${fileName}_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
 
     const fetchSalesDetail = async (termInput) => {
@@ -3249,34 +3460,52 @@ function App() {
     return (
         <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
 
-            {/* SIDEBAR PC (Navegación actualizada) */}
+            {/* SIDEBAR PC (Iconos Profesionales Actualizados) */}
             <nav className="hidden md:flex w-20 bg-white border-r border-gray-200 flex-col items-center py-6 z-40 shadow-lg">
                 <div className="mb-8 h-10 w-10 bg-higea-red rounded-xl flex items-center justify-center text-white font-bold text-xl">H</div>
-                <button onClick={() => setView('POS')} className={`p-3 rounded-xl mb-4 transition-all ${view === 'POS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg></button>
+                
+                {/* 1. POS (Ventas): Cambiado a Carrito de Compras 🛒 */}
+                <button onClick={() => setView('POS')} title="Punto de Venta" className={`p-3 rounded-xl mb-4 transition-all ${view === 'POS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                </button>
 
-                <button onClick={() => { fetchData(); setView('DASHBOARD'); }} className={`p-3 rounded-xl transition-all relative ${view === 'DASHBOARD' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" /></svg>
+                {/* 2. DASHBOARD: Gráfico de Barras 📊 (Correcto) */}
+                <button onClick={() => { fetchData(); setView('DASHBOARD'); }} title="Panel Principal" className={`p-3 rounded-xl transition-all relative ${view === 'DASHBOARD' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" />
+                    </svg>
                     {/* Notificación de Créditos Vencidos */}
                     {overdueCount > 0 && <span className="absolute top-1 right-1 h-3 w-3 bg-red-500 rounded-full text-[8px] text-white flex items-center justify-center font-bold">{overdueCount}</span>}
                 </button>
 
-                <button onClick={() => { fetchData(); setView('CREDIT_REPORT'); }} className={`p-3 rounded-xl transition-all mb-4 ${view === 'CREDIT_REPORT' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                {/* 3. CRÉDITOS: Tarjeta de Crédito 💳 (Correcto para Cuentas por Cobrar) */}
+                <button onClick={() => { fetchData(); setView('CREDIT_REPORT'); }} title="Cuentas por Cobrar" className={`p-3 rounded-xl transition-all mb-4 ${view === 'CREDIT_REPORT' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    </svg>
                 </button>
 
-                {/* BOTÓN NUEVO MÓDULO (Punto 1) */}
-                <button onClick={() => { setView('CUSTOMERS'); }} className={`p-3 rounded-xl transition-all ${view === 'CUSTOMERS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                {/* 4. CLIENTES: Usuario 👤 (Correcto) */}
+                <button onClick={() => { setView('CUSTOMERS'); }} title="Clientes" className={`p-3 rounded-xl transition-all ${view === 'CUSTOMERS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
                 </button>
 
-                {/* 💡 NUEVO BOTÓN: Gestión de Productos */}
-                <button onClick={() => { setView('PRODUCTS'); }} className={`p-3 rounded-xl transition-all ${view === 'PRODUCTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                {/* 5. PRODUCTOS: Cambiado a CAJA/INVENTARIO 📦 (Corrección solicitada) */}
+                <button onClick={() => { setView('PRODUCTS'); }} title="Inventario de Productos" className={`p-3 rounded-xl transition-all ${view === 'PRODUCTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
                 </button>
 
-                {/* ↓↓↓ NUEVO BOTÓN AQUÍ (Reportes Avanzados) ↓↓↓ */}
-                <button onClick={() => { setView('ADVANCED_REPORTS'); fetchAdvancedReport(); }} className={`p-3 rounded-xl transition-all ${view === 'ADVANCED_REPORTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                {/* 6. REPORTES AVANZADOS: Documento con Gráfico 📄 (Correcto) */}
+                <button onClick={() => { setView('ADVANCED_REPORTS'); fetchAdvancedReport(); }} title="Reportes Gerenciales" className={`p-3 rounded-xl transition-all ${view === 'ADVANCED_REPORTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
                 </button>
 
             </nav>
@@ -4710,7 +4939,7 @@ function App() {
                 </div>
             )}
 
-                        {/* --- MODAL FORMULARIO DE PRODUCTO (VISTA ENTERPRISE MEJORADA + LOGICA BACKEND) --- */}
+                        {/* --- MODAL FORMULARIO DE PRODUCTO (CON VALIDACIÓN LEGAL Y CAPITALIZACIÓN AUTOMÁTICA) --- */}
             {isProductFormOpen && (
                 <div className="fixed inset-0 z-[70] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
                     <div className="bg-white rounded-[32px] w-full max-w-4xl shadow-2xl shadow-slate-900/50 overflow-hidden flex flex-col max-h-[95vh] animate-scale-up border border-slate-100">
@@ -4720,12 +4949,12 @@ function App() {
                             <div>
                                 <h3 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-3">
                                     {productForm.id ? (
-                                        <> <span className="bg-blue-100 text-blue-600 p-2 rounded-xl text-lg">✏️</span> <span>Editar Inventario</span> </>
+                                        <> <span className="bg-blue-100 text-blue-600 p-2 rounded-xl text-lg">✏️</span> <span>Editar Ficha Técnica</span> </>
                                     ) : (
                                         <> <span className="bg-green-100 text-green-600 p-2 rounded-xl text-lg">✨</span> <span>Nuevo Producto</span> </>
                                     )}
                                 </h3>
-                                <p className="text-sm text-slate-400 font-medium mt-1 ml-12">Gestión de activos e identidad visual</p>
+                                <p className="text-sm text-slate-400 font-medium mt-1 ml-12">Gestión de activos y cumplimiento fiscal</p>
                             </div>
                             <button onClick={() => setIsProductFormOpen(false)} className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-full text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all transform hover:rotate-90 hover:scale-110 shadow-sm">✕</button>
                         </div>
@@ -4734,148 +4963,115 @@ function App() {
                         <div className="p-8 overflow-y-auto custom-scrollbar bg-slate-50/30">
                             <form onSubmit={(e) => { saveProduct(e).then(() => setIsProductFormOpen(false)); }}>
 
-                                {/* GRUPO A: GESTOR DE IDENTIDAD VISUAL (IMAGEN REAL vs EMOJI) */}
+                                {/* GRUPO A: IDENTIDAD (IMAGEN Y DATOS BÁSICOS) */}
                                 <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 mb-8 relative">
                                     <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
                                         1. Identidad del Producto
                                     </h4>
 
                                     <div className="flex flex-col lg:flex-row gap-8">
-
-                                        {/* COLUMNA IZQUIERDA: VISUALIZADOR */}
+                                        {/* COLUMNA IZQUIERDA: FOTO */}
                                         <div className="w-full lg:w-1/3 shrink-0 flex flex-col gap-4">
-
-                                            {/* Área de Carga / Visualización */}
                                             <div
-                                                className="aspect-square w-full rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 relative overflow-hidden group hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer shadow-inner"
+                                                className="aspect-square w-full rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 relative overflow-hidden group hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer shadow-inner flex items-center justify-center"
                                                 onClick={() => document.getElementById('file-upload').click()}
                                             >
-                                                {/* CASO 1: IMAGEN REAL CARGADA */}
                                                 {productForm.icon_emoji && productForm.icon_emoji.startsWith('data:image') ? (
                                                     <>
                                                         <img src={productForm.icon_emoji} alt="Producto" className="w-full h-full object-cover animate-fade-in" />
-                                                        {/* Overlay al pasar el mouse */}
                                                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white backdrop-blur-sm">
                                                             <span className="text-2xl mb-2">🔄</span>
                                                             <span className="text-xs font-bold uppercase">Cambiar Foto</span>
                                                         </div>
                                                     </>
                                                 ) : (
-                                                    // CASO 2: EMOJI O VACÍO
-                                                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 group-hover:text-blue-400 transition-colors">
+                                                    <div className="text-center group-hover:scale-110 transition-transform">
                                                         {productForm.icon_emoji && !productForm.icon_emoji.startsWith('data:image') ? (
-                                                            <span className="text-[6rem] animate-scale-up leading-none drop-shadow-md">{productForm.icon_emoji}</span>
+                                                            <span className="text-[6rem] leading-none drop-shadow-md">{productForm.icon_emoji}</span>
                                                         ) : (
                                                             <>
-                                                                <span className="text-5xl mb-3">📷</span>
-                                                                <span className="text-[10px] font-bold uppercase tracking-wide">Subir Foto Real</span>
+                                                                <span className="text-5xl mb-3 block">📷</span>
+                                                                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Subir Foto</span>
                                                             </>
                                                         )}
                                                     </div>
                                                 )}
-
-                                                {/* Input Invisible */}
-                                                <input
-                                                    id="file-upload"
-                                                    type="file"
-                                                    accept="image/*"
-                                                    className="hidden"
-                                                    onChange={(e) => handleImageRead(e.target.files[0], (base64) => setProductForm({ ...productForm, icon_emoji: base64 }))}
-                                                />
+                                                <input id="file-upload" type="file" accept="image/*" className="hidden" onChange={(e) => handleImageRead(e.target.files[0], (base64) => setProductForm({ ...productForm, icon_emoji: base64 }))} />
                                             </div>
 
-                                            {/* Botones Auxiliares */}
-                                            {productForm.icon_emoji?.startsWith('data:image') ? (
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => { e.stopPropagation(); setProductForm({ ...productForm, icon_emoji: '📦' }); }}
-                                                    className="text-[10px] font-bold text-red-500 hover:text-red-700 hover:bg-red-50 py-2 rounded-lg transition-colors"
-                                                >
-                                                    🗑️ Eliminar Foto y usar Emoji
+                                            {/* Botón Borrar Foto */}
+                                            {productForm.icon_emoji?.startsWith('data:image') && (
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); setProductForm({ ...productForm, icon_emoji: '📦' }); }} className="text-[10px] font-bold text-red-500 hover:bg-red-50 py-2 rounded-lg transition-colors">
+                                                    🗑️ Eliminar Foto
                                                 </button>
-                                            ) : (
-                                                <div className="text-center text-[10px] text-slate-400 font-medium">
-                                                    Click arriba para subir foto o selecciona un emoji abajo 👇
-                                                </div>
                                             )}
 
-                                            {/* LISTA COMPLETA DE EMOJIS (OPTIMIZADA) */}
+                                            {/* Selector Rápido de Emojis */}
                                             {!productForm.icon_emoji?.startsWith('data:image') && (
-                                                <div className="mt-2">
-                                                    <div className="flex justify-between items-center mb-2 px-1">
-                                                        <label className="text-[9px] font-bold text-slate-400 uppercase">Catálogo de Iconos</label>
-                                                        <span className="text-[9px] text-slate-300">{EMOJI_OPTIONS.length} disponibles</span>
-                                                    </div>
-
-                                                    <div className="h-40 overflow-y-auto custom-scrollbar bg-slate-50 rounded-xl p-2 border border-slate-100 shadow-inner">
-                                                        <div className="grid grid-cols-5 gap-1.5 place-items-center">
-                                                            {EMOJI_OPTIONS.map((emoji, index) => (
-                                                                <button
-                                                                    key={index}
-                                                                    type="button"
-                                                                    onClick={() => setProductForm({ ...productForm, icon_emoji: emoji })}
-                                                                    className={`w-10 h-10 flex items-center justify-center text-xl rounded-lg transition-all active:scale-95 ${productForm.icon_emoji === emoji ? 'bg-white shadow-md ring-2 ring-blue-400 scale-110 z-10' : 'hover:bg-white hover:shadow-sm hover:scale-105 opacity-80 hover:opacity-100'}`}
-                                                                    title="Seleccionar icono"
-                                                                >
-                                                                    {emoji}
-                                                                </button>
-                                                            ))}
-                                                        </div>
+                                                <div className="h-40 overflow-y-auto custom-scrollbar bg-slate-50 rounded-xl p-2 border border-slate-100 shadow-inner">
+                                                    <div className="grid grid-cols-5 gap-1.5 place-items-center">
+                                                        {EMOJI_OPTIONS.map((emoji, index) => (
+                                                            <button key={index} type="button" onClick={() => setProductForm({ ...productForm, icon_emoji: emoji })} className={`w-10 h-10 flex items-center justify-center text-xl rounded-lg transition-all active:scale-95 ${productForm.icon_emoji === emoji ? 'bg-white shadow-md ring-2 ring-blue-400 scale-110' : 'hover:bg-white hover:shadow-sm opacity-80 hover:opacity-100'}`}>
+                                                                {emoji}
+                                                            </button>
+                                                        ))}
                                                     </div>
                                                 </div>
                                             )}
                                         </div>
 
-                                        {/* COLUMNA DERECHA: DATOS DE TEXTO */}
+                                        {/* COLUMNA DERECHA: TEXTOS (CON CAPITALIZACIÓN ACTIVA) */}
                                         <div className="flex-1 flex flex-col gap-6">
                                             <div>
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Nombre del Producto (*)</label>
-                                                <input
-                                                    type="text" name="name" placeholder="Ej: Harina de Maíz Precocida"
-                                                    value={productForm.name} onChange={handleProductFormChange}
-                                                    className="w-full h-14 px-5 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none font-bold text-slate-700 text-lg placeholder-slate-300 transition-all"
-                                                    required autoFocus
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Nombre Comercial (*)</label>
+                                                <input 
+                                                    type="text" 
+                                                    name="name" 
+                                                    placeholder="Ej: Harina P.A.N. 1kg" 
+                                                    value={productForm.name} 
+                                                    onChange={(e) => {
+                                                        // LÓGICA DE CAPITALIZACIÓN ACTIVA:
+                                                        // 1. Permite escribir todo.
+                                                        // 2. Convierte la primera letra de cada palabra a MAYÚSCULA automáticamente.
+                                                        const val = e.target.value;
+                                                        
+                                                        // Esta expresión regular capitaliza la primera letra después de un inicio o espacio
+                                                        const formatted = val.replace(/(?:^|\s)\S/g, function(a) { return a.toUpperCase(); });
+                                                        
+                                                        setProductForm({ ...productForm, name: formatted });
+                                                    }}
+                                                    className="w-full h-14 px-5 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none font-bold text-slate-700 text-lg placeholder-slate-300 transition-all" 
+                                                    required 
+                                                    autoFocus 
+                                                    autoComplete="off"
                                                 />
+                                                {/* Pequeña ayuda visual */}
+												<p className="text-[9px] text-slate-400 mt-1 pl-2">
+                                                Incluya marca, peso o medida (Ej: 1kg, 2L, 500g).
+                                            </p>
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-5">
-                                                <div className="relative group">
+                                                <div>
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Categoría</label>
-                                                    <div className="relative">
-                                                        <input
-                                                            type="text" name="category" list="category-list"
-                                                            value={productForm.category} onChange={handleProductFormChange}
-                                                            className="w-full h-12 pl-10 pr-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-medium shadow-sm group-hover:border-slate-300 transition-all"
-                                                            placeholder="Seleccionar..."
-                                                        />
-                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300">🏷️</span>
-                                                    </div>
+                                                    <input type="text" list="category-list" name="category" value={productForm.category} onChange={handleProductFormChange} className="w-full h-12 px-4 border border-slate-200 rounded-xl outline-none text-sm focus:border-blue-500" placeholder="Seleccionar..." />
                                                     <datalist id="category-list">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist>
                                                 </div>
-                                                <div className="relative group">
+                                                <div>
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Código Barras</label>
-                                                    <div className="relative">
-                                                        <input
-                                                            type="text" name="barcode" value={productForm.barcode} onChange={handleProductFormChange}
-                                                            className="w-full h-12 pl-10 pr-4 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-50 outline-none text-sm font-mono text-slate-500 shadow-sm group-hover:border-slate-300 transition-all"
-                                                            placeholder="Escanee aquí..."
-                                                        />
-                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300">🔎</span>
-                                                    </div>
+                                                    <input type="text" name="barcode" value={productForm.barcode} onChange={handleProductFormChange} className="w-full h-12 px-4 border border-slate-200 rounded-xl outline-none text-sm font-mono text-slate-500" placeholder="Escanee..." />
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* GRUPO B: ESTRUCTURA DE PRECIOS (DISEÑO FINTECH & FORMATOS BS/REF) */}
+                                {/* GRUPO B: COSTOS Y PRECIOS (MONEDA DUAL LEGAL) */}
                                 <div className="mb-8">
-                                    <div className="relative overflow-hidden bg-white border border-slate-200 rounded-[24px] shadow-xl shadow-slate-200/50 transition-all hover:shadow-2xl hover:shadow-slate-200/60">
-
+                                    <div className="relative overflow-hidden bg-white border border-slate-200 rounded-[24px] shadow-xl shadow-slate-200/50">
                                         <div className="bg-gradient-to-r from-slate-50 to-white px-6 py-3 border-b border-slate-100 flex justify-between items-center">
                                             <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                                                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-                                                Definición de Costos
+                                                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span> Estructura de Costos
                                             </h4>
                                             <div className="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
                                                 Tasa BCV: {formatBs(bcvRate)}
@@ -4883,21 +5079,20 @@ function App() {
                                         </div>
 
                                         <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-100">
-                                            {/* PRECIO REF (Editable) */}
+                                            {/* PRECIO REF (BASE DEL SISTEMA) */}
                                             <div className="flex-1 p-6 group hover:bg-blue-50/20 transition-colors relative">
                                                 <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wide mb-2 block">Precio (Ref) *</label>
                                                 <div className="relative flex items-baseline">
                                                     <span className="text-3xl font-light text-slate-300 mr-2">$</span>
-                                                    <input
+                                                    <input 
                                                         type="number" step="0.01" min="0" required name="price_usd"
-                                                        value={productForm.price_usd}
+                                                        value={productForm.price_usd} 
                                                         onChange={(e) => setProductForm(prev => ({ ...prev, price_usd: e.target.value }))}
                                                         className="w-full bg-transparent text-4xl font-black text-slate-800 outline-none placeholder:text-slate-200 font-mono tracking-tight"
                                                         placeholder="0.00"
                                                     />
                                                 </div>
-                                                <p className="text-[10px] text-slate-400 mt-2 font-medium">Base de cálculo del sistema</p>
-                                                <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-blue-500 group-hover:w-full transition-all duration-700 ease-out"></div>
+                                                <p className="text-[10px] text-slate-400 mt-2 font-medium">Base de cálculo</p>
                                             </div>
 
                                             {/* ÍCONO DE CONVERSIÓN */}
@@ -4907,13 +5102,13 @@ function App() {
                                                 </div>
                                             </div>
 
-                                            {/* PRECIO BS (Calculado & Editable Formato Vzla) */}
+                                            {/* PRECIO BS (CALCULADO AUTO) */}
                                             <div className="flex-1 p-6 bg-slate-50/30 group hover:bg-slate-50 transition-colors relative">
                                                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 block">Equivalente (Bs)</label>
                                                 <div className="relative flex items-baseline">
                                                     <span className="text-2xl font-light text-slate-300 mr-2">Bs</span>
-                                                    <input
-                                                        type="text"
+                                                    <input 
+                                                        type="text" 
                                                         value={productForm.price_usd ? formatBs(parseFloat(productForm.price_usd) * bcvRate) : ''}
                                                         onChange={(e) => {
                                                             let valClean = e.target.value.replace(/\./g, '').replace(',', '.');
@@ -4931,94 +5126,94 @@ function App() {
                                                 <p className="text-[10px] text-slate-400 mt-2 font-medium flex items-center gap-1">
                                                     <span className="w-1.5 h-1.5 rounded-full bg-green-400"></span> Actualización auto. (BCV)
                                                 </p>
-                                                <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-slate-300 group-hover:w-full transition-all duration-700 ease-out"></div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* GRUPO C: CONTROL & LOGÍSTICA (AQUÍ ESTÁN LOS CAMBIOS IMPORTANTES DE LÓGICA) */}
+                                {/* GRUPO C: CONTROL LOGÍSTICO Y FISCAL */}
                                 <div className="bg-white p-6 rounded-[24px] border border-slate-100 shadow-sm">
                                     <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                                        2. Configuración Logística
+                                        3. Control de Inventario y Fiscal
                                     </h4>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                                        {/* COLUMNA IZQ: Stock y Vencimiento */}
+                                        {/* COLUMNA IZQ: STOCK BLINDADO */}
                                         <div className="space-y-6">
-                                            {/* CAMPO DE STOCK (AGREGADO) */}
-                                            <div className="relative group">
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Stock Inicial</label>
+                                            <div className={`relative group p-4 rounded-xl border ${productForm.id ? 'bg-slate-100 border-slate-200' : 'bg-white border-blue-200'}`}>
+                                                <div className="flex justify-between mb-2">
+                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Existencia Física</label>
+                                                    {productForm.id && <span className="text-[10px] bg-slate-200 text-slate-600 px-2 rounded-full font-bold">🔒 BLOQUEADO</span>}
+                                                </div>
                                                 <div className="relative">
-                                                    <input
-                                                        type="number"
-                                                        disabled={!!productForm.id} // Bloqueado si se está editando
-                                                        value={productForm.stock}
+                                                    <input 
+                                                        type="number" 
+                                                        disabled={!!productForm.id} // ⚠️ OBLIGATORIO POR LEY: NO EDITAR STOCK SIN SOPORTE
+                                                        value={productForm.stock} 
                                                         onChange={e => setProductForm({ ...productForm, stock: e.target.value })}
-                                                        className={`w-full h-12 pl-4 pr-4 border rounded-xl outline-none text-sm font-bold shadow-sm transition-all ${productForm.id ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-50 text-slate-700'}`}
+                                                        className="w-full bg-transparent text-2xl font-black outline-none disabled:text-slate-400 disabled:cursor-not-allowed"
                                                         placeholder="0"
                                                     />
+                                                    {productForm.id && <span className="absolute right-0 top-1/2 -translate-y-1/2 text-2xl opacity-20">🔒</span>}
+                                                </div>
+                                                {/* Mensaje Legal Educativo */}
+                                                {productForm.id ? (
+                                                    <div className="mt-2 text-[10px] text-slate-500 leading-tight flex gap-2 items-start bg-slate-200/50 p-2 rounded-lg border border-slate-200">
+                                                        <span>⚖️</span>
+                                                        <span>Por normativa (Providencia 0071), el stock no se edita directamente. Use <b>"Registrar Entrada/Salida"</b> para generar la traza de auditoría.</span>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-[10px] text-blue-500 mt-1 font-medium">* Inventario inicial de apertura.</p>
+                                                )}
+                                            </div>
+
+                                            {/* Vencimiento */}
+                                            <div className={`p-4 rounded-xl border ${productForm.is_perishable ? 'bg-orange-50 border-orange-200' : 'bg-slate-50 border-slate-200'}`}>
+                                                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                                                    <input type="checkbox" className="accent-orange-500 w-4 h-4" checked={productForm.is_perishable} onChange={(e) => setProductForm(p => ({ ...p, is_perishable: e.target.checked }))} />
+                                                    <span className={`text-xs font-bold uppercase ${productForm.is_perishable ? 'text-orange-700' : 'text-slate-400'}`}>Producto Perecedero</span>
+                                                </label>
+                                                {productForm.is_perishable && (
+                                                    <input type="date" name="expiration_date" value={productForm.expiration_date || ''} onChange={handleProductFormChange} className="w-full p-2 rounded border border-orange-200 text-sm font-bold text-gray-700" />
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* COLUMNA DER: FISCALIDAD (IVA) */}
+                                        <div className="space-y-4">
+                                            {/* Alerta de IVA */}
+                                            <div className={`p-4 rounded-xl border flex flex-col gap-2 transition-colors ${productForm.id ? 'bg-yellow-50 border-yellow-200' : 'bg-white border-slate-200'}`}>
+                                                <div className="flex justify-between items-center">
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-slate-500 uppercase block">Impuesto (IVA)</label>
+                                                        <span className="text-[10px] text-slate-400">Régimen General (16%)</span>
+                                                    </div>
+                                                    <select name="is_taxable" value={productForm.is_taxable} onChange={handleProductFormChange} className="bg-white border text-xs font-bold text-slate-700 rounded-lg py-1 px-2 focus:ring-2 focus:ring-blue-100 cursor-pointer">
+                                                        <option value="true">SÍ (Gravado)</option>
+                                                        <option value="false">NO (Exento)</option>
+                                                    </select>
                                                 </div>
                                                 {productForm.id && (
-                                                    <p className="text-[10px] text-blue-500 mt-2 font-medium flex items-center gap-1">
-                                                        <span>ℹ️</span> Para ajustar inventario, use el módulo de "Movimientos".
+                                                    <p className="text-[9px] text-yellow-700 bg-yellow-100/50 p-1.5 rounded border border-yellow-200">
+                                                        ⚠️ Advertencia: Cambiar el estatus fiscal de un producto activo puede afectar el histórico del Libro de Ventas.
                                                     </p>
                                                 )}
                                             </div>
 
-                                            {/* Vencimiento (Control is_perishable) */}
-                                            <div className={`p-5 rounded-2xl border transition-all duration-300 ${productForm.is_perishable ? 'bg-orange-50/50 border-orange-200 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
-                                                <div className="flex justify-between items-center mb-3">
-                                                    <label className={`text-xs font-bold uppercase tracking-wide flex items-center gap-2 ${productForm.is_perishable ? 'text-orange-700' : 'text-slate-400'}`}>📅 Vencimiento</label>
-                                                    <label className="relative inline-flex items-center cursor-pointer">
-                                                        <input
-                                                            type="checkbox"
-                                                            className="sr-only peer"
-                                                            checked={productForm.is_perishable}
-                                                            onChange={(e) => setProductForm(p => ({ ...p, is_perishable: e.target.checked }))}
-                                                        />
-                                                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500 shadow-inner"></div>
-                                                    </label>
-                                                </div>
-
-                                                {productForm.is_perishable ? (
-                                                    <div className="animate-fade-in-up">
-                                                        <input
-                                                            type="date"
-                                                            name="expiration_date"
-                                                            value={productForm.expiration_date || ''}
-                                                            onChange={handleProductFormChange}
-                                                            className="w-full p-2 bg-white border border-orange-200 rounded-lg text-sm font-bold text-gray-700 outline-none focus:ring-2 focus:ring-orange-200 shadow-sm"
-                                                        />
-                                                        <p className="text-[10px] text-orange-600 mt-2 font-medium">* Se activarán alertas de caducidad.</p>
-                                                    </div>
-                                                ) : (
-                                                    <div className="h-[42px] flex items-center justify-center text-xs text-slate-400 italic bg-white/50 rounded-lg border border-dashed border-slate-300">
-                                                        Producto sin fecha de caducidad
-                                                    </div>
-                                                )}
+                                            <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+                                                <div><label className="text-[10px] font-bold text-slate-500 uppercase block">Estatus</label></div>
+                                                <select name="status" value={productForm.status} onChange={handleProductFormChange} className={`border-none text-xs font-bold rounded-lg py-2 pl-3 pr-8 ${productForm.status === 'ACTIVE' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                                    <option value="ACTIVE">ACTIVO</option>
+                                                    <option value="INACTIVE">INACTIVO</option>
+                                                </select>
                                             </div>
                                         </div>
-
-                                        {/* COLUMNA DER: Impuestos y Estatus */}
-                                        <div className="space-y-4">
-                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
-                                                <div><label className="text-[10px] font-bold text-slate-500 uppercase block">Impuesto (IVA)</label><span className="text-xs text-slate-400 font-medium">Gravado al 16%</span></div>
-                                                <select name="is_taxable" value={productForm.is_taxable} onChange={handleProductFormChange} className="bg-slate-50 border-none text-xs font-bold text-slate-700 rounded-lg py-2 pl-3 pr-8 focus:ring-2 focus:ring-blue-100 cursor-pointer"><option value="true">SÍ (Aplica)</option><option value="false">NO (Exento)</option></select>
-                                            </div>
-                                            <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-sm hover:border-blue-300 transition-colors">
-                                                <div><label className="text-[10px] font-bold text-slate-500 uppercase block">Estatus</label><span className="text-xs text-slate-400 font-medium">Visibilidad global</span></div>
-                                                <select name="status" value={productForm.status} onChange={handleProductFormChange} className={`border-none text-xs font-bold rounded-lg py-2 pl-3 pr-8 focus:ring-2 cursor-pointer ${productForm.status === 'ACTIVE' ? 'bg-green-50 text-green-700 ring-green-100' : 'bg-red-50 text-red-700 ring-red-100'}`}><option value="ACTIVE">ACTIVO</option><option value="INACTIVE">INACTIVO</option></select>
-                                            </div>
-                                        </div>
-
                                     </div>
                                 </div>
 
                                 {/* Botón Guardar Flotante */}
                                 <div className="pt-6 sticky bottom-0 bg-gradient-to-t from-white via-white to-transparent pb-2 z-20">
-                                    <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] transition-all flex justify-center items-center gap-3 text-lg border border-slate-800 relative overflow-hidden group">
-                                        <div className="absolute top-0 -left-full w-full h-full bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-[30deg] group-hover:animate-shine" />
+                                    <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-xl hover:scale-[1.01] transition-all flex justify-center items-center gap-3 text-lg">
                                         <span>💾</span>
                                         <span>{productForm.id ? 'Guardar Cambios' : 'Registrar Producto'}</span>
                                     </button>
@@ -5366,33 +5561,66 @@ function App() {
                             </div>
                         )}
 
-                        {/* --- 3. TABLA DE AUDITORÍA DE INVENTARIO (CORREGIDA) --- */}
+                        {/* --- 3. TABLA DE AUDITORÍA DE INVENTARIO (CON TUS VARIABLES EXISTENTES) --- */}
                     {reportTab === 'INVENTORY' && (
                         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in">
-                            {/* Encabezado con Controles */}
-                            <div className="p-5 border-b border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-50">
-                                <div>
+                            
+                            {/* Encabezado: Título + TU Buscador + Botones */}
+                            <div className="p-5 border-b border-gray-100 flex flex-col lg:flex-row justify-between items-center gap-4 bg-gray-50">
+                                
+                                <div className="flex flex-col">
                                     <h3 className="font-bold text-gray-800 flex items-center gap-2">
                                         📦 Auditoría de Existencias
-                                        {/* CORRECCIÓN: products.length */}
-                                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full">{products.length} Ítems</span>
+                                        {/* Usamos inventoryFilteredData para el contador real */}
+                                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full">
+                                            {inventoryFilteredData.length} Ítems
+                                        </span>
                                     </h3>
                                     <p className="text-xs text-gray-500">Valorización en tiempo real (Bs y Ref)</p>
+                                </div>
+
+                                {/* LA BONDAD RESTAURADA: Tu buscador conectado a 'inventorySearch' */}
+                                <div className="flex-1 max-w-md w-full relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Buscar por nombre, código o categoría..." 
+                                        // Usamos TU estado existente
+                                        value={inventorySearch}
+                                        onChange={(e) => setInventorySearch(e.target.value)}
+                                        className="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-50 outline-none transition-all"
+                                    />
+                                    {inventorySearch && (
+                                        <button 
+                                            onClick={() => setInventorySearch('')}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 text-xs font-bold"
+                                        >
+                                            BORRAR
+                                        </button>
+                                    )}
                                 </div>
                                 
                                 <div className="flex gap-2">
                                     <button 
-                                        onClick={printInventoryAuditPDF} 
+                                        // El PDF legal imprime TODO el inventario (detailedInventory) por normativa
+                                        onClick={() => printInventoryAuditPDF(detailedInventory)} 
                                         className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 shadow-md transition-all active:scale-95"
                                     >
                                         <span>📄</span> PDF Legal
                                     </button>
                                     <button 
-                                        // CORRECCIÓN: downloadCSV(products, ...)
-                                        onClick={() => downloadCSV(products, 'Auditoria_Inventario')} 
+                                        // EXCEL INTELIGENTE: Exporta solo lo que ves en pantalla (inventoryFilteredData)
+                                        onClick={() => downloadCSV(inventoryFilteredData, 'Auditoria_Inventario')} 
                                         className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-xl hover:bg-green-700 shadow-md transition-all active:scale-95"
                                     >
                                         <span>📊</span> Excel / CSV
+                                    </button>
+									<button 
+                                        onClick={printPhysicalCountReport} 
+                                        className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white text-xs font-bold rounded-xl hover:bg-slate-800 shadow-md transition-all active:scale-95"
+                                        title="Imprimir formato para contar manualmente en almacén"
+                                    >
+                                        <span>📋</span> Conteo Físico
                                     </button>
                                 </div>
                             </div>
@@ -5410,45 +5638,65 @@ function App() {
                                             <th className="px-6 py-3 text-right">Valor Total (Ref)</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {/* CORRECCIÓN: products.map(...) */}
-                                        {products.map((item) => {
-                                            const stock = parseInt(item.stock) || 0;
-                                            const price = parseFloat(item.price_usd) || 0;
-                                            const totalRef = stock * price;
-                                            const totalBs = totalRef * bcvRate;
-                                            const unitBs = price * bcvRate;
+                                    <tbody className="divide-y divide-gray-100 bg-white">
+                                        {inventoryFilteredData.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="6" className="p-8 text-center text-gray-400 italic">
+                                                    No se encontraron productos con esa búsqueda.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            // Renderizamos TUS datos filtrados
+                                            inventoryFilteredData.map((item) => {
+                                                // Nota: detailedInventory ya trae 'price_ves', 'total_value_ves' calculados del backend
+                                                // pero por seguridad recalculamos visualmente para consistencia con la tasa actual
+                                                const stock = parseInt(item.stock) || 0;
+                                                const price = parseFloat(item.price_usd) || 0;
+                                                const totalRef = parseFloat(item.total_value_usd) || 0;
+                                                
+                                                // Si el backend ya trajo el cálculo, lo usamos, si no calculamos
+                                                const totalBs = totalRef * bcvRate;
+                                                const unitBs = price * bcvRate;
 
-                                            return (
-                                                <tr 
-                                                    key={item.id} 
-                                                    // ✅ AQUÍ ESTÁ LA MAGIA RESTAURADA:
-                                                    onClick={() => viewKardexHistory(item)}
-                                                    className="hover:bg-blue-50 transition-colors cursor-pointer group"
-                                                    title="🖱️ Clic para ver Movimientos y Kardex"
-                                                >
-                                                    <td className="px-6 py-3 font-bold text-gray-800">
-                                                        {item.name}
-                                                        <div className="text-[10px] text-gray-400 font-mono">{item.barcode || 'S/C'}</div>
-                                                    </td>
-                                                    <td className="px-6 py-3 text-xs">{item.category}</td>
-                                                    <td className="px-6 py-3 text-center">
-                                                        <span className={`px-2 py-1 rounded text-xs font-bold ${stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
-                                                            {stock}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-3 text-right font-mono text-xs">
-                                                        Bs {formatBs(unitBs)}
-                                                    </td>
-                                                    <td className="px-6 py-3 text-right font-bold text-gray-800">
-                                                        Bs {formatBs(totalBs)}
-                                                    </td>
-                                                    <td className="px-6 py-3 text-right font-bold text-blue-600">
-                                                        Ref {formatUSD(totalRef)}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
+                                                return (
+                                                    <tr 
+                                                        key={item.id} 
+                                                        // RESTAURAMOS EL CLICK AL KARDEX
+                                                        onClick={() => viewKardexHistory(item)}
+                                                        className="hover:bg-blue-50 transition-colors cursor-pointer group"
+                                                        title="🖱️ Clic para ver Movimientos y Kardex"
+                                                    >
+                                                        <td className="px-6 py-3 font-bold text-gray-800">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="text-xl group-hover:scale-125 transition-transform">{item.icon_emoji}</span>
+                                                                <div>
+                                                                    {item.name}
+                                                                    <div className="text-[10px] text-gray-400 font-mono flex gap-2">
+                                                                        <span>{item.barcode || 'S/C'}</span>
+                                                                        <span className="text-blue-400 opacity-0 group-hover:opacity-100 font-bold transition-opacity">Ver Detalle ➜</span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-3 text-xs">{item.category}</td>
+                                                        <td className="px-6 py-3 text-center">
+                                                            <span className={`px-2 py-1 rounded text-xs font-bold ${stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                                                                {stock}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-3 text-right font-mono text-xs">
+                                                            Bs {formatBs(unitBs)}
+                                                        </td>
+                                                        <td className="px-6 py-3 text-right font-bold text-gray-800">
+                                                            Bs {formatBs(totalBs)}
+                                                        </td>
+                                                        <td className="px-6 py-3 text-right font-bold text-blue-600">
+                                                            Ref {formatUSD(totalRef)}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
