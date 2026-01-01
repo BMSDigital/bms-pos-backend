@@ -992,7 +992,7 @@ function App() {
 
         // --- DATOS DE LA EMPRESA ---
         doc.setFontSize(9);
-        doc.text("RIF: J-00000000-0", 14, 24); 
+        doc.text("J-30521322-4", 14, 24); 
         doc.text("Razón Social: VOLUNTARIADO HIGEA", 14, 28);
 
         // Datos de la Jornada (Alineados a la derecha)
