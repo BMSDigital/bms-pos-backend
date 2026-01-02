@@ -330,6 +330,57 @@ function App() {
     // --- ESTADOS REPORTE GERENCIAL AVANZADO ---
     const [analyticsData, setAnalyticsData] = useState(null);
 	
+	// --- ESTADOS PARA AVANCE DE EFECTIVO ---
+    const [isCashAdvanceOpen, setIsCashAdvanceOpen] = useState(false);
+    const [advanceData, setAdvanceData] = useState({
+        amountBs: '', // Cuánto efectivo quiere el cliente
+        commission: 10 // Porcentaje de comisión por defecto (ej: 10%)
+    });
+
+    // --- FUNCIÓN PARA CALCULAR Y AGREGAR EL AVANCE AL CARRITO ---
+    const handleAddCashAdvance = (e) => {
+        e.preventDefault();
+        
+        const amount = parseFloat(advanceData.amountBs);
+        const commRate = parseFloat(advanceData.commission);
+
+        if (!amount || amount <= 0) return Swal.fire('Error', 'Ingrese un monto válido', 'error');
+        if (bcvRate <= 0) return Swal.fire('Error', 'No hay tasa BCV para calcular', 'error');
+
+        // 1. Cálculos en Bolívares
+        const commissionAmount = amount * (commRate / 100);
+        const totalToChargeBs = amount + commissionAmount;
+
+        // 2. Conversión a Dólares (Base del Sistema)
+        // El precio en el carrito será el TOTAL (Avance + Comisión) convertido a USD
+        const totalInUsd = totalToChargeBs / bcvRate;
+
+        // 3. Crear el Item "Servicio"
+        const advanceItem = {
+            id: `ADV-${Date.now()}`, // ID único temporal
+            name: `🔴 AVANCE EFECTIVO (Entregar: Bs ${formatBs(amount)})`,
+            price_usd: totalInUsd.toFixed(2), // Precio total en USD
+            price_ves: formatBs(totalToChargeBs), // Solo visual
+            stock: 999, // Servicio ilimitado
+            icon_emoji: "💸",
+            is_taxable: false, // Generalmente esto no lleva IVA, o depende de tu contador
+            quantity: 1,
+            category: "Servicios"
+        };
+
+        addToCart(advanceItem);
+        setIsCashAdvanceOpen(false);
+        setAdvanceData({ amountBs: '', commission: 10 }); // Reset
+
+        // Alerta de recordatorio para el cajero
+        Swal.fire({
+            icon: 'warning',
+            title: '¡Recordatorio de Caja!',
+            text: `Debes entregar Bs ${formatBs(amount)} en billetes al finalizar el cobro.`,
+            confirmButtonColor: '#d33'
+        });
+    };
+	
 
     // 💡 MEJORA UX: Rango de fechas AUTOMÁTICO (Desde el 1° del mes hasta Hoy)
     const [reportDateRange, setReportDateRange] = useState(() => {
@@ -2053,7 +2104,12 @@ function App() {
                 due_days: isCreditSale ? dueDays : null,
 
                 // --- ASEGÚRATE DE QUE ESTO ESTÉ AQUÍ ---
-                invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET'
+                invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET',
+
+                // ✅ NUEVO: Datos monetarios requeridos por el backend para evitar Error 500
+                bcv_rate_snapshot: bcvRate, // Se envía la tasa actual
+                total_usd: finalTotalUSD,   // Se envía el total calculado en $
+                total_ves: totalVES         // Se envía el total calculado en Bs
             };
 
             Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
@@ -3581,6 +3637,17 @@ function App() {
                 <button onClick={() => { setView('PRODUCTS'); }} title="Inventario de Productos" className={`p-3 rounded-xl transition-all ${view === 'PRODUCTS' ? 'bg-blue-50 text-higea-blue' : 'text-gray-400 hover:bg-gray-100'}`}>
                     <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                </button>
+				
+				{/* BOTÓN AVANCE DE EFECTIVO (NUEVO) */}
+                <button 
+                    onClick={() => setIsCashAdvanceOpen(true)} 
+                    title="Avance de Efectivo" 
+                    className="p-3 rounded-xl transition-all text-emerald-600 bg-emerald-50 hover:bg-emerald-100 mb-4"
+                >
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
                     </svg>
                 </button>
 
@@ -6874,7 +6941,127 @@ function App() {
                     </div>
                 </div>
             )}
+			
+			{/* --- MODAL AVANCE DE EFECTIVO (GLOBAL) --- */}
+            {isCashAdvanceOpen && (
+                <div className="fixed inset-0 z-[80] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl shadow-slate-900/50 overflow-hidden flex flex-col animate-scale-up border border-slate-100">
 
+                        {/* 1. Header Minimalista */}
+                        <div className="px-8 py-5 border-b border-slate-100 flex justify-between items-center bg-white/90 backdrop-blur-xl z-20 sticky top-0">
+                            <div>
+                                <h3 className="text-xl font-black text-slate-800 tracking-tight flex items-center gap-2">
+                                    <span className="bg-emerald-100 text-emerald-600 p-2 rounded-xl text-lg">💸</span>
+                                    <span>Avance de Efectivo</span>
+                                </h3>
+                                <p className="text-xs text-slate-400 font-medium mt-1 ml-11">Servicio de retiro en caja</p>
+                            </div>
+                            <button onClick={() => setIsCashAdvanceOpen(false)} className="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-full text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all transform hover:rotate-90 hover:scale-110 shadow-sm">✕</button>
+                        </div>
+
+                        {/* Cuerpo del Formulario */}
+                        <div className="p-8 bg-slate-50/30">
+                            <form onSubmit={handleAddCashAdvance}>
+
+                                {/* GRUPO: DATOS DEL AVANCE */}
+                                <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 mb-6 relative">
+                                    <div className="flex flex-col gap-6">
+                                        
+                                        {/* Input Monto */}
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Monto a Entregar (Bs)</label>
+                                            <div className="relative">
+                                                <input 
+                                                    type="number" 
+                                                    step="0.01" 
+                                                    autoFocus
+                                                    required
+                                                    value={advanceData.amountBs}
+                                                    onChange={(e) => setAdvanceData({...advanceData, amountBs: e.target.value})}
+                                                    className="w-full h-16 pl-12 pr-5 bg-slate-50 border border-slate-200 rounded-2xl focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50 outline-none font-black text-slate-700 text-3xl placeholder-slate-300 transition-all"
+                                                    placeholder="0.00"
+                                                />
+                                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">Bs</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Input Comisión */}
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">Comisión del Servicio (%)</label>
+                                            <div className="flex gap-3">
+                                                <div className="relative w-24 shrink-0">
+                                                    <input 
+                                                        type="number" 
+                                                        step="0.1" 
+                                                        required
+                                                        value={advanceData.commission}
+                                                        onChange={(e) => setAdvanceData({...advanceData, commission: e.target.value})}
+                                                        className="w-full h-12 px-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-700 focus:border-emerald-500 outline-none text-center"
+                                                    />
+                                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">%</span>
+                                                </div>
+                                                
+                                                {/* Botones de Comisión Rápida */}
+                                                <div className="flex-1 flex gap-2">
+                                                    {[5, 10, 12, 15].map(pct => (
+                                                        <button 
+                                                            key={pct}
+                                                            type="button"
+                                                            onClick={() => setAdvanceData({...advanceData, commission: pct})}
+                                                            className={`flex-1 rounded-xl text-xs font-bold transition-all border ${
+                                                                advanceData.commission == pct 
+                                                                ? 'bg-emerald-100 text-emerald-700 border-emerald-200 shadow-sm' 
+                                                                : 'bg-white text-slate-400 border-slate-100 hover:bg-slate-50'
+                                                            }`}
+                                                        >
+                                                            {pct}%
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* RESUMEN DE CÁLCULO */}
+                                {advanceData.amountBs && (
+                                    <div className="bg-emerald-50/50 border border-emerald-100 p-5 rounded-[24px] mb-6 space-y-3 relative overflow-hidden">
+                                        <div className="absolute -right-6 -top-6 w-24 h-24 bg-emerald-100 rounded-full opacity-50 blur-xl"></div>
+
+                                        <div className="flex justify-between items-center text-xs font-medium text-slate-500 relative z-10">
+                                            <span>Entregar Efectivo:</span>
+                                            <span className="font-bold text-slate-700">Bs {formatBs(parseFloat(advanceData.amountBs))}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-xs font-medium text-emerald-600 relative z-10">
+                                            <span>Comisión ({advanceData.commission}%):</span>
+                                            <span className="font-bold">+ Bs {formatBs(parseFloat(advanceData.amountBs) * (parseFloat(advanceData.commission)/100))}</span>
+                                        </div>
+                                        
+                                        <div className="border-t border-emerald-200/50 pt-3 mt-1 relative z-10">
+                                            <div className="flex justify-between items-end">
+                                                <span className="text-xs font-black text-emerald-800 uppercase tracking-wide">Total a Cobrar</span>
+                                                <span className="text-2xl font-black text-emerald-600 leading-none">
+                                                    Bs {formatBs(parseFloat(advanceData.amountBs) * (1 + parseFloat(advanceData.commission)/100))}
+                                                </span>
+                                            </div>
+                                            <p className="text-[10px] text-right text-emerald-400 font-medium mt-1">
+                                                Ref: $ {( (parseFloat(advanceData.amountBs) * (1 + parseFloat(advanceData.commission)/100)) / bcvRate ).toFixed(2)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Botón Acción */}
+                                <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-xl hover:scale-[1.01] transition-all flex justify-center items-center gap-3 text-lg group">
+                                    <span className="group-hover:animate-bounce">🛒</span>
+                                    <span>Agregar al Carrito</span>
+                                </button>
+
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
