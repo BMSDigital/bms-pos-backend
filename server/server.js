@@ -1236,7 +1236,7 @@ app.get('/api/reports/closings', async (req, res) => {
 // 1. Registrar Movimiento (Entrada/Salida con Auditoría)
 // SERVER.JS
 
-// --- ENDPOINT MAESTRO DE MOVIMIENTOS DE INVENTARIO (CON TRANSACCIÓN SEGURA) ---
+/// --- ENDPOINT MAESTRO DE MOVIMIENTOS DE INVENTARIO (CON TRANSACCIÓN SEGURA) ---
 app.post('/api/inventory/movement', async (req, res) => {
     const { product_id, type, quantity, document_ref, reason, cost_usd, new_expiration, specific_batch_id } = req.body;
     
@@ -1319,23 +1319,31 @@ app.post('/api/inventory/movement', async (req, res) => {
             }
         }
 
-        // 3. Actualizar Stock Total en la tabla maestra 'products' (para consultas rápidas)
-        const finalStockRes = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
-        const finalStock = finalStockRes.rows[0].stock;
-
-        await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalStock, product_id]);
+        // 3. Actualizar Stock Total en la tabla maestra 'products'
+        // Calculamos: Si es IN, sumamos. Si es OUT, restamos.
+        const stockOperator = type === 'IN' ? '+' : '-';
+        const updateMaster = await client.query(`
+            UPDATE products 
+            SET stock = stock ${stockOperator} $1, last_stock_update = CURRENT_TIMESTAMP 
+            WHERE id = $2 
+            RETURNING stock
+        `, [qty, product_id]);
+        
+        const finalStock = updateMaster.rows[0].stock;
 
         // 4. Registrar en el Kardex (Historial imborrable)
+        // CORREGIDO: Usamos las variables correctas (product_id, type, reason)
         await client.query(`
-                    INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
-                    VALUES ($1, 'IN', $2, 'ANULACION_VENTA', $3, $4)
-                `, [
-                    item.product_id,            // es $1
-                    item.quantity,              // es $2
-                    // 'ANULACION_VENTA',       <-- ESTA LÍNEA LA ELIMINAMOS PORQUE SOBRABA
-                    `ANULACION VENTA #${id}`,   // es $3
-                    finalStock                  // es $4
-                ]);
+            INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
+            VALUES ($1, $2, $3, $4, $5, $6)
+        `, [
+            product_id,               // $1
+            type,                     // $2 (IN o OUT)
+            qty,                      // $3
+            reason || 'MOVIMIENTO MANUAL', // $4 (Ej: Ajuste, Merma, Compra)
+            document_ref || 'MANUAL', // $5
+            finalStock                // $6
+        ]);
 
         await client.query('COMMIT'); // Guardar cambios
         res.json({ success: true, new_stock: finalStock });
