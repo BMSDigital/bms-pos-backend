@@ -1330,11 +1330,11 @@ app.post('/api/inventory/movement', async (req, res) => {
                     INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
                     VALUES ($1, 'IN', $2, 'ANULACION_VENTA', $3, $4)
                 `, [
-                    item.product_id, 
-                    item.quantity, 
-                    // 'ANULACION_VENTA',  <-- ESTA LINEA SOBRABA, POR ESO ERAN 5
-                    `ANULACION VENTA #${id}`, 
-                    finalStock
+                    item.product_id,            // es $1
+                    item.quantity,              // es $2
+                    // 'ANULACION_VENTA',       <-- ESTA LÍNEA LA ELIMINAMOS PORQUE SOBRABA
+                    `ANULACION VENTA #${id}`,   // es $3
+                    finalStock                  // es $4
                 ]);
 
         await client.query('COMMIT'); // Guardar cambios
