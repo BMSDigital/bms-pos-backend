@@ -1016,10 +1016,16 @@ app.post('/api/sales/:id/void', async (req, res) => {
                 const finalStockRes = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
                 const finalStock = finalStockRes.rows[0].stock;
 
+                // --- CORRECCIÓN AQUÍ: SE ELIMINÓ EL PARÁMETRO SOBRANTE ---
                 await client.query(`
                     INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
                     VALUES ($1, 'IN', $2, 'ANULACION_VENTA', $3, $4)
-                `, [item.product_id, item.quantity, 'ANULACION_VENTA', `ANULACION VENTA #${id}`, finalStock]);
+                `, [
+                    item.product_id,           // $1
+                    item.quantity,             // $2
+                    `ANULACION VENTA #${id}`,  // $3
+                    finalStock                 // $4
+                ]);
             }
         }
 
