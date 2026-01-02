@@ -1320,16 +1320,22 @@ app.post('/api/inventory/movement', async (req, res) => {
         }
 
         // 3. Actualizar Stock Total en la tabla maestra 'products' (para consultas rápidas)
-        const stockRes = await client.query('SELECT COALESCE(SUM(stock),0) as total FROM product_batches WHERE product_id = $1', [product_id]);
-        const finalStock = parseInt(stockRes.rows[0].total);
+        const finalStockRes = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
+        const finalStock = finalStockRes.rows[0].stock;
 
         await client.query('UPDATE products SET stock = $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2', [finalStock, product_id]);
 
         // 4. Registrar en el Kardex (Historial imborrable)
         await client.query(`
-            INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, cost_usd, new_stock)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `, [product_id, type, qty, reason, document_ref || '', currentCost, finalStock]);
+                    INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
+                    VALUES ($1, 'IN', $2, 'ANULACION_VENTA', $3, $4)
+                `, [
+                    item.product_id, 
+                    item.quantity, 
+                    // 'ANULACION_VENTA',  <-- ESTA LINEA SOBRABA, POR ESO ERAN 5
+                    `ANULACION VENTA #${id}`, 
+                    finalStock
+                ]);
 
         await client.query('COMMIT'); // Guardar cambios
         res.json({ success: true, new_stock: finalStock });
