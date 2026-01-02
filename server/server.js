@@ -949,7 +949,7 @@ app.post('/api/customers/:id/initial-balance', async (req, res) => {
     }
 });
 
-// --- Z. ANULACIÓN Y NOTA DE CRÉDITO (REVERSO COMPLETO) ---
+// --- Z. ANULACIÓN Y NOTA DE CRÉDITO (REVERSO COMPLETO: MASTER, LOTES Y KARDEX) ---
 app.post('/api/sales/:id/void', async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body; // Motivo de la anulación
@@ -965,19 +965,66 @@ app.post('/api/sales/:id/void', async (req, res) => {
         if (saleCheck.rows[0].status === 'ANULADO') throw new Error('Esta venta ya está anulada.');
 
         // 2. Obtener los ítems para devolver al inventario
-        const itemsRes = await client.query('SELECT product_id, quantity FROM sale_items WHERE sale_id = $1', [id]);
+        // [MEJORA]: Traemos precio y nombre para facilitar la lógica de reingreso
+        const itemsRes = await client.query(`
+            SELECT si.product_id, si.quantity, p.name, p.price_usd 
+            FROM sale_items si
+            JOIN products p ON si.product_id = p.id
+            WHERE si.sale_id = $1
+        `, [id]);
         
-        // 3. Devolver Stock (Reverso de Inventario)
+        // 3. PROCESO DE DEVOLUCIÓN DE STOCK (LÓGICA INVERSA A LA VENTA)
         for (const item of itemsRes.rows) {
-            await client.query(
-                'UPDATE products SET stock = stock + $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2',
-                [item.quantity, item.product_id]
-            );
+            
+            // A. Detectar si es un Servicio (ej. Avance de Efectivo) para ignorar stock
+            // Si el nombre es 'AVANCE DE EFECTIVO' o similar, no tocamos lotes.
+            const isService = (item.name === 'AVANCE DE EFECTIVO' || item.product_id.toString().startsWith('ADV'));
+            
+            if (!isService) {
+                // B. Restaurar en LOTES (product_batches)
+                // Estrategia: Devolvemos el stock al lote con la fecha de vencimiento más lejana (el más nuevo)
+                // para evitar que se venza inmediatamente, o reactivamos un lote si es necesario.
+                const targetBatch = await client.query(`
+                    SELECT id FROM product_batches 
+                    WHERE product_id = $1 
+                    ORDER BY expiration_date DESC NULLS FIRST 
+                    LIMIT 1
+                `, [item.product_id]);
+
+                if (targetBatch.rows.length > 0) {
+                    // Sumamos al lote existente encontrado
+                    await client.query(
+                        'UPDATE product_batches SET stock = stock + $1 WHERE id = $2',
+                        [item.quantity, targetBatch.rows[0].id]
+                    );
+                } else {
+                    // Caso raro: No hay lotes (se borraron todos). Creamos un lote de recuperación.
+                    await client.query(`
+                        INSERT INTO product_batches (product_id, stock, batch_code, cost_usd)
+                        VALUES ($1, $2, 'REINGRESO-ANULACION', $3)
+                    `, [item.product_id, item.quantity, item.price_usd]);
+                }
+
+                // C. Restaurar en PRODUCTO MAESTRO (products)
+                await client.query(
+                    'UPDATE products SET stock = stock + $1, last_stock_update = CURRENT_TIMESTAMP WHERE id = $2',
+                    [item.quantity, item.product_id]
+                );
+
+                // D. Registrar en KARDEX (inventory_movements) - ¡INDISPENSABLE!
+                // Consultamos el stock final para que el Kardex quede exacto
+                const finalStockRes = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
+                const finalStock = finalStockRes.rows[0].stock;
+
+                await client.query(`
+                    INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
+                    VALUES ($1, 'IN', $2, 'ANULACION_VENTA', $3, $4)
+                `, [item.product_id, item.quantity, 'ANULACION_VENTA', `ANULACION VENTA #${id}`, finalStock]);
+            }
         }
 
         // 4. Actualizar la venta a ANULADO
-        // Nota: Al cambiar el status a 'ANULADO', tus reportes existentes (que tienen WHERE status != 'ANULADO')
-        // automáticamente dejarán de sumar estos montos.
+        // Se deja registro del motivo en el método de pago para auditoría visual
         const updateQuery = `
             UPDATE sales 
             SET status = 'ANULADO', 
@@ -985,11 +1032,11 @@ app.post('/api/sales/:id/void', async (req, res) => {
             WHERE id = $2 
             RETURNING id
         `;
-        await client.query(updateQuery, [reason || 'Sin motivo', id]);
+        await client.query(updateQuery, [reason || 'Solicitud Cliente', id]);
 
         await client.query('COMMIT');
         
-        console.log(`🚫 Venta #${id} anulada. Stock restaurado.`);
+        console.log(`🚫 Venta #${id} anulada. Stock, Lotes y Kardex restaurados correctamente.`);
         res.json({ success: true, message: 'Venta anulada y stock restaurado correctamente.' });
 
     } catch (err) {
