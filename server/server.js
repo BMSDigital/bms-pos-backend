@@ -1236,7 +1236,7 @@ app.get('/api/reports/closings', async (req, res) => {
 // 1. Registrar Movimiento (Entrada/Salida con Auditoría)
 // SERVER.JS
 
-/// --- ENDPOINT MAESTRO DE MOVIMIENTOS DE INVENTARIO (CON TRANSACCIÓN SEGURA) ---
+// --- ENDPOINT MAESTRO DE MOVIMIENTOS DE INVENTARIO (CON TRANSACCIÓN SEGURA) ---
 app.post('/api/inventory/movement', async (req, res) => {
     const { product_id, type, quantity, document_ref, reason, cost_usd, new_expiration, specific_batch_id } = req.body;
     
@@ -1246,7 +1246,9 @@ app.post('/api/inventory/movement', async (req, res) => {
         return res.status(400).json({ error: "Datos incompletos o cantidad inválida" });
     }
 
-    const client = await pool.connect(); // Usamos cliente para transacción
+    // Usamos 'client' en lugar de 'pool' directo para poder hacer ROLLBACK si algo falla
+    const client = await pool.connect(); 
+    
     try {
         await client.query('BEGIN'); // Iniciamos transacción (todo o nada)
 
@@ -1322,6 +1324,8 @@ app.post('/api/inventory/movement', async (req, res) => {
         // 3. Actualizar Stock Total en la tabla maestra 'products'
         // Calculamos: Si es IN, sumamos. Si es OUT, restamos.
         const stockOperator = type === 'IN' ? '+' : '-';
+        // Nota: Concatenamos el operador directamente en el string SQL porque no se puede pasar como parámetro bind ($1)
+        // Esto es seguro aquí porque 'stockOperator' lo definimos nosotros arriba, no viene del usuario.
         const updateMaster = await client.query(`
             UPDATE products 
             SET stock = stock ${stockOperator} $1, last_stock_update = CURRENT_TIMESTAMP 
@@ -1332,28 +1336,27 @@ app.post('/api/inventory/movement', async (req, res) => {
         const finalStock = updateMaster.rows[0].stock;
 
         // 4. Registrar en el Kardex (Historial imborrable)
-        // CORREGIDO: Usamos las variables correctas (product_id, type, reason)
         await client.query(`
             INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
             VALUES ($1, $2, $3, $4, $5, $6)
         `, [
-            product_id,               // $1
-            type,                     // $2 (IN o OUT)
-            qty,                      // $3
-            reason || 'MOVIMIENTO MANUAL', // $4 (Ej: Ajuste, Merma, Compra)
-            document_ref || 'MANUAL', // $5
-            finalStock                // $6
+            product_id,                // $1
+            type,                      // $2 (IN o OUT)
+            qty,                       // $3
+            reason || 'MOVIMIENTO MANUAL', // $4
+            document_ref || 'MANUAL',  // $5
+            finalStock                 // $6
         ]);
 
-        await client.query('COMMIT'); // Guardar cambios
+        await client.query('COMMIT'); // Guardar cambios definitivamente
         res.json({ success: true, new_stock: finalStock });
 
     } catch (err) {
-        await client.query('ROLLBACK'); // Deshacer cambios si algo falló
+        await client.query('ROLLBACK'); // Deshacer cambios si algo falló en cualquier paso
         console.error("Error en movimiento inventario:", err.message);
         res.status(500).json({ error: err.message });
     } finally {
-        client.release(); // Liberar conexión
+        client.release(); // Liberar conexión al pool
     }
 });
 
