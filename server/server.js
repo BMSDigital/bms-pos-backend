@@ -216,7 +216,7 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// 4. PROCESAR VENTA (CORREGIDO PARA SOPORTAR AVANCES DE EFECTIVO Y LOTES)
+// 4. PROCESAR VENTA (CORREGIDO: CLIENTES Y CRÉDITOS)
 app.post('/api/sales', async (req, res) => {
     const { 
         items, 
@@ -239,23 +239,19 @@ app.post('/api/sales', async (req, res) => {
         let subtotalExemptUsd = 0;
 
         // --- [NUEVO] PRE-PROCESAMIENTO DE ITEMS ---
-        // Aquí arreglamos el error del "ADV-..." antes de tocar el inventario
         const processedItems = [];
 
         for (const item of items) {
             let finalProductId = item.product_id;
             let isService = false;
 
-            // DETECTAR SI ES UN AVANCE DE EFECTIVO (ID es texto o empieza con ADV)
+            // DETECTAR SI ES UN AVANCE DE EFECTIVO
             if (isNaN(finalProductId) || (typeof finalProductId === 'string' && finalProductId.startsWith('ADV'))) {
-                
-                // 1. Buscar si ya existe el producto comodín "AVANCE DE EFECTIVO"
                 const serviceCheck = await client.query("SELECT id FROM products WHERE name = 'AVANCE DE EFECTIVO' LIMIT 1");
                 
                 if (serviceCheck.rows.length > 0) {
                     finalProductId = serviceCheck.rows[0].id;
                 } else {
-                    // 2. Si no existe, LO CREAMOS automáticamente
                     console.log("⚠️ Creando producto comodín 'AVANCE DE EFECTIVO'...");
                     const newService = await client.query(`
                         INSERT INTO products (name, category, price_usd, stock, is_taxable, status)
@@ -264,22 +260,18 @@ app.post('/api/sales', async (req, res) => {
                     `);
                     finalProductId = newService.rows[0].id;
                 }
-                isService = true; // Marcar para no descontar stock
+                isService = true; 
             }
 
-            // Guardamos el item corregido para usarlo abajo
             processedItems.push({ 
                 ...item, 
                 product_id: finalProductId, 
-                original_id: item.product_id, // Guardamos referencia por si acaso
                 is_service: isService 
             });
         }
 
         // --- PASO 1: PROCESAR INVENTARIO (Lógica FEFO) ---
         for (const item of processedItems) {
-            
-            // Si es un servicio (Avance), saltamos el descuento de inventario
             if (item.is_service) {
                 subtotalExemptUsd += parseFloat(item.price_usd) * parseInt(item.quantity);
                 continue; 
@@ -289,18 +281,16 @@ app.post('/api/sales', async (req, res) => {
             let qtyToDeduct = parseInt(item.quantity);
             const itemTotalBase = parseFloat(item.price_usd) * qtyToDeduct;
 
-            // 1.1 Calcular Subtotales Financieros
             if (item.is_taxable) subtotalTaxableUsd += itemTotalBase;
             else subtotalExemptUsd += itemTotalBase;
 
-            // 1.2 Buscar Lotes
+            // FEFO Logic
             const batchesRes = await client.query(`
                 SELECT id, stock FROM product_batches 
                 WHERE product_id = $1 AND stock > 0 
                 ORDER BY expiration_date ASC NULLS LAST
             `, [productId]);
 
-            // 1.3 Descuento FEFO
             let remainingQty = qtyToDeduct;
             for (let batch of batchesRes.rows) {
                 if (remainingQty <= 0) break;
@@ -309,7 +299,6 @@ app.post('/api/sales', async (req, res) => {
                 remainingQty -= take;
             }
 
-            // 1.4 Actualizar Stock Total
             if (batchesRes.rows.length > 0) {
                  const finalStockRes = await client.query('SELECT COALESCE(SUM(stock), 0) as total FROM product_batches WHERE product_id = $1', [productId]);
                  const finalTotal = parseInt(finalStockRes.rows[0].total);
@@ -325,27 +314,34 @@ app.post('/api/sales', async (req, res) => {
         const finalTotalUsd = subtotalTaxableUsd + subtotalExemptUsd + ivaUsd;
         const totalVes = finalTotalUsd * rateToUse; 
 
-        let saleStatus = 'PAGADO';
+        // --- CORRECCIÓN CRÍTICA AQUÍ ---
+        // 1. Asignamos el cliente SIEMPRE, no importa si es crédito o contado
         let finalCustomerId = null;
-        let dueDate = null;
-        let amountPaidUsd = finalTotalUsd; 
-        
-        // Lógica de Cliente
-        if (is_credit || invoice_type === 'FISCAL') {
-            if (customer_id) finalCustomerId = customer_id;
-            else if (customer_data && customer_data.id) finalCustomerId = customer_data.id;
-            
-            // Opcional: Si tienes la función de crear clientes, úsala aquí:
-            // else if (customer_data) { finalCustomerId = await findOrCreateCustomer(client, customer_data); }
+        if (customer_id) {
+            finalCustomerId = customer_id;
+        } else if (customer_data && customer_data.id) {
+            finalCustomerId = customer_data.id;
+        }
 
-            if (finalCustomerId && is_credit) {
-                saleStatus = 'PENDIENTE';
-                amountPaidUsd = 0; 
-                const days = due_days ? parseInt(due_days) : 15;
-                const date = new Date();
-                date.setDate(date.getDate() + days);
-                dueDate = date;
+        // 2. Definimos estatus inicial
+        let saleStatus = 'PAGADO';
+        let amountPaidUsd = finalTotalUsd; // Por defecto se asume pagado
+        let dueDate = null;
+
+        // 3. Si es CRÉDITO, forzamos estatus PENDIENTE y monto pagado CERO
+        if (is_credit) {
+            // Validación extra: No se puede dar crédito sin cliente
+            if (!finalCustomerId) {
+                throw new Error("No se puede procesar venta a CRÉDITO sin seleccionar un Cliente.");
             }
+
+            saleStatus = 'PENDIENTE';
+            amountPaidUsd = 0; // ¡IMPORTANTE! Esto evita que sume al reporte del día
+            
+            const days = due_days ? parseInt(due_days) : 15;
+            const date = new Date();
+            date.setDate(date.getDate() + days);
+            dueDate = date;
         }
 
         // --- PASO 3: INSERTAR VENTA ---
@@ -360,23 +356,31 @@ app.post('/api/sales', async (req, res) => {
         `;
         
         const saleValues = [
-            finalTotalUsd.toFixed(2), totalVes.toFixed(2), rateToUse, payment_method, saleStatus, finalCustomerId, dueDate,
-            subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2),
+            finalTotalUsd.toFixed(2), 
+            totalVes.toFixed(2), 
+            rateToUse, 
+            payment_method, 
+            saleStatus, 
+            finalCustomerId, 
+            dueDate,
+            subtotalTaxableUsd.toFixed(2), 
+            subtotalExemptUsd.toFixed(2), 
+            IVA_RATE, 
+            ivaUsd.toFixed(2), 
+            amountPaidUsd.toFixed(2), // Aquí irá 0 si es crédito
             invoice_type || 'TICKET'
         ];
         
         const saleResult = await client.query(saleQuery, saleValues);
         const saleId = saleResult.rows[0].id;
 
-        // --- PASO 4: DETALLES Y KARDEX (Usando items procesados) ---
+        // --- PASO 4: DETALLES Y KARDEX ---
         for (const item of processedItems) {
-            // A. Insertar Item
             await client.query(
                 `INSERT INTO sale_items (sale_id, product_id, quantity, price_at_moment_usd) VALUES ($1, $2, $3, $4)`,
-                [saleId, item.product_id, item.quantity, item.price_usd] // <--- AQUÍ YA VA EL ID NUMÉRICO (EJ: 58)
+                [saleId, item.product_id, item.quantity, item.price_usd]
             );
 
-            // B. Registrar Movimiento SOLO si no es servicio
             if (!item.is_service) {
                 const stockCheck = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
                 const currentStockLog = stockCheck.rows[0] ? stockCheck.rows[0].stock : 0;
@@ -389,12 +393,12 @@ app.post('/api/sales', async (req, res) => {
         }
 
         await client.query('COMMIT');
-        console.log(`✅ Venta registrada ID: ${saleId} (Incluyó avances: ${processedItems.some(i => i.is_service)})`);
+        console.log(`✅ Venta registrada ID: ${saleId} | Status: ${saleStatus} | Cliente: ${finalCustomerId}`);
         res.json({ success: true, saleId, message: 'Venta exitosa' });
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('❌ Error en venta:', error); // Muestra el error detallado
+        console.error('❌ Error en venta:', error);
         res.status(500).json({ success: false, message: error.message, details: error.stack });
     } finally {
         client.release();
