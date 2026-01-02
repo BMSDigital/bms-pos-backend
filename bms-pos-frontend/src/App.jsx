@@ -1565,6 +1565,89 @@ function App() {
             return prev.filter(i => i.id !== id);
         });
     };
+	
+	// --- LÓGICA DE ESCÁNER DE CÓDIGO DE BARRAS (GLOBAL) ---
+    useEffect(() => {
+        let barcodeBuffer = '';
+        let lastKeyTime = 0;
+        const SCANNER_THRESHOLD = 50; // ms entre teclas (los escáneres son muy rápidos)
+
+        const handleGlobalKeyDown = (e) => {
+            // 1. Ignorar si el usuario está escribiendo en un input normal (Buscador, formulario, etc)
+            // EXCEPCIÓN: Si el input es "readOnly" o el body, dejamos pasar el evento.
+            const target = e.target;
+            if (target.tagName === 'INPUT' && !target.readOnly && target.type !== 'checkbox' && target.type !== 'radio') {
+                return; 
+            }
+
+            const currentTime = Date.now();
+            
+            // 2. Si pasó mucho tiempo desde la última tecla, reiniciamos el buffer (es tecleo manual lento)
+            if (currentTime - lastKeyTime > SCANNER_THRESHOLD) {
+                barcodeBuffer = '';
+            }
+            
+            lastKeyTime = currentTime;
+
+            // 3. Detectar "Enter" como final del código
+            if (e.key === 'Enter') {
+                if (barcodeBuffer.length > 2) { // Evitamos lecturas fantasmas de 1 o 2 caracteres
+                    
+                    // BUSCAR EL PRODUCTO POR CÓDIGO DE BARRAS
+                    const scannedProduct = products.find(p => 
+                        p.barcode === barcodeBuffer || 
+                        p.barcode === barcodeBuffer.trim()
+                    );
+
+                    if (scannedProduct) {
+                        // LÓGICA DE STOCK (UX: Feedback si no hay stock)
+                        if (scannedProduct.stock > 0) {
+                            addToCart(scannedProduct);
+                            
+                            // Feedback Visual Sutil (Toast rápido)
+                            const Toast = Swal.mixin({
+                                toast: true,
+                                position: 'bottom-end',
+                                showConfirmButton: false,
+                                timer: 1500,
+                                timerProgressBar: true
+                            });
+                            Toast.fire({
+                                icon: 'success',
+                                title: `+1 ${scannedProduct.name}`
+                            });
+                        } else {
+                            // Sonido o alerta de error
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'Sin Stock',
+                                text: `El producto "${scannedProduct.name}" está agotado.`,
+                                timer: 2000,
+                                showConfirmButton: false
+                            });
+                        }
+                    } else {
+                        // Opcional: Feedback si no existe el código
+                        console.log(`Código no encontrado: ${barcodeBuffer}`);
+                    }
+                }
+                barcodeBuffer = ''; // Limpiar buffer después del Enter
+            } else {
+                // 4. Acumular caracteres imprimibles (Números y Letras)
+                if (e.key.length === 1) {
+                    barcodeBuffer += e.key;
+                }
+            }
+        };
+
+        // Agregar el listener al documento global
+        window.addEventListener('keydown', handleGlobalKeyDown);
+
+        // Limpieza al desmontar
+        return () => {
+            window.removeEventListener('keydown', handleGlobalKeyDown);
+        };
+    }, [products, addToCart]); // Dependencias vitales para que funcione con la data actual
 
     // --- CÁLCULOS PRINCIPALES (CON DESGLOSE FISCAL) ---
     const calculateTotals = () => {
@@ -3608,20 +3691,87 @@ function App() {
                             {/* 💡 MODIFICADO: Usar currentProducts para aplicar paginación */}
                             <div className="flex-1 overflow-y-auto px-4 pb-20 md:pb-6 custom-scrollbar">
                                 <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-                                    {currentProducts.map((prod) => (
-                                        <div key={prod.id} onClick={() => addToCart(prod)} className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm active:scale-95 transition-transform">
-                                            <div className="flex justify-between items-start mb-2">
-                                                <ProductAvatar icon={prod.icon_emoji} size="h-10 w-10 text-xl" />
-                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${prod.stock < 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'}`}>{prod.stock}</span>
+                                    {currentProducts.map((prod) => {
+                                        // LÓGICA DE ESTADO (UX)
+                                        const isOutOfStock = prod.stock <= 0;
+                                        const isLowStock = prod.stock > 0 && prod.stock <= 10;
+                                        
+                                        return (
+                                            <div 
+                                                key={prod.id} 
+                                                onClick={() => !isOutOfStock && addToCart(prod)} 
+                                                // UI: Añadimos 'group' para efectos hover y bordes suaves
+                                                className={`group relative bg-white rounded-[20px] p-4 border transition-all duration-300 flex flex-col h-full select-none
+                                                    ${isOutOfStock 
+                                                        ? 'border-slate-100 opacity-60 grayscale cursor-not-allowed' 
+                                                        : 'border-slate-100 hover:border-blue-300 hover:shadow-xl hover:-translate-y-1 cursor-pointer'
+                                                    }`}
+                                                title={`Stock exacto: ${prod.stock}`}
+                                            >
+                                                {/* 1. HEADER: STOCK Y ESTADO (Diseño "Pill" Elegante) */}
+                                                <div className="flex justify-between items-start mb-2">
+                                                    {/* Badge de Stock: Muestra número pero con estilo profesional */}
+                                                    <div className={`text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 border shadow-sm ${
+                                                        isOutOfStock ? 'bg-slate-100 text-slate-400 border-slate-200' :
+                                                        isLowStock ? 'bg-amber-50 text-amber-600 border-amber-100 animate-pulse' :
+                                                        'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                                    }`}>
+                                                        <span className={`w-1.5 h-1.5 rounded-full ${
+                                                            isOutOfStock ? 'bg-slate-400' :
+                                                            isLowStock ? 'bg-amber-500' :
+                                                            'bg-emerald-500'
+                                                        }`}></span>
+                                                        {isOutOfStock ? 'AGOTADO' : `${prod.stock} Und`}
+                                                    </div>
+                                                </div>
+
+                                                {/* 2. CUERPO: ICONO Y NOMBRE */}
+                                                <div className="flex-1 flex flex-col items-center text-center gap-2 mb-3">
+                                                    {/* Avatar con efecto de flotación al hover */}
+                                                    <div className="transition-transform duration-500 group-hover:scale-110 group-hover:rotate-6 filter drop-shadow-sm">
+                                                        <ProductAvatar icon={prod.icon_emoji} size="h-14 w-14 text-4xl" />
+                                                    </div>
+                                                    
+                                                    {/* Nombre con tipografía limpia */}
+                                                    <h3 className={`font-bold text-sm leading-snug line-clamp-2 ${
+                                                        isOutOfStock ? 'text-slate-400' : 'text-slate-700 group-hover:text-blue-600'
+                                                    }`}>
+                                                        {prod.name}
+                                                    </h3>
+                                                </div>
+
+                                                {/* 3. FOOTER: PRECIOS JERARQUIZADOS */}
+                                                <div className="mt-auto pt-3 border-t border-slate-50 relative">
+                                                    
+                                                    <div className="flex flex-col items-center">
+                                                        {/* Precio Principal (Bs) - Grande y Rojo */}
+                                                        <div className={`flex items-center gap-1 ${isOutOfStock ? 'text-slate-300' : 'text-higea-red'}`}>
+                                                            <span className="text-xs font-bold opacity-60">Bs</span>
+                                                            <span className="text-xl font-black tracking-tight leading-none">
+                                                                {prod.price_ves}
+                                                            </span>
+                                                        </div>
+
+                                                        {/* Precio Secundario (Ref) - Discreto */}
+                                                        <div className="text-[10px] text-slate-400 font-medium mt-0.5 bg-slate-50 px-2 rounded-md">
+                                                            Ref ${prod.price_usd}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* 4. BOTÓN "AGREGAR" FANTASMA (Solo aparece al hover) */}
+                                                    {!isOutOfStock && (
+                                                        <div className="absolute right-0 bottom-2 opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-2 group-hover:translate-y-0">
+                                                            <div className="bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center shadow-lg shadow-blue-200">
+                                                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
+                                                                </svg>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
-                                            <h3 className="font-bold text-gray-800 text-sm leading-tight line-clamp-2 h-10">{prod.name}</h3>
-                                            <div className="flex flex-col mt-2">
-                                                {/* Ref */}
-                                                <span className="text-lg font-black text-higea-red">Ref {prod.price_usd}</span>
-                                                <span className="text-xs font-bold text-higea-blue">Bs {prod.price_ves}</span>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                                 {/* Mostrar mensaje si no hay productos */}
                                 {currentProducts.length === 0 && (

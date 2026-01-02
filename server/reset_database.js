@@ -1,8 +1,12 @@
-const { Pool } = require('pg');
+// reset_database.js
+// ⚠️ PELIGRO: ESTE SCRIPT BORRA TODOS LOS DATOS DE LA BASE DE DATOS
+// Úsalo solo para reiniciar el sistema desde cero (Limpieza Total).
 
-// Usamos la misma conexión que tienes configurada en tus otros scripts
-// Si tienes la URL en variable de entorno, úsala, si no, usa la cadena directa de Render
-const connectionString = process.env.DATABASE_URL || 'postgresql://bms_db_z4m4_user:cYiKio2iKH6EKCBbZBfpbuTf2aSYvSps@dpg-d4ln562li9vc73ed83k0-a.ohio-postgres.render.com/bms_db_z4m4';
+const { Pool } = require('pg');
+const readline = require('readline');
+
+// Tu URL de conexión (La misma de tu proyecto)
+const connectionString = 'postgresql://voluntariado_higea:2Dt3MUBnXdjlvlJ3B7NoJzB1K09eMFGI@dpg-d59diqili9vc73aj5j8g-a.ohio-postgres.render.com/db_pos_venta_nu93';
 
 const pool = new Pool({
     connectionString,
@@ -12,49 +16,56 @@ const pool = new Pool({
 async function clearDatabase() {
     const client = await pool.connect();
     try {
-        console.log('⚠️  INICIANDO LIMPIEZA TOTAL DE BASE DE DATOS...');
-        console.log('⏳ Vaciando tablas y reiniciando contadores de ID...');
+        console.log('\n⚠️  INICIANDO PROTOCOLO DE LIMPIEZA TOTAL...');
+        console.log('⏳ Vaciando tablas y reiniciando contadores a 1...');
 
-        // TRUNCATE: Borra rápido
-        // RESTART IDENTITY: Reinicia los IDs a 1
-        // CASCADE: Borra datos dependientes (ej: si borra venta, borra sus items)
+        // TRUNCATE: Borra datos instantáneamente
+        // RESTART IDENTITY: Reinicia los IDs (SERIAL) a 1
+        // CASCADE: Borra en cascada (si borras Productos, se borran sus Lotes y Movimientos automáticamente)
         
-        // El orden aquí es importante, aunque CASCADE ayuda, es mejor listar las tablas principales
         const query = `
             TRUNCATE TABLE 
-                sale_items, 
-                sales, 
-                products, 
-                customers 
+                sale_items,           -- Items de facturas
+                sales,                -- Facturas / Ventas
+                inventory_movements,  -- Kardex / Historial [NUEVO]
+                product_batches,      -- Lotes y Vencimientos [NUEVO]
+                products,             -- Productos
+                customers,            -- Clientes
+                cash_shifts           -- Cierres de Caja [NUEVO]
             RESTART IDENTITY CASCADE;
         `;
 
         await client.query(query);
 
-        console.log('✅ Base de datos vaciada correctamente.');
-        console.log('✨ Las tablas sales, sale_items, products y customers están limpias.');
-        console.log('✨ Los IDs comenzarán desde el número 1.');
+        console.log('✅ BASE DE DATOS VACIADA CORRECTAMENTE.');
+        console.log('✨ Todas las tablas (Ventas, Inventario, Caja, Clientes) están limpias.');
+        console.log('✨ Los contadores de ID comenzarán desde el número 1.');
 
     } catch (err) {
-        console.error('❌ Error al vaciar la base de datos:', err.message);
+        console.error('❌ Error fatal al vaciar la base de datos:', err.message);
     } finally {
         client.release();
         pool.end();
+        process.exit(0);
     }
 }
 
-// Ejecutar función (Confirmación de seguridad simple)
-const readline = require('readline').createInterface({
+// --- INTERFAZ DE SEGURIDAD (PREGUNTA ANTES DE BORRAR) ---
+const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
-readline.question('ESTÁS A PUNTO DE BORRAR TODA LA DATA. ¿Estás seguro? (escribe "si"): ', (answer) => {
+console.log('\n🛑  ¡ADVERTENCIA DE SEGURIDAD!  🛑');
+console.log('Estás a punto de ELIMINAR PERMANENTEMENTE todo el historial de ventas, inventario, clientes y caja.');
+console.log('Esta acción NO se puede deshacer.\n');
+
+rl.question('¿Estás 100% seguro de que quieres borrar toda la data? (Escribe "si" para confirmar): ', (answer) => {
     if (answer.toLowerCase() === 'si') {
         clearDatabase();
     } else {
-        console.log('Operación cancelada.');
-        pool.end();
+        console.log('❌ Operación cancelada. Tus datos están a salvo.');
+        process.exit(0);
     }
-    readline.close();
+    rl.close();
 });
