@@ -216,7 +216,7 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// 4. PROCESAR VENTA (CORREGIDO: CLIENTES Y CRÉDITOS)
+// 4. PROCESAR VENTA (INTEGRADO: LOTES, AVANCES, CLIENTES Y CRÉDITO)
 app.post('/api/sales', async (req, res) => {
     const { 
         items, 
@@ -234,24 +234,41 @@ app.post('/api/sales', async (req, res) => {
     try {
         await client.query('BEGIN'); // Iniciar transacción
 
+        // --- 1. LÓGICA DE CLIENTE (GLOBAL) ---
+        // Sacada del "if" para que siempre funcione, sea Crédito, Contado o Fiscal.
+        let finalCustomerId = null;
+        if (customer_id) {
+            finalCustomerId = customer_id;
+        } else if (customer_data && customer_data.id) {
+            finalCustomerId = customer_data.id;
+        } 
+        // Recuperamos la capacidad de crear cliente al vuelo si tienes la función auxiliar
+        else if (customer_data && typeof findOrCreateCustomer === 'function') {
+             finalCustomerId = await findOrCreateCustomer(client, customer_data);
+        }
+
         const rateToUse = bcv_rate_snapshot ? parseFloat(bcv_rate_snapshot) : globalBCVRate;
         let subtotalTaxableUsd = 0;
         let subtotalExemptUsd = 0;
 
-        // --- [NUEVO] PRE-PROCESAMIENTO DE ITEMS ---
+        // --- 2. PRE-PROCESAMIENTO DE ITEMS (AVANCES) ---
+        // Aquí detectamos si es un servicio o avance antes de tocar stock
         const processedItems = [];
 
         for (const item of items) {
             let finalProductId = item.product_id;
             let isService = false;
 
-            // DETECTAR SI ES UN AVANCE DE EFECTIVO
+            // DETECTAR SI ES UN AVANCE DE EFECTIVO (ID texto o empieza con ADV)
             if (isNaN(finalProductId) || (typeof finalProductId === 'string' && finalProductId.startsWith('ADV'))) {
+                
+                // 2.1 Buscar si ya existe el producto comodín "AVANCE DE EFECTIVO"
                 const serviceCheck = await client.query("SELECT id FROM products WHERE name = 'AVANCE DE EFECTIVO' LIMIT 1");
                 
                 if (serviceCheck.rows.length > 0) {
                     finalProductId = serviceCheck.rows[0].id;
                 } else {
+                    // 2.2 Si no existe, LO CREAMOS automáticamente
                     console.log("⚠️ Creando producto comodín 'AVANCE DE EFECTIVO'...");
                     const newService = await client.query(`
                         INSERT INTO products (name, category, price_usd, stock, is_taxable, status)
@@ -260,18 +277,21 @@ app.post('/api/sales', async (req, res) => {
                     `);
                     finalProductId = newService.rows[0].id;
                 }
-                isService = true; 
+                isService = true; // Marcar para no descontar stock
             }
 
+            // Guardamos el item corregido para usarlo abajo
             processedItems.push({ 
                 ...item, 
                 product_id: finalProductId, 
+                original_id: item.product_id,
                 is_service: isService 
             });
         }
 
-        // --- PASO 1: PROCESAR INVENTARIO (Lógica FEFO) ---
+        // --- 3. PROCESAR INVENTARIO (LOTES / FEFO) ---
         for (const item of processedItems) {
+            // Si es servicio (Avance), saltamos el descuento de inventario
             if (item.is_service) {
                 subtotalExemptUsd += parseFloat(item.price_usd) * parseInt(item.quantity);
                 continue; 
@@ -281,16 +301,18 @@ app.post('/api/sales', async (req, res) => {
             let qtyToDeduct = parseInt(item.quantity);
             const itemTotalBase = parseFloat(item.price_usd) * qtyToDeduct;
 
+            // 3.1 Calcular Subtotales Financieros
             if (item.is_taxable) subtotalTaxableUsd += itemTotalBase;
             else subtotalExemptUsd += itemTotalBase;
 
-            // FEFO Logic
+            // 3.2 Buscar Lotes (FEFO: Primero en vencer, primero en salir)
             const batchesRes = await client.query(`
                 SELECT id, stock FROM product_batches 
                 WHERE product_id = $1 AND stock > 0 
                 ORDER BY expiration_date ASC NULLS LAST
             `, [productId]);
 
+            // 3.3 Descuento FEFO
             let remainingQty = qtyToDeduct;
             for (let batch of batchesRes.rows) {
                 if (remainingQty <= 0) break;
@@ -299,6 +321,7 @@ app.post('/api/sales', async (req, res) => {
                 remainingQty -= take;
             }
 
+            // 3.4 Actualizar Stock Total Maestro
             if (batchesRes.rows.length > 0) {
                  const finalStockRes = await client.query('SELECT COALESCE(SUM(stock), 0) as total FROM product_batches WHERE product_id = $1', [productId]);
                  const finalTotal = parseInt(finalStockRes.rows[0].total);
@@ -308,35 +331,26 @@ app.post('/api/sales', async (req, res) => {
             }
         }
         
-        // --- PASO 2: CÁLCULOS FINANCIEROS ---
+        // --- 4. CÁLCULOS FINALES Y CRÉDITO ---
         const IVA_RATE = 0.16;
         const ivaUsd = subtotalTaxableUsd * IVA_RATE;
         const finalTotalUsd = subtotalTaxableUsd + subtotalExemptUsd + ivaUsd;
         const totalVes = finalTotalUsd * rateToUse; 
 
-        // --- CORRECCIÓN CRÍTICA AQUÍ ---
-        // 1. Asignamos el cliente SIEMPRE, no importa si es crédito o contado
-        let finalCustomerId = null;
-        if (customer_id) {
-            finalCustomerId = customer_id;
-        } else if (customer_data && customer_data.id) {
-            finalCustomerId = customer_data.id;
-        }
-
-        // 2. Definimos estatus inicial
+        // Configuración por defecto (PAGADO)
         let saleStatus = 'PAGADO';
-        let amountPaidUsd = finalTotalUsd; // Por defecto se asume pagado
         let dueDate = null;
-
-        // 3. Si es CRÉDITO, forzamos estatus PENDIENTE y monto pagado CERO
+        let amountPaidUsd = finalTotalUsd; 
+        
+        // Lógica de Crédito (CORREGIDA)
         if (is_credit) {
-            // Validación extra: No se puede dar crédito sin cliente
+            // Validación obligatoria
             if (!finalCustomerId) {
                 throw new Error("No se puede procesar venta a CRÉDITO sin seleccionar un Cliente.");
             }
 
             saleStatus = 'PENDIENTE';
-            amountPaidUsd = 0; // ¡IMPORTANTE! Esto evita que sume al reporte del día
+            amountPaidUsd = 0; // CLAVE: Esto evita que sume al reporte diario de caja
             
             const days = due_days ? parseInt(due_days) : 15;
             const date = new Date();
@@ -344,7 +358,7 @@ app.post('/api/sales', async (req, res) => {
             dueDate = date;
         }
 
-        // --- PASO 3: INSERTAR VENTA ---
+        // --- 5. INSERTAR VENTA ---
         const saleQuery = `
             INSERT INTO sales (
                 total_usd, total_ves, bcv_rate_snapshot, payment_method, status, customer_id, due_date,
@@ -356,31 +370,23 @@ app.post('/api/sales', async (req, res) => {
         `;
         
         const saleValues = [
-            finalTotalUsd.toFixed(2), 
-            totalVes.toFixed(2), 
-            rateToUse, 
-            payment_method, 
-            saleStatus, 
-            finalCustomerId, 
-            dueDate,
-            subtotalTaxableUsd.toFixed(2), 
-            subtotalExemptUsd.toFixed(2), 
-            IVA_RATE, 
-            ivaUsd.toFixed(2), 
-            amountPaidUsd.toFixed(2), // Aquí irá 0 si es crédito
+            finalTotalUsd.toFixed(2), totalVes.toFixed(2), rateToUse, payment_method, saleStatus, finalCustomerId, dueDate,
+            subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2),
             invoice_type || 'TICKET'
         ];
         
         const saleResult = await client.query(saleQuery, saleValues);
         const saleId = saleResult.rows[0].id;
 
-        // --- PASO 4: DETALLES Y KARDEX ---
+        // --- 6. INSERTAR DETALLES Y KARDEX (Usando items procesados) ---
         for (const item of processedItems) {
+            // A. Insertar Item de Venta
             await client.query(
                 `INSERT INTO sale_items (sale_id, product_id, quantity, price_at_moment_usd) VALUES ($1, $2, $3, $4)`,
-                [saleId, item.product_id, item.quantity, item.price_usd]
+                [saleId, item.product_id, item.quantity, item.price_usd] 
             );
 
+            // B. Registrar Movimiento SOLO si no es servicio
             if (!item.is_service) {
                 const stockCheck = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
                 const currentStockLog = stockCheck.rows[0] ? stockCheck.rows[0].stock : 0;
@@ -393,7 +399,7 @@ app.post('/api/sales', async (req, res) => {
         }
 
         await client.query('COMMIT');
-        console.log(`✅ Venta registrada ID: ${saleId} | Status: ${saleStatus} | Cliente: ${finalCustomerId}`);
+        console.log(`✅ Venta #${saleId} | Status: ${saleStatus} | Cliente: ${finalCustomerId || 'Consumidor Final'}`);
         res.json({ success: true, saleId, message: 'Venta exitosa' });
 
     } catch (error) {
