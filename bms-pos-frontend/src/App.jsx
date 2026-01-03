@@ -1918,7 +1918,8 @@ function App() {
     };
 
     // --- GENERADOR DE HTML DE RECIBO (CORREGIDO: TASA HISTÓRICA + NOMBRE COMPLETO) ---
-    // Se añadió el parámetro 'historicalRate' al final
+    // FUNCIÓN GENERADORA DE TICKET/FACTURA (CORREGIDA Y BLINDADA)
+    // Se asegura de desglosar visualmente el Avance de Efectivo para cumplir con el SENIAT
     const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0, historicalRate = null) => {
 
         // LÓGICA DE TASA: Si nos envían la histórica, la usamos. Si no, usamos la actual.
@@ -1940,42 +1941,114 @@ function App() {
         let totalUsdGravable = 0;
 
         const itemsHTML = itemsToPrint.map(item => {
-            // En reportes históricos usamos el precio guardado (price_at_moment_usd)
-            const priceUsd = item.price_at_moment_usd || item.price_usd || 0;
-            const qty = item.quantity;
-
-            const subtotalItemUsd = priceUsd * qty;
-
-            // CÁLCULO CRÍTICO: Usamos la tasa definida arriba (rate)
-            const subtotalItemBs = subtotalItemUsd * rate;
-
-            totalRefBase += subtotalItemUsd;
+            // Precio unitario y cantidad
+            const priceUsd = parseFloat(item.price_at_moment_usd || item.price_usd || 0);
+            const qty = parseFloat(item.quantity);
+            const totalItemUsd = priceUsd * qty; // Precio total de la línea
 
             const isTaxable = (item.is_taxable === true || item.is_taxable === 'true' || item.is_taxable === 1);
-            let exemptMark = '';
 
-            if (isTaxable) {
-                totalBsBase += subtotalItemBs;
-                totalUsdGravable += subtotalItemUsd;
-            } else {
-                totalBsExento += subtotalItemBs;
-                exemptMark = ' (E)';
+            // --- DETECCIÓN INTELIGENTE DE AVANCE ---
+            let isAdvance = false;
+            let capitalTotalUsd = 0;
+            let commissionTotalUsd = 0;
+
+            // Buscamos la etiqueta [CAP:...] siendo flexibles con espacios
+            if (item.name && (item.name.toUpperCase().includes('AVANCE') || item.name.includes('[CAP:'))) {
+                try {
+                    // Regex mejorada: Acepta espacios y comas o puntos
+                    const match = item.name.match(/\[CAP:\s*([\d\.,]+)\]/i);
+                    if (match && match[1]) {
+                        isAdvance = true;
+                        // Normalizamos decimales (coma a punto)
+                        const unitCapital = parseFloat(match[1].replace(',', '.'));
+                        capitalTotalUsd = unitCapital; // La etiqueta ya suele traer el monto total del capital
+                        
+                        // Calculamos la comisión real
+                        commissionTotalUsd = totalItemUsd - capitalTotalUsd;
+                        
+                        // Seguridad: Si la comisión da negativo o error, cancelamos el desglose
+                        if (commissionTotalUsd < 0) { 
+                            isAdvance = false; 
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error desglosando avance en ticket", e);
+                    isAdvance = false;
+                }
             }
 
-            return `
-        <tr>
-            <td style="padding:2px 0;">${qty}</td>
-            <td style="padding:2px 0;">${item.name.substring(0, 25)}${exemptMark}</td>
-            <td class="right" style="padding:2px 0;">${subtotalItemBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-        </tr>`;
+            // --- GENERACIÓN DE HTML (DOS CASOS) ---
+
+            if (isAdvance) {
+                // CASO A: ES UN AVANCE (Desglosamos en 2 filas)
+                
+                // 1. Calculamos Montos en Bs
+                const commissionBs = commissionTotalUsd * rate;
+                const capitalBs = capitalTotalUsd * rate;
+
+                // 2. Sumamos a los totalizadores globales
+                // El capital SIEMPRE es Exento (Reintegro de dinero)
+                totalBsExento += capitalBs;
+                
+                // La comisión sigue la regla fiscal del producto
+                if (isTaxable) {
+                    totalBsBase += commissionBs;
+                    totalUsdGravable += commissionTotalUsd;
+                } else {
+                    totalBsExento += commissionBs;
+                }
+                
+                // Total Referencial (Suma todo)
+                totalRefBase += totalItemUsd;
+
+                // 3. HTML DESGLOSADO
+                return `
+                <tr>
+                    <td style="padding:2px 0;">${qty}</td>
+                    <td style="padding:2px 0;">SERV. FINANCIERO (COMISIÓN)${isTaxable ? '' : ' (E)'}</td>
+                    <td class="right" style="padding:2px 0;">${commissionBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
+                </tr>
+                <tr>
+                    <td style="padding:2px 0;">-</td>
+                    <td style="padding:2px 0;">ENTREGA DE EFECTIVO (E)</td>
+                    <td class="right" style="padding:2px 0;">${capitalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
+                </tr>`;
+
+            } else {
+                // CASO B: PRODUCTO NORMAL
+                
+                const subtotalItemBs = totalItemUsd * rate;
+                totalRefBase += totalItemUsd;
+
+                let exemptMark = '';
+                if (isTaxable) {
+                    totalBsBase += subtotalItemBs;
+                    totalUsdGravable += totalItemUsd;
+                } else {
+                    totalBsExento += subtotalItemBs;
+                    exemptMark = ' (E)';
+                }
+
+                // Limpiamos el nombre para el ticket (quitamos la etiqueta técnica si se imprime normal)
+                const cleanName = item.name.replace(/\[CAP:.*?\]/i, '').trim();
+
+                return `
+                <tr>
+                    <td style="padding:2px 0;">${qty}</td>
+                    <td style="padding:2px 0;">${cleanName.substring(0, 25)}${exemptMark}</td>
+                    <td class="right" style="padding:2px 0;">${subtotalItemBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
+                </tr>`;
+            }
+
         }).join('');
 
+        // CÁLCULOS FINALES
         const ivaBs = totalBsBase * 0.16;
         const totalGeneralBs = totalBsExento + totalBsBase + ivaBs;
         const ivaUsd = totalUsdGravable * 0.16;
         const totalGeneralRef = totalRefBase + ivaUsd;
 
-        // CORRECCIÓN NOMBRE: Mostramos nombre completo o por defecto
         const clientName = customer.full_name || 'CONSUMIDOR FINAL';
         const clientId = customer.id_number || 'V-00000000';
         const clientDir = customer.institution || '';
@@ -2003,7 +2076,6 @@ function App() {
             .right { text-align: right; }
             .center { text-align: center; }
             .box { border: 1px solid #000; padding: 5px; text-align: center; margin: 10px 0; font-weight:bold;}
-            /* Ajuste para nombres largos */
             .client-val { text-align: right; font-weight: bold; max-width: 65%; word-wrap: break-word; }
             table { width: 100%; border-collapse: collapse; table-layout: fixed; }
             td { vertical-align: top; word-wrap: break-word; }
@@ -2048,6 +2120,22 @@ function App() {
         <div class="line"></div>
         
         <div class="right">
+            ${isFiscal || itemsToPrint.some(i => i.is_taxable) ? `
+            <div class="row" style="font-size:10px;">
+                <span>BASE IMPONIBLE:</span> 
+                <span>${totalBsBase.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div class="row" style="font-size:10px;">
+                <span>EXENTO:</span> 
+                <span>${totalBsExento.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div class="row" style="font-size:10px;">
+                <span>IVA (16%):</span> 
+                <span>${ivaBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div class="line"></div>
+            ` : ''}
+
             <div class="row bold" style="font-size:14px; margin-top:5px">
                 <span>TOTAL BS:</span> 
                 <span>${totalGeneralBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
@@ -6374,14 +6462,50 @@ function App() {
 
                             <p className="text-xs font-bold text-gray-400 mb-2">SELECCIONE MÉTODO DE PAGO:</p>
 
-                            {paymentMethods.map(method => (
-                                <PaymentInput
-                                    key={method.name}
-                                    name={method.name}
-                                    currency={method.currency}
-                                    value={paymentShares[method.name] || '0.00'}
-                                />
-                            ))}
+                            {/* --- [CORRECCIÓN SEGURIDAD] BLOQUEO DE EFECTIVO BS EN AVANCES --- */}
+                            {paymentMethods.map(method => {
+                                // 1. Detectar si hay avance en el carrito
+                                const hasCashAdvance = cart.some(item => 
+                                    (item.name && item.name.toUpperCase().includes('AVANCE')) || 
+                                    (item.id && item.id.toString().startsWith('ADV'))
+                                );
+
+                                // 2. Condición de bloqueo: Hay avance Y el método es Efectivo Bs
+                                const isBlocked = hasCashAdvance && method.name === 'Efectivo Bs';
+
+                                // 3. Renderizado Condicional
+                                if (isBlocked) {
+                                    return (
+                                        <div key={method.name} className="relative p-3 bg-gray-100 border border-gray-200 rounded-xl opacity-70 cursor-not-allowed select-none">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="font-bold text-gray-400 text-sm flex items-center gap-2">
+                                                    {method.name}
+                                                </span>
+                                                <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-200">
+                                                    🚫 NO PERMITIDO
+                                                </span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 h-10 rounded-lg border border-gray-300 flex items-center justify-center text-gray-400 text-xs font-mono">
+                                                BLOQUEADO POR AVANCE
+                                            </div>
+                                            <p className="text-[9px] text-red-500 mt-1 text-center font-medium leading-tight">
+                                                No se puede pagar un Avance con Efectivo Bs.
+                                            </p>
+                                        </div>
+                                    );
+                                }
+
+                                // 4. Renderizado Normal (Tu componente original)
+                                return (
+                                    <PaymentInput
+                                        key={method.name}
+                                        name={method.name}
+                                        currency={method.currency}
+                                        value={paymentShares[method.name] || '0.00'}
+                                    />
+                                );
+                            })}
+                            {/* --- [FIN] BLOQUEO --- */}
 
                             {/* RESULTADO CALCULADORA DUAL (Faltan/Vuelto en Ref y Bs) */}
                             <div className={`mt-4 p-3 rounded-xl border ${remainingUSD > 0.05 ? 'bg-red-50 border-red-100 text-red-600' : 'bg-green-50 border-green-100 text-green-600'}`}>
@@ -6670,7 +6794,7 @@ function App() {
                 </div>
             )}
 
-            {/* MODAL: VENTAS DE HOY DETALLADAS */}
+            {/* MODAL: VENTAS DE HOY DETALLADAS (CORREGIDO: CÁLCULOS VISUALES RESTAN CAPITAL) */}
             {showDailySalesModal && (
                 <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
                     <div className="bg-white rounded-3xl w-full max-w-3xl h-[85vh] flex flex-col shadow-2xl animate-scale-up overflow-hidden">
@@ -6741,7 +6865,16 @@ function App() {
                                             {/* TOTAL REF (Alineado a la derecha, tipografía fuerte) */}
                                             <td className="px-6 py-4 text-right align-middle">
                                                 <span className="font-black text-higea-blue text-base tracking-tight">
-                                                    Ref {parseFloat(sale.total_usd).toFixed(2)}
+                                                    {/* Corrección visual en la lista individual también */}
+                                                    Ref {(() => {
+                                                        let amount = parseFloat(sale.total_usd);
+                                                        // Visualmente restamos el capital si es avance para no confundir
+                                                        if (sale.payment_method && sale.payment_method.includes('[CAP:')) {
+                                                            const match = sale.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                                                            if (match && match[1]) amount -= parseFloat(match[1]);
+                                                        }
+                                                        return amount.toFixed(2);
+                                                    })()}
                                                 </span>
                                             </td>
 
@@ -6780,7 +6913,7 @@ function App() {
                             </table>
                         </div>
 
-                        {/* Footer con Totales (CORREGIDO: FILTRA ANULADOS REALMENTE) */}
+                        {/* Footer con Totales (CORREGIDO: RESTA EL CAPITAL DEL AVANCE) */}
                         <div className="p-5 border-t bg-white flex flex-col md:flex-row justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20 gap-4">
                             <div className="text-xs font-bold text-gray-400 uppercase tracking-wide self-start md:self-center">
                                 {/* Solo cuenta las ventas válidas */}
@@ -6798,26 +6931,49 @@ function App() {
                                 <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado (Dinero en Mano)</p>
 
                                 <div className="flex items-end gap-4">
-                                    {/* TOTAL EN BS (FILTRANDO ANULADOS) */}
+                                    {/* TOTAL EN BS (CORREGIDO) */}
                                     <div className="text-right">
                                         <span className="text-[10px] font-bold text-gray-400 block">EN BOLÍVARES</span>
                                         <span className="text-xl font-bold text-gray-600">
                                             Bs {dailySalesList.reduce((acc, curr) => {
-                                                // SI ESTÁ ANULADO, NO SUMA NADA
                                                 if (curr.status === 'ANULADO') return acc;
-                                                return acc + (curr.amount_paid_usd * (curr.bcv_rate_snapshot || bcvRate));
+                                                
+                                                // 1. Obtenemos monto base
+                                                let netAmount = curr.amount_paid_usd;
+                                                
+                                                // 2. Si es Avance, restamos capital
+                                                if (curr.payment_method && curr.payment_method.includes('[CAP:')) {
+                                                    try {
+                                                        const match = curr.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                                                        if (match && match[1]) netAmount -= parseFloat(match[1]);
+                                                    } catch (e) {}
+                                                }
+
+                                                // 3. Multiplicamos por la tasa de ESA venta
+                                                return acc + (netAmount * (curr.bcv_rate_snapshot || bcvRate));
                                             }, 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
                                         </span>
                                     </div>
 
-                                    {/* TOTAL EN USD (FILTRANDO ANULADOS) */}
+                                    {/* TOTAL EN USD (CORREGIDO) */}
                                     <div className="text-right border-l pl-4 border-gray-200">
                                         <span className="text-[10px] font-bold text-higea-blue block">EN DÓLARES (REF)</span>
                                         <span className="text-3xl font-black text-higea-blue leading-none">
                                             Ref {dailySalesList.reduce((acc, curr) => {
-                                                // SI ESTÁ ANULADO, NO SUMA NADA
                                                 if (curr.status === 'ANULADO') return acc;
-                                                return acc + curr.amount_paid_usd;
+                                                
+                                                // 1. Obtenemos monto base
+                                                let netAmount = curr.amount_paid_usd;
+                                                
+                                                // 2. Si es Avance, restamos capital
+                                                if (curr.payment_method && curr.payment_method.includes('[CAP:')) {
+                                                    try {
+                                                        const match = curr.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                                                        if (match && match[1]) netAmount -= parseFloat(match[1]);
+                                                    } catch (e) {}
+                                                }
+
+                                                return acc + netAmount;
                                             }, 0).toFixed(2)}
                                         </span>
                                     </div>
