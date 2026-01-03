@@ -1918,12 +1918,15 @@ function App() {
     };
 
     // --- GENERADOR DE HTML DE RECIBO (CORREGIDO: TASA HISTÓRICA + NOMBRE COMPLETO) ---
-    // FUNCIÓN GENERADORA DE TICKET/FACTURA (CORREGIDA Y BLINDADA)
-    // Se asegura de desglosar visualmente el Avance de Efectivo para cumplir con el SENIAT
+    // FUNCIÓN GENERADORA DE TICKET/FACTURA (BLINDADA: MARCA DE AGUA + DESGLOSE IVA)
+    // FUNCIÓN GENERADORA DE TICKET/FACTURA (FINAL: BLINDAJE SENIAT + ANULACIÓN + UX)
     const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0, historicalRate = null) => {
 
-        // LÓGICA DE TASA: Si nos envían la histórica, la usamos. Si no, usamos la actual.
         const rate = historicalRate ? parseFloat(historicalRate) : bcvRate;
+        
+        // --- 1. LÓGICA DE ANULACIÓN (Blindaje de Seguridad) ---
+        // Si el estado es ANULADO, activamos la marca de agua
+        const isVoided = saleStatus === 'ANULADO';
 
         let itemsToPrint = items;
         if (!items || items.length === 0) {
@@ -1939,70 +1942,53 @@ function App() {
         let totalBsBase = 0;
         let totalRefBase = 0;
         let totalUsdGravable = 0;
+        let hasAdvanceGlobal = false;
 
+        // --- 2. CÁLCULOS MATEMÁTICOS ---
         const itemsHTML = itemsToPrint.map(item => {
-            // Precio unitario y cantidad
             const priceUsd = parseFloat(item.price_at_moment_usd || item.price_usd || 0);
             const qty = parseFloat(item.quantity);
-            const totalItemUsd = priceUsd * qty; // Precio total de la línea
-
+            const totalItemUsd = priceUsd * qty;
+            
+            // Verificamos si el producto está marcado como gravable en la BD
             const isTaxable = (item.is_taxable === true || item.is_taxable === 'true' || item.is_taxable === 1);
 
-            // --- DETECCIÓN INTELIGENTE DE AVANCE ---
+            // Detección de Avance
             let isAdvance = false;
             let capitalTotalUsd = 0;
             let commissionTotalUsd = 0;
 
-            // Buscamos la etiqueta [CAP:...] siendo flexibles con espacios
             if (item.name && (item.name.toUpperCase().includes('AVANCE') || item.name.includes('[CAP:'))) {
                 try {
-                    // Regex mejorada: Acepta espacios y comas o puntos
                     const match = item.name.match(/\[CAP:\s*([\d\.,]+)\]/i);
                     if (match && match[1]) {
                         isAdvance = true;
-                        // Normalizamos decimales (coma a punto)
+                        hasAdvanceGlobal = true;
                         const unitCapital = parseFloat(match[1].replace(',', '.'));
-                        capitalTotalUsd = unitCapital; // La etiqueta ya suele traer el monto total del capital
-                        
-                        // Calculamos la comisión real
+                        capitalTotalUsd = unitCapital; 
                         commissionTotalUsd = totalItemUsd - capitalTotalUsd;
-                        
-                        // Seguridad: Si la comisión da negativo o error, cancelamos el desglose
-                        if (commissionTotalUsd < 0) { 
-                            isAdvance = false; 
-                        }
+                        if (commissionTotalUsd < 0) isAdvance = false; 
                     }
-                } catch (e) {
-                    console.error("Error desglosando avance en ticket", e);
-                    isAdvance = false;
-                }
+                } catch (e) { isAdvance = false; }
             }
 
-            // --- GENERACIÓN DE HTML (DOS CASOS) ---
-
+            // Renderizado de Filas
             if (isAdvance) {
-                // CASO A: ES UN AVANCE (Desglosamos en 2 filas)
-                
-                // 1. Calculamos Montos en Bs
+                // AVANCE: Desglose especial
                 const commissionBs = commissionTotalUsd * rate;
                 const capitalBs = capitalTotalUsd * rate;
-
-                // 2. Sumamos a los totalizadores globales
-                // El capital SIEMPRE es Exento (Reintegro de dinero)
-                totalBsExento += capitalBs;
                 
-                // La comisión sigue la regla fiscal del producto
+                totalBsExento += capitalBs; // Capital siempre exento
+                
+                // La comisión paga IVA si el servicio de avance está configurado como gravable
                 if (isTaxable) {
                     totalBsBase += commissionBs;
                     totalUsdGravable += commissionTotalUsd;
                 } else {
                     totalBsExento += commissionBs;
                 }
-                
-                // Total Referencial (Suma todo)
                 totalRefBase += totalItemUsd;
 
-                // 3. HTML DESGLOSADO
                 return `
                 <tr>
                     <td style="padding:2px 0;">${qty}</td>
@@ -2014,25 +2000,21 @@ function App() {
                     <td style="padding:2px 0;">ENTREGA DE EFECTIVO (E)</td>
                     <td class="right" style="padding:2px 0;">${capitalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
                 </tr>`;
-
             } else {
-                // CASO B: PRODUCTO NORMAL
-                
+                // PRODUCTO NORMAL
                 const subtotalItemBs = totalItemUsd * rate;
                 totalRefBase += totalItemUsd;
-
                 let exemptMark = '';
+                
                 if (isTaxable) {
-                    totalBsBase += subtotalItemBs;
+                    totalBsBase += subtotalItemBs; // Se suma a la base para calcularle IVA luego
                     totalUsdGravable += totalItemUsd;
                 } else {
-                    totalBsExento += subtotalItemBs;
+                    totalBsExento += subtotalItemBs; // Se suma a exento
                     exemptMark = ' (E)';
                 }
 
-                // Limpiamos el nombre para el ticket (quitamos la etiqueta técnica si se imprime normal)
                 const cleanName = item.name.replace(/\[CAP:.*?\]/i, '').trim();
-
                 return `
                 <tr>
                     <td style="padding:2px 0;">${qty}</td>
@@ -2040,12 +2022,12 @@ function App() {
                     <td class="right" style="padding:2px 0;">${subtotalItemBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
                 </tr>`;
             }
-
         }).join('');
 
-        // CÁLCULOS FINALES
-        const ivaBs = totalBsBase * 0.16;
-        const totalGeneralBs = totalBsExento + totalBsBase + ivaBs;
+        // --- 3. CÁLCULO DE IMPUESTOS (SEGÚN LEY) ---
+        const ivaBs = totalBsBase * 0.16; // 16% sobre la base
+        const totalGeneralBs = totalBsExento + totalBsBase + ivaBs; // Total = Exento + Base + Impuesto
+        
         const ivaUsd = totalUsdGravable * 0.16;
         const totalGeneralRef = totalRefBase + ivaUsd;
 
@@ -2055,9 +2037,12 @@ function App() {
 
         const isFiscal = invoiceType === 'FISCAL';
         const isCredit = saleStatus === 'PENDIENTE' || saleStatus === 'PARCIAL';
+        
+        // Títulos Legales
         let docTitle = 'NOTA DE ENTREGA';
         if (isFiscal) docTitle = 'FACTURA (SENIAT)';
         if (isCredit && !isFiscal) docTitle = 'CONTROL DE CRÉDITO';
+        if (isVoided) docTitle = 'DOCUMENTO ANULADO'; 
 
         const dateStr = new Date(createdAt).toLocaleString('es-VE');
 
@@ -2068,7 +2053,10 @@ function App() {
         <meta charset="UTF-8">
         <style>
             @page { size: 80mm auto; margin: 0; }
-            body { width: 72mm; margin: 2mm auto; font-family: 'Courier New', Courier, monospace; font-size: 11px; text-transform: uppercase; color: #000; background: #fff; }
+            body { 
+                width: 72mm; margin: 2mm auto; font-family: 'Courier New', Courier, monospace; 
+                font-size: 10px; text-transform: uppercase; color: #000; background: #fff; position: relative;
+            }
             .header { text-align: center; margin-bottom: 5px; }
             .bold { font-weight: bold; }
             .row { display: flex; justify-content: space-between; align-items: flex-start; }
@@ -2077,15 +2065,35 @@ function App() {
             .center { text-align: center; }
             .box { border: 1px solid #000; padding: 5px; text-align: center; margin: 10px 0; font-weight:bold;}
             .client-val { text-align: right; font-weight: bold; max-width: 65%; word-wrap: break-word; }
+            .legal-text { font-size: 8px; text-align: justify; margin-top: 5px; text-transform: none; }
             table { width: 100%; border-collapse: collapse; table-layout: fixed; }
             td { vertical-align: top; word-wrap: break-word; }
             td:nth-child(1) { width: 15%; } 
             td:nth-child(2) { width: 50%; } 
             td:nth-child(3) { width: 35%; } 
+            .signature-area { margin-top: 25px; border-top: 1px solid #000; padding-top: 2px; text-align: center; width: 80%; margin-left: auto; margin-right: auto; }
+            
+            /* --- MARCA DE AGUA ANULADO (BLINDAJE VISUAL) --- */
+            .watermark {
+                position: fixed;
+                top: 30%;
+                left: 50%;
+                transform: translate(-50%, -50%) rotate(-45deg);
+                font-size: 40px;
+                color: rgba(0, 0, 0, 0.15); 
+                border: 4px solid rgba(0, 0, 0, 0.15);
+                padding: 10px 20px;
+                z-index: 0;
+                pointer-events: none;
+                font-weight: 900;
+                white-space: nowrap;
+            }
         </style>
     </head>
     <body>
-        <div class="header">
+        ${isVoided ? '<div class="watermark">ANULADO</div>' : ''}
+
+        <div class="header" style="position: relative; z-index: 1;">
             ${isFiscal ? '<div class="bold" style="font-size:12px">SENIAT</div>' : ''}
             <div class="bold" style="font-size:14px">VOLUNTARIADO DE LA FUNDACION HIGEA</div>
             <div style="font-size:10px; margin-bottom: 2px;">RIF: J-30521322-4</div>
@@ -2096,7 +2104,7 @@ function App() {
             <div style="margin-top:5px; font-weight:bold; border-top:1px solid #000; padding-top:2px; font-size:12px;">${docTitle}</div>
         </div>
         
-        <div style="font-size:10px;">
+        <div style="font-size:10px; position: relative; z-index: 1;">
             <div class="row">
                 <span>CLIENTE:</span> 
                 <span class="client-val">${clientName}</span>
@@ -2112,22 +2120,22 @@ function App() {
         </div>
         <div class="line"></div>
         
-        <table>
+        <table style="position: relative; z-index: 1;">
             <tr style="font-size:10px;"><td class="bold">CNT</td><td class="bold">DESCRIP</td><td class="bold right">BS</td></tr>
             ${itemsHTML}
         </table>
         
         <div class="line"></div>
         
-        <div class="right">
-            ${isFiscal || itemsToPrint.some(i => i.is_taxable) ? `
+        <div class="right" style="position: relative; z-index: 1;">
+            ${(isFiscal || totalBsBase > 0) ? `
+            <div class="row" style="font-size:10px;">
+                <span>SUBTOTAL EXENTO:</span> 
+                <span>${totalBsExento.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+            </div>
             <div class="row" style="font-size:10px;">
                 <span>BASE IMPONIBLE:</span> 
                 <span>${totalBsBase.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div class="row" style="font-size:10px;">
-                <span>EXENTO:</span> 
-                <span>${totalBsExento.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
             </div>
             <div class="row" style="font-size:10px;">
                 <span>IVA (16%):</span> 
@@ -2137,7 +2145,7 @@ function App() {
             ` : ''}
 
             <div class="row bold" style="font-size:14px; margin-top:5px">
-                <span>TOTAL BS:</span> 
+                <span>TOTAL A PAGAR:</span> 
                 <span>${totalGeneralBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
             </div>
             
@@ -2145,13 +2153,24 @@ function App() {
                 <span>(REF $${totalGeneralRef.toFixed(2)})</span>
             </div>
             
-            <div style="font-size:9px; margin-top:2px;">TASA: ${rate.toFixed(2)} Bs/$</div>
+            <div style="font-size:9px; margin-top:2px;">TASA BCV: ${rate.toFixed(2)} Bs/$</div>
         </div>
 
         ${isCredit ? '<div class="box">VENTA A CRÉDITO<br/>PENDIENTE DE PAGO</div>' : ''}
         
+        <div class="legal-text" style="position: relative; z-index: 1;">
+            Recibí conforme la mercancía y servicios descritos sin daños aparentes. Montos expresados en Bolívares a la Tasa Oficial del BCV vigente.
+            
+            ${hasAdvanceGlobal ? '<br/><br/><strong>* DECLARACIÓN AVANCE:</strong> Declaro haber recibido a mi entera satisfacción el monto en efectivo detallado en el ítem "ENTREGA DE EFECTIVO".' : ''}
+        </div>
+
         <br/>
-        <div class="center" style="font-size:9px">
+        <div class="signature-area" style="position: relative; z-index: 1;">
+            FIRMA Y CÉDULA CLIENTE
+        </div>
+        
+        <br/>
+        <div class="center" style="font-size:9px; position: relative; z-index: 1;">
             COPIA DIGITAL / REIMPRESIÓN<br/>
             ${isFiscal ? 'NO FISCAL - REFERENCIAL' : 'CONTROL INTERNO'}
         </div>
@@ -2783,6 +2802,53 @@ function App() {
                 showConfirmButton: false
             });
         }
+    };
+	
+	// --- NUEVA FUNCIÓN: MANEJAR IMPRESIÓN DESDE HISTORIAL (REPARADA) ---
+    const handlePrintTicket = (sale) => {
+        // 1. Recuperar datos del cliente para el recibo
+        const tempCustomer = {
+            full_name: sale.full_name || 'Consumidor Final',
+            id_number: sale.id_number || 'V-00000000',
+            institution: sale.institution || '',
+            phone: sale.phone || ''
+        };
+
+        // 2. RECUPERACIÓN INTELIGENTE DE ETIQUETA [CAP:...]
+        // Problema: A veces la BD guarda el nombre genérico "AVANCE DE EFECTIVO" y pierde el [CAP].
+        // Solución: Buscamos la etiqueta en el 'payment_method' (donde sí se guarda seguro) y se la inyectamos.
+        let capTag = '';
+        if (sale.payment_method && sale.payment_method.includes('[CAP:')) {
+            try {
+                const match = sale.payment_method.match(/\[CAP:([\d\.,]+)\]/);
+                if (match) capTag = match[0]; // Ej: "[CAP:20.00]"
+            } catch (e) { console.error(e); }
+        }
+
+        // Preparamos los items asegurando que el Avance tenga su etiqueta
+        const itemsPrepared = sale.items.map(i => {
+            let finalName = i.name;
+            // Si es un avance, no tiene etiqueta en el nombre, pero sí la encontramos en el pago:
+            if (capTag && (finalName.toUpperCase().includes('AVANCE') || finalName.toUpperCase().includes('ADV')) && !finalName.includes('[CAP:')) {
+                finalName = `${finalName} ${capTag}`; // ¡Aquí ocurre la magia!
+            }
+            return { ...i, name: finalName };
+        });
+
+        // 3. Generar HTML usando la función maestra
+        const html = generateReceiptHTML(
+            sale.id,
+            tempCustomer,
+            itemsPrepared,
+            sale.invoice_type, // 'TICKET' o 'FISCAL'
+            sale.status,
+            sale.created_at,
+            parseFloat(sale.total_usd),
+            parseFloat(sale.bcv_rate_snapshot) // <--- IMPORTANTE: Pasamos la tasa histórica
+        );
+
+        // 4. Mostrar en el visor
+        setReceiptPreview(html);
     };
 
     const isFormReadyToSubmit = customerData.full_name.trim() && customerData.id_number.trim();
@@ -6573,24 +6639,25 @@ function App() {
                             ✕
                         </button>
 
-                        {/* --- CABECERA DINÁMICA (Aquí está la magia visual) --- */}
-                        <div className={`p-6 text-center border-b ${selectedSaleDetail.invoice_type === 'FISCAL' ? 'bg-blue-600 text-white' :
+                        {/* --- CABECERA DINÁMICA --- */}
+                        <div className={`p-6 text-center border-b ${
+                            selectedSaleDetail.invoice_type === 'FISCAL' ? 'bg-blue-600 text-white' :
                             (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'bg-red-600 text-white' :
-                                'bg-gray-100 text-gray-800'
-                            }`}>
+                            'bg-gray-100 text-gray-800'
+                        }`}>
                             <h3 className="font-black text-2xl uppercase tracking-wide">
                                 {selectedSaleDetail.invoice_type === 'FISCAL' ? 'DOCUMENTO FISCAL' :
-                                    (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'CRÉDITO / DEUDA' :
-                                        'TICKET DE VENTA'}
+                                (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'CRÉDITO / DEUDA' :
+                                'TICKET DE VENTA'}
                             </h3>
                             <p className="text-sm font-medium opacity-90 mt-1">
                                 Venta #{selectedSaleDetail.id} • {new Date(selectedSaleDetail.created_at || new Date()).toLocaleDateString()}
                             </p>
 
-                            {/* ETIQUETA DE ESTATUS GRANDE */}
                             <div className="mt-3">
-                                <span className={`px-4 py-1 rounded-full text-xs font-black uppercase tracking-wider shadow-sm ${selectedSaleDetail.status === 'PAGADO' ? 'bg-green-400 text-green-900' : 'bg-yellow-400 text-yellow-900'
-                                    }`}>
+                                <span className={`px-4 py-1 rounded-full text-xs font-black uppercase tracking-wider shadow-sm ${
+                                    selectedSaleDetail.status === 'PAGADO' ? 'bg-green-400 text-green-900' : 'bg-yellow-400 text-yellow-900'
+                                }`}>
                                     ESTADO: {selectedSaleDetail.status}
                                 </span>
                             </div>
@@ -6601,12 +6668,10 @@ function App() {
                             {/* --- SECCIÓN DATOS DEL CLIENTE --- */}
                             <div className="p-5 bg-white border-b border-gray-200">
                                 <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Datos del Cliente</p>
-
                                 {selectedSaleDetail.full_name ? (
                                     <div className="space-y-1">
                                         <p className="text-lg font-bold text-gray-800">{selectedSaleDetail.full_name}</p>
                                         <p className="text-sm text-gray-500 font-mono">ID: {selectedSaleDetail.id_number || 'No registrado'}</p>
-
                                         {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') && selectedSaleDetail.due_date && (
                                             <p className="text-xs font-bold text-red-600 mt-2 bg-red-50 p-2 rounded-lg inline-block">
                                                 ⚠️ Vence: {new Date(selectedSaleDetail.due_date).toLocaleDateString()}
@@ -6626,10 +6691,10 @@ function App() {
                                         <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
                                             <div>
                                                 <p className="font-bold text-sm text-gray-700">{item.name}</p>
-                                                <p className="text-xs text-gray-400">Ref {parseFloat(item.price_at_moment_usd).toFixed(2)} x {item.quantity}</p>
+                                                <p className="text-xs text-gray-400">Ref {parseFloat(item.price_at_moment_usd || item.price_usd).toFixed(2)} x {item.quantity}</p>
                                             </div>
                                             <div className="text-right">
-                                                <p className="font-black text-gray-800">Ref {(parseFloat(item.price_at_moment_usd) * item.quantity).toFixed(2)}</p>
+                                                <p className="font-black text-gray-800">Ref {(parseFloat(item.price_at_moment_usd || item.price_usd) * item.quantity).toFixed(2)}</p>
                                             </div>
                                         </div>
                                     ))}
@@ -6655,103 +6720,69 @@ function App() {
                             </div>
                         </div>
 
-                        {/* --- PIE DE PÁGINA CON ACCIONES (IMPRIMIR + ANULAR) --- */}
-                        {/* Se agregó 'flex flex-col gap-3' para apilar los botones limpiamente */}
+                        {/* --- PIE DE PÁGINA CON ACCIONES --- */}
                         <div className="p-4 bg-white border-t border-gray-200 flex flex-col gap-3">
 
-                            {/* 1. BOTÓN DE REIMPRESIÓN (EXISTENTE) */}
+                            {/* 1. BOTÓN DE REIMPRESIÓN (CORREGIDO PARA USAR handlePrintTicket) */}
                             <button
-                                onClick={() => {
-                                    const tempCustomer = {
-                                        full_name: selectedSaleDetail.full_name || '',
-                                        id_number: selectedSaleDetail.id_number || '',
-                                        institution: selectedSaleDetail.institution || '',
-                                        phone: selectedSaleDetail.phone || ''
-                                    };
-
-                                    const html = generateReceiptHTML(
-                                        selectedSaleDetail.id,
-                                        tempCustomer,
-                                        selectedSaleDetail.items,
-                                        selectedSaleDetail.invoice_type,
-                                        selectedSaleDetail.status,
-                                        selectedSaleDetail.created_at,
-                                        parseFloat(selectedSaleDetail.total_usd)
-                                    );
-
-                                    setReceiptPreview(html);
-                                }}
+                                onClick={() => handlePrintTicket(selectedSaleDetail)} 
                                 className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-all active:scale-95"
                             >
                                 <span className="text-xl">🖨️</span>
                                 {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Reimprimir Copia Fiscal' : 'Imprimir Ticket / Nota'}
                             </button>
 
-                            {/* 2. BOTÓN DE ANULACIÓN / NOTA DE CRÉDITO (DISEÑO AJUSTADO) */}
+                            {/* 2. BOTÓN DE ANULACIÓN (INTACTO) */}
                             {selectedSaleDetail.status !== 'ANULADO' ? (
-                                // CAMBIO AQUÍ: Reduje mt-6 a mt-3 y pt-4 a pt-3
                                 <div className="mt-3 pt-3 border-t border-gray-100">
-                                    {/* BOTÓN UI/UX AVANZADO - CON VALIDACIÓN DE STOCK Y PAGOS PARCIALES */}
-<button
-    onClick={() => handleVoidSale(selectedSaleDetail)}
-    // 1. VALIDACIÓN LÓGICA: Se deshabilita si es ANULADO o PARCIAL
-    disabled={selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL'}
-    
-    // 2. ESTILOS DINÁMICOS:
-    // Si está bloqueado: Fondo gris, borde gris, cursor prohibido.
-    // Si está activo: Tu diseño original (Blanco, Borde Rojo, Hover Rojo Suave).
-    className={`w-full group relative flex items-center justify-center gap-3 px-6 py-3 rounded-xl border-2 transition-all duration-300 shadow-sm
-        ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
-            ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' // Estilo Bloqueado
-            : 'bg-white border-red-100 text-red-600 hover:bg-red-50 hover:border-red-200 active:scale-95' // Tu Estilo Original
-        }`}
->
-    {/* Ícono de Papelera con fondo adaptativo */}
-    <div className={`p-2 rounded-lg transition-colors
-        ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
-            ? 'bg-gray-200' // Fondo gris si está bloqueado
-            : 'bg-red-50 group-hover:bg-red-100' // Fondo rojo original
-        }`}>
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-        </svg>
-    </div>
-
-    {/* Textos Informativos Dinámicos */}
-    <div className="text-left flex-1">
-        <span className="block text-sm font-bold tracking-wide">
-            {/* Lógica de Texto del Título */}
-            {selectedSaleDetail.status === 'ANULADO' 
-                ? 'VENTA YA ANULADA' 
-                : selectedSaleDetail.status === 'PARCIAL' 
-                    ? 'ACCIÓN BLOQUEADA (PAGOS PARCIALES)' 
-                    : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'EMITIR NOTA DE CRÉDITO' : 'ANULAR VENTA (DEVOLVER STOCK)')
-            }
-        </span>
-        <span className={`block text-[10px] font-medium
-            ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
-                ? 'text-gray-400' // Texto gris explicativo si bloqueado
-                : 'text-red-400'  // Texto rojo original
-            }`}>
-            {/* Lógica de Subtítulo */}
-            {selectedSaleDetail.status === 'ANULADO' 
-                ? 'Esta operación ya fue procesada anteriormente' 
-                : selectedSaleDetail.status === 'PARCIAL' 
-                    ? 'Debe liquidar la deuda o gestionar reembolso manual antes de anular' 
-                    : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'Genera documento fiscal de reverso' : 'Reversa inventario y contabilidad')
-            }
-        </span>
-    </div>
-</button>
+                                    <button
+                                        onClick={() => handleVoidSale(selectedSaleDetail)}
+                                        disabled={selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL'}
+                                        className={`w-full group relative flex items-center justify-center gap-3 px-6 py-3 rounded-xl border-2 transition-all duration-300 shadow-sm
+                                            ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
+                                                ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                                                : 'bg-white border-red-100 text-red-600 hover:bg-red-50 hover:border-red-200 active:scale-95'
+                                            }`}
+                                    >
+                                        <div className={`p-2 rounded-lg transition-colors
+                                            ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
+                                                ? 'bg-gray-200'
+                                                : 'bg-red-50 group-hover:bg-red-100'
+                                            }`}>
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
+                                        </div>
+                                        <div className="text-left flex-1">
+                                            <span className="block text-sm font-bold tracking-wide">
+                                                {selectedSaleDetail.status === 'ANULADO' 
+                                                    ? 'VENTA YA ANULADA' 
+                                                    : selectedSaleDetail.status === 'PARCIAL' 
+                                                        ? 'ACCIÓN BLOQUEADA (PAGOS PARCIALES)' 
+                                                        : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'EMITIR NOTA DE CRÉDITO' : 'ANULAR VENTA (DEVOLVER STOCK)')
+                                                }
+                                            </span>
+                                            <span className={`block text-[10px] font-medium
+                                                ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
+                                                    ? 'text-gray-400'
+                                                    : 'text-red-400'
+                                                }`}>
+                                                {selectedSaleDetail.status === 'ANULADO' 
+                                                    ? 'Esta operación ya fue procesada anteriormente' 
+                                                    : selectedSaleDetail.status === 'PARCIAL' 
+                                                        ? 'Debe liquidar la deuda o gestionar reembolso manual antes de anular' 
+                                                        : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'Genera documento fiscal de reverso' : 'Reversa inventario y contabilidad')
+                                                }
+                                            </span>
+                                        </div>
+                                    </button>
                                 </div>
                             ) : (
-                                // Indicador visual si ya está anulada
                                 <div className="mt-3 w-full bg-gray-100 text-gray-500 font-bold py-3 rounded-xl text-center border border-gray-200 flex items-center justify-center gap-2">
                                     <span>🚫</span> ESTA VENTA FUE ANULADA
                                 </div>
                             )}
                         </div>
-
                     </div>
                 </div>
             )}
