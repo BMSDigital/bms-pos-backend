@@ -1918,14 +1918,12 @@ function App() {
     };
 
     // --- GENERADOR DE HTML DE RECIBO (CORREGIDO: TASA HISTÓRICA + NOMBRE COMPLETO) ---
-    // FUNCIÓN GENERADORA DE TICKET/FACTURA (BLINDADA: MARCA DE AGUA + DESGLOSE IVA)
-    // FUNCIÓN GENERADORA DE TICKET/FACTURA (FINAL: BLINDAJE SENIAT + ANULACIÓN + UX)
+    // FUNCIÓN GENERADORA DE TICKET (DISEÑO UI MODERN/MINIMALISTA + BLINDAJE LEGAL)
     const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0, historicalRate = null) => {
 
         const rate = historicalRate ? parseFloat(historicalRate) : bcvRate;
         
-        // --- 1. LÓGICA DE ANULACIÓN (Blindaje de Seguridad) ---
-        // Si el estado es ANULADO, activamos la marca de agua
+        // --- LÓGICA DE SEGURIDAD (Sin cambios) ---
         const isVoided = saleStatus === 'ANULADO';
 
         let itemsToPrint = items;
@@ -1944,16 +1942,13 @@ function App() {
         let totalUsdGravable = 0;
         let hasAdvanceGlobal = false;
 
-        // --- 2. CÁLCULOS MATEMÁTICOS ---
+        // --- CÁLCULOS MATEMÁTICOS (Sin cambios) ---
         const itemsHTML = itemsToPrint.map(item => {
             const priceUsd = parseFloat(item.price_at_moment_usd || item.price_usd || 0);
             const qty = parseFloat(item.quantity);
             const totalItemUsd = priceUsd * qty;
-            
-            // Verificamos si el producto está marcado como gravable en la BD
             const isTaxable = (item.is_taxable === true || item.is_taxable === 'true' || item.is_taxable === 1);
 
-            // Detección de Avance
             let isAdvance = false;
             let capitalTotalUsd = 0;
             let commissionTotalUsd = 0;
@@ -1972,15 +1967,12 @@ function App() {
                 } catch (e) { isAdvance = false; }
             }
 
-            // Renderizado de Filas
+            // HTML MINIMALISTA PARA ITEMS (Sin bordes internos, solo alineación)
             if (isAdvance) {
-                // AVANCE: Desglose especial
                 const commissionBs = commissionTotalUsd * rate;
                 const capitalBs = capitalTotalUsd * rate;
+                totalBsExento += capitalBs; 
                 
-                totalBsExento += capitalBs; // Capital siempre exento
-                
-                // La comisión paga IVA si el servicio de avance está configurado como gravable
                 if (isTaxable) {
                     totalBsBase += commissionBs;
                     totalUsdGravable += commissionTotalUsd;
@@ -1990,44 +1982,41 @@ function App() {
                 totalRefBase += totalItemUsd;
 
                 return `
-                <tr>
-                    <td style="padding:2px 0;">${qty}</td>
-                    <td style="padding:2px 0;">SERV. FINANCIERO (COMISIÓN)${isTaxable ? '' : ' (E)'}</td>
-                    <td class="right" style="padding:2px 0;">${commissionBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                </tr>
-                <tr>
-                    <td style="padding:2px 0;">-</td>
-                    <td style="padding:2px 0;">ENTREGA DE EFECTIVO (E)</td>
-                    <td class="right" style="padding:2px 0;">${capitalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                </tr>`;
+                <div class="item-row">
+                    <div class="col-qty">${qty}</div>
+                    <div class="col-desc">SERV. FINANCIERO (COMISIÓN)${isTaxable ? '' : ' (E)'}</div>
+                    <div class="col-price">${commissionBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                </div>
+                <div class="item-row" style="color:#555;">
+                    <div class="col-qty">-</div>
+                    <div class="col-desc">ENTREGA DE EFECTIVO (E)</div>
+                    <div class="col-price">${capitalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                </div>`;
             } else {
-                // PRODUCTO NORMAL
                 const subtotalItemBs = totalItemUsd * rate;
                 totalRefBase += totalItemUsd;
                 let exemptMark = '';
                 
                 if (isTaxable) {
-                    totalBsBase += subtotalItemBs; // Se suma a la base para calcularle IVA luego
+                    totalBsBase += subtotalItemBs;
                     totalUsdGravable += totalItemUsd;
                 } else {
-                    totalBsExento += subtotalItemBs; // Se suma a exento
+                    totalBsExento += subtotalItemBs;
                     exemptMark = ' (E)';
                 }
 
                 const cleanName = item.name.replace(/\[CAP:.*?\]/i, '').trim();
                 return `
-                <tr>
-                    <td style="padding:2px 0;">${qty}</td>
-                    <td style="padding:2px 0;">${cleanName.substring(0, 25)}${exemptMark}</td>
-                    <td class="right" style="padding:2px 0;">${subtotalItemBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
-                </tr>`;
+                <div class="item-row">
+                    <div class="col-qty">${qty}</div>
+                    <div class="col-desc">${cleanName.substring(0, 30)}${exemptMark}</div>
+                    <div class="col-price">${subtotalItemBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                </div>`;
             }
         }).join('');
 
-        // --- 3. CÁLCULO DE IMPUESTOS (SEGÚN LEY) ---
-        const ivaBs = totalBsBase * 0.16; // 16% sobre la base
-        const totalGeneralBs = totalBsExento + totalBsBase + ivaBs; // Total = Exento + Base + Impuesto
-        
+        const ivaBs = totalBsBase * 0.16;
+        const totalGeneralBs = totalBsExento + totalBsBase + ivaBs;
         const ivaUsd = totalUsdGravable * 0.16;
         const totalGeneralRef = totalRefBase + ivaUsd;
 
@@ -2038,7 +2027,6 @@ function App() {
         const isFiscal = invoiceType === 'FISCAL';
         const isCredit = saleStatus === 'PENDIENTE' || saleStatus === 'PARCIAL';
         
-        // Títulos Legales
         let docTitle = 'NOTA DE ENTREGA';
         if (isFiscal) docTitle = 'FACTURA (SENIAT)';
         if (isCredit && !isFiscal) docTitle = 'CONTROL DE CRÉDITO';
@@ -2046,133 +2034,159 @@ function App() {
 
         const dateStr = new Date(createdAt).toLocaleString('es-VE');
 
+        // --- PLANTILLA HTML/CSS MODERNA Y COMPACTA ---
         return `
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
         <style>
-            @page { size: 80mm auto; margin: 0; }
-            body { 
-                width: 72mm; margin: 2mm auto; font-family: 'Courier New', Courier, monospace; 
-                font-size: 10px; text-transform: uppercase; color: #000; background: #fff; position: relative;
-            }
-            .header { text-align: center; margin-bottom: 5px; }
-            .bold { font-weight: bold; }
-            .row { display: flex; justify-content: space-between; align-items: flex-start; }
-            .line { border-bottom: 1px dashed #000; margin: 5px 0; }
-            .right { text-align: right; }
-            .center { text-align: center; }
-            .box { border: 1px solid #000; padding: 5px; text-align: center; margin: 10px 0; font-weight:bold;}
-            .client-val { text-align: right; font-weight: bold; max-width: 65%; word-wrap: break-word; }
-            .legal-text { font-size: 8px; text-align: justify; margin-top: 5px; text-transform: none; }
-            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-            td { vertical-align: top; word-wrap: break-word; }
-            td:nth-child(1) { width: 15%; } 
-            td:nth-child(2) { width: 50%; } 
-            td:nth-child(3) { width: 35%; } 
-            .signature-area { margin-top: 25px; border-top: 1px solid #000; padding-top: 2px; text-align: center; width: 80%; margin-left: auto; margin-right: auto; }
+            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap');
             
-            /* --- MARCA DE AGUA ANULADO (BLINDAJE VISUAL) --- */
+            @page { size: 80mm auto; margin: 0; }
+            
+            body { 
+                width: 72mm; 
+                margin: 0 auto; 
+                padding: 5px 0;
+                font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+                font-size: 10px; 
+                line-height: 1.2;
+                color: #222; 
+                background: #fff; 
+                text-transform: uppercase;
+            }
+
+            /* Tipografía Numérica: Tabular nums hace que los números se alineen verticalmente perfecto */
+            .nums { font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+
+            /* Utilidades de Alineación */
+            .text-center { text-align: center; }
+            .text-right { text-align: right; }
+            .text-justify { text-align: justify; }
+            .bold { font-weight: 700; }
+            .black { font-weight: 900; }
+            
+            /* Separadores Minimalistas */
+            .divider { border-bottom: 1px dotted #888; margin: 6px 0; width: 100%; }
+            .divider-bold { border-bottom: 2px solid #000; margin: 8px 0; width: 100%; }
+
+            /* Header Moderno */
+            .header-title { font-size: 13px; margin-bottom: 2px; letter-spacing: 0.5px; }
+            .header-meta { font-size: 9px; color: #444; }
+            .doc-type { margin-top: 8px; font-size: 11px; background: #000; color: #fff; padding: 2px 0; border-radius: 4px; }
+
+            /* Grid de Cliente Compacto */
+            .client-grid { display: flex; flex-wrap: wrap; margin-top: 5px; gap: 2px; }
+            .client-row { display: flex; width: 100%; justify-content: space-between; }
+            .label { color: #666; font-size: 9px; margin-right: 4px; }
+            .val { font-weight: 700; text-align: right; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+            /* Tabla de Productos Flex (Más control que table HTML) */
+            .item-container { margin: 5px 0; }
+            .item-header { display: flex; font-size: 8px; color: #666; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin-bottom: 4px; }
+            .item-row { display: flex; margin-bottom: 3px; align-items: flex-start; }
+            
+            /* Columnas Definidas */
+            .col-qty { width: 10%; text-align: center; font-weight: 700; }
+            .col-desc { width: 65%; padding-right: 5px; line-height: 1.1; }
+            .col-price { width: 25%; text-align: right; font-weight: 500; }
+
+            /* Totales Modernos */
+            .totals-area { display: flex; flex-direction: column; align-items: flex-end; margin-top: 5px; }
+            .total-row { display: flex; justify-content: space-between; width: 100%; margin-bottom: 2px; }
+            .total-label { font-size: 9px; color: #444; }
+            .total-val { font-size: 10px; font-weight: 700; }
+            
+            .final-total { font-size: 16px; margin-top: 4px; padding-top: 4px; border-top: 1px solid #000; width: 100%; display: flex; justify-content: space-between; align-items: center; }
+            .ref-total { font-size: 11px; color: #444; margin-top: 2px; text-align: right; width: 100%; }
+
+            /* Footer Legal Compacto */
+            .legal-box { font-size: 8px; text-transform: none; color: #444; margin-top: 8px; line-height: 1.1; }
+            .signature-line { margin-top: 30px; border-top: 1px solid #000; width: 60%; margin-left: auto; margin-right: auto; }
+            
+            /* Marca de Agua ANULADO */
             .watermark {
-                position: fixed;
-                top: 30%;
-                left: 50%;
-                transform: translate(-50%, -50%) rotate(-45deg);
-                font-size: 40px;
-                color: rgba(0, 0, 0, 0.15); 
-                border: 4px solid rgba(0, 0, 0, 0.15);
-                padding: 10px 20px;
-                z-index: 0;
-                pointer-events: none;
-                font-weight: 900;
-                white-space: nowrap;
+                position: fixed; top: 35%; left: 50%; transform: translate(-50%, -50%) rotate(-30deg);
+                font-size: 48px; color: rgba(200, 0, 0, 0.15); border: 4px solid rgba(200, 0, 0, 0.15);
+                padding: 10px; z-index: 999; font-weight: 900; letter-spacing: 5px; pointer-events: none;
             }
         </style>
     </head>
     <body>
         ${isVoided ? '<div class="watermark">ANULADO</div>' : ''}
 
-        <div class="header" style="position: relative; z-index: 1;">
-            ${isFiscal ? '<div class="bold" style="font-size:12px">SENIAT</div>' : ''}
-            <div class="bold" style="font-size:14px">VOLUNTARIADO DE LA FUNDACION HIGEA</div>
-            <div style="font-size:10px; margin-bottom: 2px;">RIF: J-30521322-4</div>
-            <div style="font-size:9px; line-height: 1.1;">
-                Av. Vargas, Carrera 31, Edif. Sede de la Fundación Higea<br/>
-                Barquisimeto, Estado Lara
-            </div>
-            <div style="margin-top:5px; font-weight:bold; border-top:1px solid #000; padding-top:2px; font-size:12px;">${docTitle}</div>
-        </div>
-        
-        <div style="font-size:10px; position: relative; z-index: 1;">
-            <div class="row">
-                <span>CLIENTE:</span> 
-                <span class="client-val">${clientName}</span>
-            </div>
-            <div class="row"><span>RIF/CI:</span> <span class="right bold">${clientId}</span></div>
-            ${(clientDir) ? `<div class="row"><span>DIR:</span> <span class="right" style="font-size:9px">${clientDir.substring(0, 25)}</span></div>` : ''}
+        <div class="text-center">
+            ${isFiscal ? '<div class="bold" style="font-size:10px;">SENIAT</div>' : ''}
+            <div class="header-title black">FUNDACIÓN HIGEA</div>
+            <div class="header-meta bold">RIF: J-30521322-4</div>
+            <div class="header-meta" style="text-transform: none;">Av. Vargas, Carrera 31, Edif. Sede<br>Barquisimeto, Lara</div>
+            <div class="doc-type bold text-center">${docTitle}</div>
         </div>
 
-        <div class="line"></div>
-        <div class="row" style="font-size:10px;">
-            <span>FACT: 0000${saleId}</span>
-            <span>${dateStr.split(',')[0]}</span>
+        <div class="client-grid">
+            <div class="client-row">
+                <span class="label">CLIENTE:</span>
+                <span class="val">${clientName}</span>
+            </div>
+            <div class="client-row">
+                <span class="label">DOC ID:</span>
+                <span class="val nums">${clientId}</span>
+            </div>
+            ${clientDir ? `<div class="client-row"><span class="label">DIR:</span><span class="val" style="font-size:8px;">${clientDir.substring(0, 30)}</span></div>` : ''}
+            
+            <div class="divider"></div>
+            
+            <div class="client-row" style="font-size: 9px;">
+                <span>FACT: <span class="bold nums">#${saleId.toString().padStart(6, '0')}</span></span>
+                <span class="nums">${dateStr}</span>
+            </div>
         </div>
-        <div class="line"></div>
-        
-        <table style="position: relative; z-index: 1;">
-            <tr style="font-size:10px;"><td class="bold">CNT</td><td class="bold">DESCRIP</td><td class="bold right">BS</td></tr>
-            ${itemsHTML}
-        </table>
-        
-        <div class="line"></div>
-        
-        <div class="right" style="position: relative; z-index: 1;">
+
+        <div class="divider-bold"></div>
+
+        <div class="item-container">
+            <div class="item-header">
+                <div class="col-qty">CANT</div>
+                <div class="col-desc">DESCRIPCIÓN</div>
+                <div class="col-price">TOTAL</div>
+            </div>
+            <div class="nums">
+                ${itemsHTML}
+            </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="totals-area nums">
             ${(isFiscal || totalBsBase > 0) ? `
-            <div class="row" style="font-size:10px;">
-                <span>SUBTOTAL EXENTO:</span> 
-                <span>${totalBsExento.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div class="row" style="font-size:10px;">
-                <span>BASE IMPONIBLE:</span> 
-                <span>${totalBsBase.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div class="row" style="font-size:10px;">
-                <span>IVA (16%):</span> 
-                <span>${ivaBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div class="line"></div>
+                <div class="total-row"><span class="total-label">Subtotal Exento:</span><span class="total-val">${totalBsExento.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
+                <div class="total-row"><span class="total-label">Base Imponible:</span><span class="total-val">${totalBsBase.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
+                <div class="total-row"><span class="total-label">IVA (16%):</span><span class="total-val">${ivaBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
+                <div class="divider" style="border-style: solid; opacity: 0.5;"></div>
             ` : ''}
 
-            <div class="row bold" style="font-size:14px; margin-top:5px">
-                <span>TOTAL A PAGAR:</span> 
-                <span>${totalGeneralBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+            <div class="final-total">
+                <span class="black">TOTAL BS</span>
+                <span class="black" style="font-size:18px;">${totalGeneralBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
             </div>
-            
-            <div class="row bold" style="font-size:11px; color:#333; margin-top:2px;">
-                <span>(REF $${totalGeneralRef.toFixed(2)})</span>
-            </div>
-            
-            <div style="font-size:9px; margin-top:2px;">TASA BCV: ${rate.toFixed(2)} Bs/$</div>
+            <div class="ref-total bold">REF: $${totalGeneralRef.toFixed(2)}</div>
+            <div class="ref-total" style="font-size:9px;">Tasa de Cambio BCV: Bs ${rate.toFixed(2)}</div>
         </div>
 
-        ${isCredit ? '<div class="box">VENTA A CRÉDITO<br/>PENDIENTE DE PAGO</div>' : ''}
-        
-        <div class="legal-text" style="position: relative; z-index: 1;">
-            Recibí conforme la mercancía y servicios descritos sin daños aparentes. Montos expresados en Bolívares a la Tasa Oficial del BCV vigente.
-            
-            ${hasAdvanceGlobal ? '<br/><br/><strong>* DECLARACIÓN AVANCE:</strong> Declaro haber recibido a mi entera satisfacción el monto en efectivo detallado en el ítem "ENTREGA DE EFECTIVO".' : ''}
+        ${isCredit ? '<div class="text-center bold" style="margin-top:10px; padding:5px; border:1px solid #000; border-radius:4px;">VENTA A CRÉDITO - POR PAGAR</div>' : ''}
+
+        <div class="legal-box text-justify">
+            Recibí conforme mercancía y servicios. Precios en Bolívares según tasa oficial BCV vigente.
+            ${hasAdvanceGlobal ? '<br/><br/><strong>* AVANCE EFECTIVO:</strong> Declaro recibir a mi satisfacción el monto en efectivo detallado como "ENTREGA DE EFECTIVO", operación no sujeta a venta.' : ''}
         </div>
 
-        <br/>
-        <div class="signature-area" style="position: relative; z-index: 1;">
-            FIRMA Y CÉDULA CLIENTE
-        </div>
-        
-        <br/>
-        <div class="center" style="font-size:9px; position: relative; z-index: 1;">
-            COPIA DIGITAL / REIMPRESIÓN<br/>
-            ${isFiscal ? 'NO FISCAL - REFERENCIAL' : 'CONTROL INTERNO'}
+        <div class="signature-line"></div>
+        <div class="text-center" style="font-size: 8px; color:#666; margin-top:2px;">FIRMA Y CÉDULA CLIENTE</div>
+
+        <div class="text-center" style="font-size:8px; margin-top:15px; color:#888;">
+            COPIA DIGITAL / CONTROL INTERNO<br>
+            ${isFiscal ? 'DOCUMENTO REFERENCIAL' : 'SIN VALIDEZ FISCAL'}
         </div>
     </body>
     </html>
