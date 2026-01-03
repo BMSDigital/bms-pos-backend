@@ -216,7 +216,7 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// 4. PROCESAR VENTA (INTEGRADO: LOTES, AVANCES, CLIENTES Y CRÉDITO)
+// 4. PROCESAR VENTA (INTEGRADO: LOTES, AVANCES, CLIENTES, CRÉDITO Y ETIQUETAS DE CAPITAL)
 app.post('/api/sales', async (req, res) => {
     const { 
         items, 
@@ -251,6 +251,9 @@ app.post('/api/sales', async (req, res) => {
         let subtotalTaxableUsd = 0;
         let subtotalExemptUsd = 0;
 
+        // [NUEVO] VARIABLE PARA ACUMULAR LAS ETIQUETAS DE CAPITAL (Ej: " [CAP:50.00]")
+        let capitalTags = "";
+
         // --- 2. PRE-PROCESAMIENTO DE ITEMS (AVANCES) ---
         // Aquí detectamos si es un servicio o avance antes de tocar stock
         const processedItems = [];
@@ -258,6 +261,15 @@ app.post('/api/sales', async (req, res) => {
         for (const item of items) {
             let finalProductId = item.product_id;
             let isService = false;
+
+            // [NUEVO] DETECTAR ETIQUETA [CAP:...] EN EL NOMBRE QUE VIENE DEL FRONTEND
+            // Y guardarla en una variable para pegarla en la venta después.
+            if (item.name && item.name.includes('[CAP:')) {
+                const match = item.name.match(/\[CAP:([\d\.]+)\]/);
+                if (match) {
+                    capitalTags += ` ${match[0]}`; // Acumulamos la etiqueta
+                }
+            }
 
             // DETECTAR SI ES UN AVANCE DE EFECTIVO (ID texto o empieza con ADV)
             if (isNaN(finalProductId) || (typeof finalProductId === 'string' && finalProductId.startsWith('ADV'))) {
@@ -358,6 +370,10 @@ app.post('/api/sales', async (req, res) => {
             dueDate = date;
         }
 
+        // [NUEVO] CONCATENAR ETIQUETAS AL MÉTODO DE PAGO
+        // Así guardamos: "EFECTIVO USD [CAP:20.00]"
+        const finalPaymentMethod = (payment_method || 'CONTADO') + capitalTags;
+
         // --- 5. INSERTAR VENTA ---
         const saleQuery = `
             INSERT INTO sales (
@@ -369,8 +385,9 @@ app.post('/api/sales', async (req, res) => {
             RETURNING id
         `;
         
+        // [MODIFICADO] Usamos finalPaymentMethod en lugar de payment_method
         const saleValues = [
-            finalTotalUsd.toFixed(2), totalVes.toFixed(2), rateToUse, payment_method, saleStatus, finalCustomerId, dueDate,
+            finalTotalUsd.toFixed(2), totalVes.toFixed(2), rateToUse, finalPaymentMethod, saleStatus, finalCustomerId, dueDate,
             subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2),
             invoice_type || 'TICKET'
         ];
@@ -413,81 +430,66 @@ app.post('/api/sales', async (req, res) => {
 
 // --- REPORTES Y CRÉDITOS ---
 
-/// A. Resumen del Día (MEJORADO: Resta el capital de los Avances para mostrar solo Ganancia Real)
 app.get('/api/reports/daily', async (req, res) => {
-    const client = await pool.connect(); // Usamos cliente para mejor control
+    const client = await pool.connect(); // Usamos cliente para control de transacciones
     try {
-        // 1. Buscamos todas las ventas de hoy CON sus ítems para poder leer los nombres
-        // Necesitamos saber qué productos se vendieron para detectar el tag [CAP:...]
+        // 1. Buscamos las ventas de hoy. 
+        // [OPTIMIZACIÓN]: Consultamos directamente la tabla 'sales'.
+        // No hace falta unir con productos porque la etiqueta [CAP:...] ya está guardada en 'payment_method'.
         const result = await client.query(`
             SELECT 
-                s.id as sale_id, 
-                s.amount_paid_usd, 
-                s.bcv_rate_snapshot,
-                p.name, 
-                si.quantity
-            FROM sales s
-            JOIN sale_items si ON s.id = si.sale_id
-            JOIN products p ON si.product_id = p.id
-            WHERE DATE(s.created_at AT TIME ZONE 'America/Caracas') = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'America/Caracas')
-            AND s.status != 'ANULADO'
+                id, 
+                amount_paid_usd, 
+                bcv_rate_snapshot, 
+                payment_method
+            FROM sales 
+            WHERE DATE(created_at AT TIME ZONE 'America/Caracas') = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'America/Caracas')
+            AND status != 'ANULADO'
         `);
 
         // 2. Variables para acumular los totales
         let totalIngresoBrutoUSD = 0;   // Todo el dinero que entró (Ventas + Capital Avances)
         let totalIngresoBrutoVES = 0;   // Equivalente en Bs
-        let capitalAdescontarUSD = 0;   // Dinero que NO es venta (Capital de avances)
-        
-        // Usamos un Set para contar facturas únicas (porque el query trae una fila por producto)
-        const uniqueTransactions = new Set();
-        
-        // Mapa auxiliar para no sumar el monto de la factura multiples veces (si tiene varios productos)
-        const salesProcessed = new Set();
+        let totalCapitalAvances = 0;    // Dinero que salió (Capital prestado)
 
+        // Recorremos cada venta encontrada
         result.rows.forEach(row => {
-            uniqueTransactions.add(row.sale_id);
+            const paid = parseFloat(row.amount_paid_usd || 0);
+            const rate = parseFloat(row.bcv_rate_snapshot || globalBCVRate);
+            
+            // Sumamos al total bruto (lo que entró en caja físicamente)
+            totalIngresoBrutoUSD += paid;
+            totalIngresoBrutoVES += (paid * rate);
 
-            // A. Sumar el dinero ingresado (Solo una vez por factura)
-            if (!salesProcessed.has(row.sale_id)) {
-                const paid = parseFloat(row.amount_paid_usd || 0);
-                const rate = parseFloat(row.bcv_rate_snapshot || globalBCVRate);
-                
-                totalIngresoBrutoUSD += paid;
-                totalIngresoBrutoVES += (paid * rate);
-                
-                salesProcessed.add(row.sale_id);
-            }
-
-            // B. DETECTAR AVANCE DE EFECTIVO Y EXTRAER CAPITAL
-            // Buscamos el tag [CAP:numero] en el nombre del producto
-            if (row.name && row.name.includes('[CAP:')) {
+            // [LÓGICA BLINDADA]: Detectar Avance leyendo el Método de Pago
+            // Ejemplo de dato en BD: "PAGO MÓVIL [CAP:50.00]"
+            if (row.payment_method && row.payment_method.includes('[CAP:')) {
                 try {
-                    // Regex para sacar el número entre corchetes
-                    const capMatch = row.name.match(/\[CAP:([\d\.]+)\]/);
+                    // Extraemos el número que está dentro de los corchetes
+                    const capMatch = row.payment_method.match(/\[CAP:([\d\.]+)\]/);
                     if (capMatch && capMatch[1]) {
-                        const capitalUnitario = parseFloat(capMatch[1]);
-                        const cantidad = parseFloat(row.quantity || 1);
+                        const capital = parseFloat(capMatch[1]);
                         
-                        // Sumamos al acumulador de capital a restar
-                        capitalAdescontarUSD += (capitalUnitario * cantidad);
+                        // Acumulamos este capital para restarlo al final
+                        totalCapitalAvances += capital;
                     }
                 } catch (e) {
-                    console.error("Error leyendo capital de avance:", e);
+                    console.error("Error leyendo etiqueta CAP:", e);
                 }
             }
         });
 
-        // 3. Calculamos la Venta Neta (Lo que realmente ganaste)
-        // Ganancia = Todo lo que entró - El capital que prestaste
-        const ventaNetaUSD = totalIngresoBrutoUSD - capitalAdescontarUSD;
+        // 3. Calculamos la Venta Neta (Ganancia Real)
+        // Fórmula: Todo lo que entró - El capital que entregamos al cliente
+        const ventaNetaUSD = totalIngresoBrutoUSD - totalCapitalAvances;
         
-        // Ajustamos también los Bolívares proporcionalmente (usando tasa promedio del día o global)
-        const ventaNetaVES = totalIngresoBrutoVES - (capitalAdescontarUSD * globalBCVRate);
+        // Ajustamos también los Bolívares proporcionalmente
+        const ventaNetaVES = totalIngresoBrutoVES - (totalCapitalAvances * globalBCVRate);
 
-        // 4. Enviamos la respuesta con los NOMBRES EXACTOS que espera tu Frontend
+        // 4. Enviamos la respuesta con los NOMBRES EXACTOS que tu Frontend espera
         res.json({
-            total_transactions: uniqueTransactions.size,
-            total_usd: ventaNetaUSD.toFixed(2), // <--- Aquí va la MAGIA: Solo muestra tu ganancia
+            total_transactions: result.rowCount, // Cantidad de facturas emitidas hoy
+            total_usd: ventaNetaUSD.toFixed(2),  // <--- ¡AQUÍ ESTÁ LA SOLUCIÓN! Solo muestra tu ganancia.
             total_ves: ventaNetaVES.toFixed(2)
         });
 
