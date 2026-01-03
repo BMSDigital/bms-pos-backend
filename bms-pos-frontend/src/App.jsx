@@ -1541,7 +1541,8 @@ function App() {
                 total_usd: parseFloat(sale.total_usd) || 0,
                 amount_paid_usd: parseFloat(sale.amount_paid_usd) || 0,
                 bcv_rate_snapshot: parseFloat(sale.bcv_rate_snapshot) || 0,
-                total_ves: parseFloat(sale.total_ves) || 0
+                total_ves: parseFloat(sale.total_ves) || 0,
+                payment_method: sale.payment_method || '' // Asegurar que sea string
             }));
 
             setDailySalesList(sales);
@@ -1552,8 +1553,26 @@ function App() {
 
             sales.forEach(sale => {
                 if (sale.status !== 'ANULADO') {
-                    // Ahora sale.total_usd es un número, así que suma correctamente
-                    totalRef += sale.amount_paid_usd;
+                    // [CORRECCIÓN DEFINITIVA APLICADA AQUÍ]
+                    // 1. Tomamos el monto pagado base
+                    let montoReal = sale.amount_paid_usd;
+
+                    // 2. Verificamos si es un AVANCE DE EFECTIVO buscando el tag [CAP:...]
+                    // Si existe, restamos ese capital para dejar solo la ganancia (comisión).
+                    if (sale.payment_method && sale.payment_method.includes('[CAP:')) {
+                        try {
+                            const match = sale.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                            if (match && match[1]) {
+                                const capital = parseFloat(match[1]);
+                                montoReal -= capital; 
+                            }
+                        } catch (e) {
+                            console.error("Error restando capital en frontend:", e);
+                        }
+                    }
+
+                    // 3. Sumamos el monto neto al total acumulado
+                    totalRef += montoReal;
                     count++;
                 }
             });
@@ -2098,16 +2117,20 @@ function App() {
         try {
             const saleData = {
                 payment_method: paymentDescription || 'Pago Completo (0 USD)',
+                
                 // MODIFICADO: Incluir si el item es gravado o exento en el envío al backend
                 items: cart.map(i => ({
                     product_id: i.id,
+                    name: i.name, // <--- CRITICO: Esto envía la etiqueta [CAP:...] al servidor
                     quantity: i.quantity,
                     price_usd: i.price_usd,
                     is_taxable: i.is_taxable // <-- CRUCIAL: Enviar el estatus fiscal
                 })),
+                
                 is_credit: isCreditSale,
+                
                 // --- [CORRECCIÓN CLAVE AQUÍ] ---
-                // Enviamos los datos del cliente si es Crédito O si es Factura Fiscal (Esto soluciona tu error)
+                // Enviamos los datos del cliente si es Crédito O si es Factura Fiscal
                 customer_data: (isCreditSale || isFiscalInvoice) ? customerData : null,
                 due_days: isCreditSale ? dueDays : null,
 

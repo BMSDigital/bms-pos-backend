@@ -1178,6 +1178,7 @@ app.post('/api/cash/open', async (req, res) => {
     }
 });
 
+// 2. Consultar Estado Actual de la Caja (ADAPTADO: Descuenta salidas de Avance de Efectivo)
 app.get('/api/cash/current-status', async (req, res) => {
     try {
         const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' ORDER BY id DESC LIMIT 1");
@@ -1213,6 +1214,26 @@ app.get('/api/cash/current-status', async (req, res) => {
             const amount = parseFloat(row.amount_paid_usd || 0); // Lo que realmente se pagó
             const rate = parseFloat(row.bcv_rate_snapshot || 0);
 
+            // [NUEVO - SIN AFECTAR ESTRUCTURA]
+            // DETECTAR SALIDA DE DINERO POR AVANCE DE EFECTIVO
+            // Si el método de pago tiene [CAP:...], significa que entró dinero digital (ej. Zelle)
+            // pero salió efectivo físico. Debemos restar esa salida de la caja de Bolívares.
+            if (row.payment_method && row.payment_method.includes('[CAP:')) {
+                try {
+                    const match = row.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                    if (match && match[1]) {
+                        const capitalUSD = parseFloat(match[1]);
+                        const capitalVES = capitalUSD * rate; // Convertimos el capital a Bs
+                        
+                        // Restamos de la caja física porque el dinero salió
+                        systemTotals.cash_ves -= capitalVES;
+                    }
+                } catch (e) {
+                    console.error("Error descontando avance de caja:", e);
+                }
+            }
+
+            // [TU LÓGICA ORIGINAL INTACTA]
             // 1. DONACIONES (Salida de inventario, Cero dinero)
             if (pm.includes('DONACIÓN') || pm.includes('DONACION') || pm.includes('REGALO')) {
                 systemTotals.donations += amount; // Solo informativo
@@ -1221,8 +1242,6 @@ app.get('/api/cash/current-status', async (req, res) => {
             else if (pm.includes('CRÉDITO') || pm.includes('CREDITO')) {
                 // Si la venta fue mixta (parte pago, parte crédito), el amount_paid_usd ya trae lo pagado.
                 // Si es totalmente crédito, amount_paid_usd debería ser 0.
-                // En tu lógica actual: payment_method dice "Crédito: $X".
-                // Asumiremos que si el método dice Crédito, lo contamos aparte si amount_paid es 0.
                 if (amount === 0) systemTotals.credits += 0; // No suma a caja
             }
             // 3. DINERO REAL
