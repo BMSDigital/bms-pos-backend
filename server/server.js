@@ -1178,7 +1178,7 @@ app.post('/api/cash/open', async (req, res) => {
     }
 });
 
-// 2. Consultar Estado Actual de la Caja (ADAPTADO: Descuenta salidas de Avance de Efectivo)
+// 2. Consultar Estado Actual de la Caja (BLINDADO: Regex flexible y Tasa asegurada)
 app.get('/api/cash/current-status', async (req, res) => {
     try {
         const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' ORDER BY id DESC LIMIT 1");
@@ -1186,72 +1186,65 @@ app.get('/api/cash/current-status', async (req, res) => {
 
         const shift = shiftRes.rows[0];
 
-        // Sumamos ventas normales Y abonos de crédito realizados hoy
-        // Nota: Los abonos se guardan en 'sales' al actualizarse, o si tienes una tabla aparte. 
-        // En tu sistema actual, los abonos actualizan la venta original. 
-        // Para simplificar y que cuadre HOY, sumaremos ventas creadas hoy Y ventas actualizadas hoy (pagos de deuda).
-        // *Por seguridad y consistencia con tu código actual, seguiremos sumando ventas por fecha de creación HOY.*
-        
         const salesRes = await pool.query(`
             SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
             FROM sales 
             WHERE created_at >= $1 AND status != 'ANULADO'
         `, [shift.opened_at]);
 
-        // Inicializamos contadores detallados
         let systemTotals = { 
             cash_usd: 0, 
             cash_ves: 0, 
             zelle: 0, 
             pm: 0, 
             punto: 0,
-            credits: 0,    // Ventas a Crédito (Dinero que NO entró)
-            donations: 0   // Donaciones (Dinero que NUNCA entrará)
+            credits: 0,
+            donations: 0
         };
 
         salesRes.rows.forEach(row => {
+            // Normalizamos el método de pago a mayúsculas para facilitar comparaciones
             const pm = (row.payment_method || '').toUpperCase();
-            const amount = parseFloat(row.amount_paid_usd || 0); // Lo que realmente se pagó
+            const amount = parseFloat(row.amount_paid_usd || 0);
             
-            // [CORRECCIÓN CRÍTICA AQUÍ] 
-            // Si la tasa snapshot es 0, usamos la globalBCVRate para que la multiplicación no de 0.
-            const rate = parseFloat(row.bcv_rate_snapshot) || globalBCVRate || 1;
+            // [CORRECCIÓN 1]: Asegurar Tasa. Si es 0 o null, usar la global.
+            const rateSnapshot = parseFloat(row.bcv_rate_snapshot);
+            const rate = (rateSnapshot && rateSnapshot > 0) ? rateSnapshot : (globalBCVRate || 1);
 
-            // [NUEVO - SIN AFECTAR ESTRUCTURA]
-            // DETECTAR SALIDA DE DINERO POR AVANCE DE EFECTIVO
-            // Si el método de pago tiene [CAP:...], significa que entró dinero digital (ej. Zelle)
-            // pero salió efectivo físico. Debemos restar esa salida de la caja de Bolívares.
-            if (row.payment_method && row.payment_method.includes('[CAP:')) {
+            // [CORRECCIÓN 2]: Lógica de Resta de Avance BLINDADA
+            // Usamos una Regex más flexible que permite espacios: [CAP: 20.00] o [CAP:20.00]
+            if (pm.includes('[CAP:')) {
                 try {
-                    const match = row.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                    // Busca [CAP: seguido de números, puntos o comas
+                    const match = pm.match(/\[CAP:\s*([\d\.,]+)\]/);
                     if (match && match[1]) {
-                        const capitalUSD = parseFloat(match[1]);
-                        const capitalVES = capitalUSD * rate; // Convertimos el capital a Bs
-                        
-                        // Restamos de la caja física porque el dinero salió
-                        systemTotals.cash_ves -= capitalVES;
+                        // Reemplazamos coma por punto por si acaso viene con formato europeo
+                        const capitalStr = match[1].replace(',', '.');
+                        const capitalUSD = parseFloat(capitalStr);
 
-                        // Log para verificar en consola que se hizo la resta
-                        console.log(`📉 Avance: Restados Bs ${capitalVES.toFixed(2)} ($${capitalUSD})`);
+                        if (!isNaN(capitalUSD) && capitalUSD > 0) {
+                            const capitalVES = capitalUSD * rate;
+                            
+                            // RESTAMOS DE LA CAJA FÍSICA
+                            systemTotals.cash_ves -= capitalVES;
+
+                            console.log(`📉 Cierre Caja: Restado Bs ${capitalVES.toFixed(2)} por Avance de $${capitalUSD}`);
+                        }
                     }
                 } catch (e) {
-                    console.error("Error descontando avance de caja:", e);
+                    console.error("Error procesando Avance en Cierre:", e);
                 }
             }
 
-            // [TU LÓGICA ORIGINAL INTACTA]
-            // 1. DONACIONES (Salida de inventario, Cero dinero)
+            // [LÓGICA DE SUMA DE ENTRADAS]
             if (pm.includes('DONACIÓN') || pm.includes('DONACION') || pm.includes('REGALO')) {
-                systemTotals.donations += amount; // Solo informativo
+                systemTotals.donations += amount;
             }
-            // 2. CRÉDITOS PENDIENTES (Dinero futuro)
             else if (pm.includes('CRÉDITO') || pm.includes('CREDITO')) {
-                // Si la venta fue mixta (parte pago, parte crédito), el amount_paid_usd ya trae lo pagado.
-                // Si es totalmente crédito, amount_paid_usd debería ser 0.
-                if (amount === 0) systemTotals.credits += 0; // No suma a caja
+                if (amount === 0) systemTotals.credits += 0;
             }
-            // 3. DINERO REAL
             else {
+                // Sumamos según el método de pago
                 if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) {
                     systemTotals.cash_usd += amount;
                 } else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) {
@@ -1273,7 +1266,7 @@ app.get('/api/cash/current-status', async (req, res) => {
         });
 
     } catch (err) {
-        console.error(err);
+        console.error("Error en current-status:", err);
         res.status(500).json({ error: err.message });
     }
 });
