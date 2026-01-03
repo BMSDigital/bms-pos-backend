@@ -1212,7 +1212,10 @@ app.get('/api/cash/current-status', async (req, res) => {
         salesRes.rows.forEach(row => {
             const pm = (row.payment_method || '').toUpperCase();
             const amount = parseFloat(row.amount_paid_usd || 0); // Lo que realmente se pagó
-            const rate = parseFloat(row.bcv_rate_snapshot || 0);
+            
+            // [CORRECCIÓN CRÍTICA AQUÍ] 
+            // Si la tasa snapshot es 0, usamos la globalBCVRate para que la multiplicación no de 0.
+            const rate = parseFloat(row.bcv_rate_snapshot) || globalBCVRate || 1;
 
             // [NUEVO - SIN AFECTAR ESTRUCTURA]
             // DETECTAR SALIDA DE DINERO POR AVANCE DE EFECTIVO
@@ -1227,6 +1230,9 @@ app.get('/api/cash/current-status', async (req, res) => {
                         
                         // Restamos de la caja física porque el dinero salió
                         systemTotals.cash_ves -= capitalVES;
+
+                        // Log para verificar en consola que se hizo la resta
+                        console.log(`📉 Avance: Restados Bs ${capitalVES.toFixed(2)} ($${capitalUSD})`);
                     }
                 } catch (e) {
                     console.error("Error descontando avance de caja:", e);
