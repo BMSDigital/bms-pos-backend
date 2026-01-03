@@ -413,23 +413,89 @@ app.post('/api/sales', async (req, res) => {
 
 // --- REPORTES Y CRÉDITOS ---
 
-// A. Resumen del Día (CORREGIDO: Solo Flujo de Caja Real)
+/// A. Resumen del Día (MEJORADO: Resta el capital de los Avances para mostrar solo Ganancia Real)
 app.get('/api/reports/daily', async (req, res) => {
+    const client = await pool.connect(); // Usamos cliente para mejor control
     try {
-        const result = await pool.query(`
+        // 1. Buscamos todas las ventas de hoy CON sus ítems para poder leer los nombres
+        // Necesitamos saber qué productos se vendieron para detectar el tag [CAP:...]
+        const result = await client.query(`
             SELECT 
-                COUNT(*) as total_transactions,
-                -- 1. Total Recaudado USD (Solo suma lo que está en la columna 'pagado')
-                COALESCE(SUM(amount_paid_usd), 0) as total_usd,
-                
-                -- 2. Total Recaudado VES (Lo pagado * la tasa de esa venta)
-                COALESCE(SUM(amount_paid_usd * bcv_rate_snapshot), 0) as total_ves
-            FROM sales 
-            WHERE DATE(created_at) = CURRENT_DATE AND status != 'ANULADO'
+                s.id as sale_id, 
+                s.amount_paid_usd, 
+                s.bcv_rate_snapshot,
+                p.name, 
+                si.quantity
+            FROM sales s
+            JOIN sale_items si ON s.id = si.sale_id
+            JOIN products p ON si.product_id = p.id
+            WHERE DATE(s.created_at AT TIME ZONE 'America/Caracas') = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'America/Caracas')
+            AND s.status != 'ANULADO'
         `);
-        res.json(result.rows[0]);
+
+        // 2. Variables para acumular los totales
+        let totalIngresoBrutoUSD = 0;   // Todo el dinero que entró (Ventas + Capital Avances)
+        let totalIngresoBrutoVES = 0;   // Equivalente en Bs
+        let capitalAdescontarUSD = 0;   // Dinero que NO es venta (Capital de avances)
+        
+        // Usamos un Set para contar facturas únicas (porque el query trae una fila por producto)
+        const uniqueTransactions = new Set();
+        
+        // Mapa auxiliar para no sumar el monto de la factura multiples veces (si tiene varios productos)
+        const salesProcessed = new Set();
+
+        result.rows.forEach(row => {
+            uniqueTransactions.add(row.sale_id);
+
+            // A. Sumar el dinero ingresado (Solo una vez por factura)
+            if (!salesProcessed.has(row.sale_id)) {
+                const paid = parseFloat(row.amount_paid_usd || 0);
+                const rate = parseFloat(row.bcv_rate_snapshot || globalBCVRate);
+                
+                totalIngresoBrutoUSD += paid;
+                totalIngresoBrutoVES += (paid * rate);
+                
+                salesProcessed.add(row.sale_id);
+            }
+
+            // B. DETECTAR AVANCE DE EFECTIVO Y EXTRAER CAPITAL
+            // Buscamos el tag [CAP:numero] en el nombre del producto
+            if (row.name && row.name.includes('[CAP:')) {
+                try {
+                    // Regex para sacar el número entre corchetes
+                    const capMatch = row.name.match(/\[CAP:([\d\.]+)\]/);
+                    if (capMatch && capMatch[1]) {
+                        const capitalUnitario = parseFloat(capMatch[1]);
+                        const cantidad = parseFloat(row.quantity || 1);
+                        
+                        // Sumamos al acumulador de capital a restar
+                        capitalAdescontarUSD += (capitalUnitario * cantidad);
+                    }
+                } catch (e) {
+                    console.error("Error leyendo capital de avance:", e);
+                }
+            }
+        });
+
+        // 3. Calculamos la Venta Neta (Lo que realmente ganaste)
+        // Ganancia = Todo lo que entró - El capital que prestaste
+        const ventaNetaUSD = totalIngresoBrutoUSD - capitalAdescontarUSD;
+        
+        // Ajustamos también los Bolívares proporcionalmente (usando tasa promedio del día o global)
+        const ventaNetaVES = totalIngresoBrutoVES - (capitalAdescontarUSD * globalBCVRate);
+
+        // 4. Enviamos la respuesta con los NOMBRES EXACTOS que espera tu Frontend
+        res.json({
+            total_transactions: uniqueTransactions.size,
+            total_usd: ventaNetaUSD.toFixed(2), // <--- Aquí va la MAGIA: Solo muestra tu ganancia
+            total_ves: ventaNetaVES.toFixed(2)
+        });
+
     } catch (err) {
+        console.error("Error en reporte diario:", err);
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 

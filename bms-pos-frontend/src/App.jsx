@@ -355,15 +355,23 @@ function App() {
         // El precio en el carrito será el TOTAL (Avance + Comisión) convertido a USD
         const totalInUsd = totalToChargeBs / bcvRate;
 
+        // [MODIFICACIÓN CLAVE UX/BACKEND] 
+        // Calculamos el Capital Neto en USD para guardarlo en la etiqueta oculta.
+        // Esto permite que el backend sepa exactamente cuánto dinero NO es venta real.
+        const capitalInUsd = amount / bcvRate;
+
         // 3. Crear el Item "Servicio"
         const advanceItem = {
             id: `ADV-${Date.now()}`, // ID único temporal
-            name: `🔴 AVANCE EFECTIVO (Entregar: Bs ${formatBs(amount)})`,
-            price_usd: totalInUsd.toFixed(2), // Precio total en USD
+            // Aquí inyectamos el tag [CAP:00.00] en el nombre.
+            // El usuario ve: "🔴 AVANCE EFECTIVO [CAP:25.00] (Entregar: Bs 1000)"
+            // El backend usa ese [CAP:25.00] para restar el capital de las ventas.
+            name: `🔴 AVANCE EFECTIVO [CAP:${capitalInUsd.toFixed(2)}] (Entregar: Bs ${formatBs(amount)})`,
+            price_usd: totalInUsd.toFixed(2), // Precio total en USD (Capital + Comisión)
             price_ves: formatBs(totalToChargeBs), // Solo visual
             stock: 999, // Servicio ilimitado
             icon_emoji: "💸",
-            is_taxable: false, // Generalmente esto no lleva IVA, o depende de tu contador
+            is_taxable: false, // Generalmente esto no lleva IVA
             quantity: 1,
             category: "Servicios"
         };
@@ -372,7 +380,7 @@ function App() {
         setIsCashAdvanceOpen(false);
         setAdvanceData({ amountBs: '', commission: 10 }); // Reset
 
-        // Alerta de recordatorio para el cajero
+        // Alerta de recordatorio para el cajero (SIN CAMBIOS)
         Swal.fire({
             icon: 'warning',
             title: '¡Recordatorio de Caja!',
