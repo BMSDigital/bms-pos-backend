@@ -6536,20 +6536,57 @@ function App() {
                             {selectedSaleDetail.status !== 'ANULADO' ? (
                                 // CAMBIO AQUÍ: Reduje mt-6 a mt-3 y pt-4 a pt-3
                                 <div className="mt-3 pt-3 border-t border-gray-100">
-                                    <button
+                                    {/* BOTÓN UI/UX AVANZADO - CON VALIDACIÓN DE STOCK Y PAGOS PARCIALES */}
+<button
     onClick={() => handleVoidSale(selectedSaleDetail)}
-    // [VALIDACIÓN VISUAL]: Bloqueamos el botón si es ANULADO o PARCIAL
+    // 1. VALIDACIÓN LÓGICA: Se deshabilita si es ANULADO o PARCIAL
     disabled={selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL'}
-    className={`flex-1 font-bold py-3 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2
+    
+    // 2. ESTILOS DINÁMICOS:
+    // Si está bloqueado: Fondo gris, borde gris, cursor prohibido.
+    // Si está activo: Tu diseño original (Blanco, Borde Rojo, Hover Rojo Suave).
+    className={`w-full group relative flex items-center justify-center gap-3 px-6 py-3 rounded-xl border-2 transition-all duration-300 shadow-sm
         ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
-            ? 'bg-gray-200 text-gray-400 cursor-not-allowed border border-gray-300' // Estilo Bloqueado (Gris)
-            : 'bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-100'     // Estilo Activo (Rojo)
+            ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' // Estilo Bloqueado
+            : 'bg-white border-red-100 text-red-600 hover:bg-red-50 hover:border-red-200 active:scale-95' // Tu Estilo Original
         }`}
 >
-    <span>🗑️</span>
-    {/* Texto dinámico según el estado */}
-    {selectedSaleDetail.status === 'ANULADO' ? 'Venta Anulada' : 
-     selectedSaleDetail.status === 'PARCIAL' ? '⛔ Bloqueado (Hay Abonos)' : 'Anular Venta'}
+    {/* Ícono de Papelera con fondo adaptativo */}
+    <div className={`p-2 rounded-lg transition-colors
+        ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
+            ? 'bg-gray-200' // Fondo gris si está bloqueado
+            : 'bg-red-50 group-hover:bg-red-100' // Fondo rojo original
+        }`}>
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+    </div>
+
+    {/* Textos Informativos Dinámicos */}
+    <div className="text-left flex-1">
+        <span className="block text-sm font-bold tracking-wide">
+            {/* Lógica de Texto del Título */}
+            {selectedSaleDetail.status === 'ANULADO' 
+                ? 'VENTA YA ANULADA' 
+                : selectedSaleDetail.status === 'PARCIAL' 
+                    ? 'ACCIÓN BLOQUEADA (PAGOS PARCIALES)' 
+                    : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'EMITIR NOTA DE CRÉDITO' : 'ANULAR VENTA (DEVOLVER STOCK)')
+            }
+        </span>
+        <span className={`block text-[10px] font-medium
+            ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
+                ? 'text-gray-400' // Texto gris explicativo si bloqueado
+                : 'text-red-400'  // Texto rojo original
+            }`}>
+            {/* Lógica de Subtítulo */}
+            {selectedSaleDetail.status === 'ANULADO' 
+                ? 'Esta operación ya fue procesada anteriormente' 
+                : selectedSaleDetail.status === 'PARCIAL' 
+                    ? 'Debe liquidar la deuda o gestionar reembolso manual antes de anular' 
+                    : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'Genera documento fiscal de reverso' : 'Reversa inventario y contabilidad')
+            }
+        </span>
+    </div>
 </button>
                                 </div>
                             ) : (

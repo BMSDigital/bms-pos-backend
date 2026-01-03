@@ -970,25 +970,25 @@ app.post('/api/sales/:id/void', async (req, res) => {
         await client.query('BEGIN');
 
         // 1. Verificar el estado actual de la venta
+        // [MEJORA]: Traemos status e invoice_type
         const saleCheck = await client.query('SELECT status, invoice_type FROM sales WHERE id = $1', [id]);
         
         if (saleCheck.rows.length === 0) throw new Error('Venta no encontrada');
-        
-        const currentStatus = saleCheck.rows[0].status;
 
-        // [VALIDACIÓN SOLICITADA]: Bloquear si ya está anulada
-        if (currentStatus === 'ANULADO') {
-            throw new Error('Esta venta ya está anulada.');
-        }
+        // [CORRECCIÓN CRÍTICA]: Limpiamos el estatus para evitar errores falsos
+        const rawStatus = saleCheck.rows[0].status;
+        const currentStatus = (rawStatus || '').trim().toUpperCase();
 
-        // [VALIDACIÓN SOLICITADA]: Bloquear si tiene abonos (PARCIAL)
-        // Esto protege la caja para que no anulen una venta que ya tiene dinero ingresado parcialmente.
+        // A. Validación: Si ya está anulada
+        if (currentStatus === 'ANULADO') throw new Error('Esta venta ya está anulada.');
+
+        // B. Validación: Si es PARCIAL (SOLICITUD UX: Bloquear para no descuadrar caja)
         if (currentStatus === 'PARCIAL') {
-            throw new Error('No se puede anular una venta con pagos PARCIALES. Debe liquidar la deuda o gestionar la devolución de los abonos primero.');
+            throw new Error('ACCIÓN DENEGADA: No puede anular una venta con estatus PARCIAL (tiene abonos). Debe liquidar la deuda o gestionar la devolución manual.');
         }
 
         // 2. Obtener los ítems para devolver al inventario
-        // Traemos precio, nombre y categoría para facilitar la lógica de reingreso
+        // [MEJORA]: Traemos precio, nombre Y CATEGORÍA para filtrar mejor los servicios
         const itemsRes = await client.query(`
             SELECT si.product_id, si.quantity, p.name, p.category, p.price_usd 
             FROM sale_items si
@@ -999,13 +999,15 @@ app.post('/api/sales/:id/void', async (req, res) => {
         // 3. PROCESO DE DEVOLUCIÓN DE STOCK (LÓGICA INVERSA A LA VENTA)
         for (const item of itemsRes.rows) {
             
-            // A. Detectar si es un Servicio o Avance de Efectivo para ignorar stock
-            // Se valida por nombre o código para asegurar que no se cree inventario fantasma.
+            // A. Detectar si es un Servicio (ej. Avance de Efectivo) para ignorar stock
+            // [VALIDACIÓN ROBUSTA]: Detectamos "AVANCE" en nombre o si la categoría es SERVICIOS
+            const nameUpper = (item.name || '').toUpperCase();
+            const catUpper = (item.category || '').toUpperCase();
+            
             const isService = (
-                item.name === 'AVANCE DE EFECTIVO' || 
-                item.product_id.toString().startsWith('ADV') ||
-                item.category === 'SERVICIOS' ||
-                item.category === 'Servicios'
+                nameUpper.includes('AVANCE') ||       // Detecta "AVANCE DE EFECTIVO", "Avance", etc.
+                catUpper === 'SERVICIOS' ||           // Detecta Categoría Servicios
+                item.product_id.toString().startsWith('ADV')
             );
             
             if (!isService) {
@@ -1025,7 +1027,7 @@ app.post('/api/sales/:id/void', async (req, res) => {
                         [item.quantity, targetBatch.rows[0].id]
                     );
                 } else {
-                    // Caso raro: No hay lotes. Creamos un lote de recuperación.
+                    // Caso raro: No hay lotes (se borraron todos). Creamos un lote de recuperación.
                     await client.query(`
                         INSERT INTO product_batches (product_id, stock, batch_code, cost_usd)
                         VALUES ($1, $2, 'REINGRESO-ANULACION', $3)
@@ -1038,7 +1040,7 @@ app.post('/api/sales/:id/void', async (req, res) => {
                     [item.quantity, item.product_id]
                 );
 
-                // D. Registrar en KARDEX (inventory_movements)
+                // D. Registrar en KARDEX (inventory_movements) - ¡INDISPENSABLE!
                 // Consultamos el stock final para que el Kardex quede exacto
                 const finalStockRes = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
                 const finalStock = finalStockRes.rows[0].stock;
@@ -1047,23 +1049,23 @@ app.post('/api/sales/:id/void', async (req, res) => {
                     INSERT INTO inventory_movements (product_id, type, quantity, reason, document_ref, new_stock)
                     VALUES ($1, 'IN', $2, 'ANULACION_VENTA', $3, $4)
                 `, [
-                    item.product_id,           // $1
-                    item.quantity,             // $2
-                    `ANULACION VENTA #${id}`,  // $3
-                    finalStock                 // $4
+                    item.product_id,            // $1
+                    item.quantity,              // $2
+                    `ANULACION VENTA #${id}`,   // $3
+                    finalStock                  // $4
                 ]);
             } else {
-                console.log(`⏩ Item omitido de devolución de stock (Servicio/Avance): ${item.name}`);
+                // LOG DE SEGURIDAD
+                console.log(`⏩ Omitiendo devolución de stock para ítem tipo Servicio/Avance: ${item.name}`);
             }
         }
 
         // 4. Actualizar la venta a ANULADO
-        // Se deja registro del motivo
+        // Se deja registro del motivo en el método de pago para auditoría visual
         const updateQuery = `
             UPDATE sales 
             SET status = 'ANULADO', 
-                payment_method = payment_method || ' [ANULADO: ' || $1 || ']',
-                notes = COALESCE(notes, '') || ' | ANULADO POR: ' || $1
+                payment_method = payment_method || ' [ANULADO: ' || $1 || ']' 
             WHERE id = $2 
             RETURNING id
         `;
