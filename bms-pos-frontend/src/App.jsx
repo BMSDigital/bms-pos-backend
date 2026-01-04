@@ -822,7 +822,7 @@ const promptOpenCash = async () => {
         // Datos de la Empresa y Tasa
         doc.setFontSize(9);
         doc.text("RIF: J-30521322-4", pageWidth - 14, 10, { align: 'right' });
-        doc.text("Razón Social: VOLUNTARIADO HIGEA", pageWidth - 14, 15, { align: 'right' });
+        doc.text("Razón Social: VOLUNTARIADO HIGEA C.A.", pageWidth - 14, 15, { align: 'right' });
         doc.text(`Emisión: ${new Date().toLocaleString('es-VE')}`, pageWidth - 14, 20, { align: 'right' });
         doc.text(`Tasa de Cambio Base: Bs ${formatBs(bcvRate)}`, pageWidth - 14, 25, { align: 'right' });
 
@@ -966,7 +966,7 @@ const promptOpenCash = async () => {
         // --- DATOS FISCALES DE LA EMPRESA (NUEVO) ---
         doc.setFontSize(9);
         doc.text("RIF: J-30521322-4", 14, 24); // Ajustar con tu RIF real
-        doc.text("Razón Social: VOLUNTARIADO HIGEA", 14, 29); // Ajustar nombre
+        doc.text("Razón Social: VOLUNTARIADO HIGEA C.A.", 14, 29); // Ajustar nombre
 
         // Datos de Fecha y Tasa (Alineados a la derecha)
         const dateStr = new Date().toLocaleString('es-VE');
@@ -1109,7 +1109,7 @@ const promptOpenCash = async () => {
         // --- DATOS DE LA EMPRESA ---
         doc.setFontSize(9);
         doc.text("J-30521322-4", 14, 24); 
-        doc.text("Razón Social: VOLUNTARIADO HIGEA", 14, 28);
+        doc.text("Razón Social: VOLUNTARIADO HIGEA C.A.", 14, 28);
 
         // Datos de la Jornada (Alineados a la derecha)
         const fecha = new Date().toLocaleDateString('es-VE');
@@ -2175,7 +2175,7 @@ const promptOpenCash = async () => {
 
         <div class="text-center">
             ${isFiscal ? '<div class="bold" style="font-size:10px;">SENIAT</div>' : ''}
-            <div class="header-title black">FUNDACIÓN HIGEA</div>
+            <div class="header-title black">VOLUNTARIADO HIGEA C.A.</div>
             <div class="header-meta bold">RIF: J-30521322-4</div>
             <div class="header-meta" style="text-transform: none;">Av. Vargas, Carrera 31, Edif. Sede<br>Barquisimeto, Lara</div>
             <div class="doc-type bold text-center">${docTitle}</div>
@@ -3875,183 +3875,197 @@ const handleCashClose = async () => {
         }
     };
 
-    // --- FUNCIÓN REPORTE PDF (UX DETALLADA: BASE + VENTAS) ---
-    const printClosingReport = (shift) => {
-        const doc = new jsPDF();
-        const pageWidth = doc.internal.pageSize.width;
-        const pageHeight = doc.internal.pageSize.height;
+    // --- FUNCIÓN REPORTE PDF (UX PREMIUM VENEZUELA: DATOS FISCALES + AVANCES) ---
+const printClosingReport = (shift) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+    const pageHeight = doc.internal.pageSize.height;
 
-        // --- PALETA DE COLORES ---
-        const colors = {
-            header: [0, 86, 179],     // Azul Higea
-            textHeader: [255, 255, 255],
-            textDark: [0, 0, 0],      // Negro Puro
-            textGray: [80, 80, 80],   // Gris Oscuro
-            success: [22, 163, 74],   // Verde
-            danger: [220, 38, 38],    // Rojo
-            bgTable: [241, 245, 249], // Fondo gris claro
-            line: [226, 232, 240]     // Líneas
-        };
-
-        // 1. ENCABEZADO
-        doc.setFillColor(...colors.header);
-        doc.rect(0, 0, pageWidth, 26, 'F');
-
-        doc.setFontSize(18);
-        doc.setTextColor(...colors.textHeader);
-        doc.setFont('helvetica', 'bold');
-        doc.text("Resumen de Caja", 14, 16);
-
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`ID #${shift.id}  •  ${new Date(shift.opened_at).toLocaleDateString('es-VE')} - ${new Date().toLocaleTimeString('es-VE')}`, 14, 22);
-
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        const statusText = shift.status === 'ABIERTA' ? "CAJA ABIERTA" : "CAJA CERRADA";
-        doc.text(statusText, pageWidth - 14, 16, { align: 'right' });
-
-        // --- NUEVO: DETALLE DEL FONDO DE CAJA (Base) ---
-        // Esto explica por qué hay dinero aunque no haya ventas
-        doc.setFontSize(9);
-        doc.setTextColor(255, 255, 255); // Texto blanco sobre azul
-        const baseUsd = parseFloat(shift.initial_cash_usd || 0);
-        const baseVes = parseFloat(shift.initial_cash_ves || 0);
-        doc.text(`Fondo Inicial (Base): Ref ${baseUsd.toFixed(2)} / Bs ${baseVes.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, pageWidth - 14, 22, { align: 'right' });
-
-
-        // 2. TABLA DE ARQUEO
-        let y = 45;
-
-        // Encabezados
-        doc.setFillColor(...colors.bgTable);
-        doc.rect(14, y - 6, pageWidth - 28, 10, 'F');
-
-        doc.setFontSize(9);
-        doc.setTextColor(...colors.textDark);
-        doc.setFont('helvetica', 'bold');
-
-        const col = { name: 18, sys: 85, real: 135, diff: 190 };
-
-        doc.text("MÉTODO DE PAGO", col.name, y);
-        doc.text("SISTEMA (Base + Venta)", col.sys, y, { align: 'right' }); // Título más claro
-        doc.text("CONTEO REAL", col.real, y, { align: 'right' });
-        doc.text("DIFERENCIA", col.diff, y, { align: 'right' });
-
-        y += 12;
-
-        // Función Helper para filas
-        const drawStackedRow = (label, sysUsd, sysVes, realUsd, realVes) => {
-            const sUsd = parseFloat(sysUsd || 0);
-            const sVes = parseFloat(sysVes || 0);
-            const rUsd = parseFloat(realUsd || 0);
-            const rVes = parseFloat(realVes || 0);
-
-            // Calculamos diferencia visual
-            const diffUsd = rUsd - sUsd;
-            const diffVes = rVes - sVes;
-
-            // Ocultar fila solo si TODO es 0 absoluto
-            if (sUsd === 0 && sVes === 0 && rUsd === 0 && rVes === 0) return;
-
-            // Etiqueta
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.setTextColor(...colors.textDark);
-            doc.text(label, col.name, y + 2);
-
-            // Fuente igualada (9 pts)
-            const fontSizeVal = 9;
-            const lineHeight = 4.5;
-
-            // --- COLUMNA SISTEMA ---
-            doc.setFontSize(fontSizeVal);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...colors.textDark);
-            doc.text(`Bs ${sVes.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, col.sys, y, { align: 'right' });
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...colors.textGray);
-            doc.text(`Ref ${sUsd.toFixed(2)}`, col.sys, y + lineHeight, { align: 'right' });
-
-            // --- COLUMNA REAL ---
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...colors.textDark);
-            doc.text(`Bs ${rVes.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, col.real, y, { align: 'right' });
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...colors.textGray);
-            doc.text(`Ref ${rUsd.toFixed(2)}`, col.real, y + lineHeight, { align: 'right' });
-
-            // --- COLUMNA DIFERENCIA ---
-            doc.setFont('helvetica', 'bold');
-
-            // Diferencia Bs
-            if (Math.abs(diffVes) < 1) {
-                doc.setTextColor(...colors.success);
-                doc.text("OK", col.diff, y, { align: 'right' });
-            } else {
-                doc.setTextColor(...colors.danger);
-                const sign = diffVes > 0 ? '+' : '';
-                doc.text(`${sign}Bs ${diffVes.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, col.diff, y, { align: 'right' });
-            }
-
-            // Diferencia Ref
-            if (Math.abs(diffUsd) < 0.1) {
-                doc.setTextColor(...colors.success);
-                doc.text("OK", col.diff, y + lineHeight, { align: 'right' });
-            } else {
-                doc.setTextColor(...colors.danger);
-                const sign = diffUsd > 0 ? '+' : '';
-                doc.text(`${sign}Ref ${diffUsd.toFixed(2)}`, col.diff, y + lineHeight, { align: 'right' });
-            }
-
-            // Línea
-            doc.setDrawColor(...colors.line);
-            doc.line(14, y + 9, pageWidth - 14, y + 9);
-
-            y += 16;
-        };
-
-        // --- FILAS DE DATOS ---
-        // 1. EFECTIVO: Aquí sumamos la BASE al SISTEMA para que cuadre con el conteo total
-        //    (Base Inicial + Ventas Sistema) vs (Conteo Total)
-        drawStackedRow(
-            "Efectivo (Gaveta)",
-            parseFloat(shift.system_cash_usd || 0) + parseFloat(shift.initial_cash_usd || 0),
-            parseFloat(shift.system_cash_ves || 0) + parseFloat(shift.initial_cash_ves || 0),
-            shift.real_cash_usd,
-            shift.real_cash_ves
-        );
-
-        // Los demás métodos no tienen base inicial, se pasan directo
-        drawStackedRow("Zelle", shift.system_zelle, 0, shift.real_zelle, 0);
-        drawStackedRow("Pago Móvil", 0, shift.system_pago_movil, 0, shift.real_pago_movil);
-        drawStackedRow("Punto de Venta", 0, shift.system_punto, 0, shift.real_punto);
-
-        // 3. OBSERVACIONES
-        y += 5;
-        doc.setFillColor(...colors.bgTable);
-        doc.roundedRect(14, y, pageWidth - 28, 20, 2, 2, 'F');
-
-        doc.setFontSize(9);
-        doc.setTextColor(...colors.textDark);
-        doc.setFont('helvetica', 'bold');
-        doc.text("Observaciones:", 16, y + 6);
-
-        doc.setFont('helvetica', 'normal');
-        const notes = shift.notes || "Sin observaciones registradas.";
-        const splitNotes = doc.splitTextToSize(notes, pageWidth - 40);
-        doc.text(splitNotes, 16, y + 11);
-
-        // 4. PIE DE PÁGINA
-        doc.setFontSize(8);
-        doc.setTextColor(0, 0, 0);
-        doc.setFont('helvetica', 'bold');
-        doc.text("Reporte generado automáticamente por Higea POS", 14, pageHeight - 10);
-
-        doc.save(`Resumen_Caja_${shift.id}.pdf`);
+    // --- 🏢 DATOS FISCALES CONFIGURABLES (EDITAR AQUÍ) ---
+    const FISCAL_INFO = {
+        name: "VOLUNTARIADO HIGEA C.A.",
+        rif: "J-30521322-4",
+        address: " Av. Vargas con Carrera 31, Edif. Badan Lara, Barquisimeto",
+        //serial: "HKA-11002394 (Simulado)",
+        providencia: "Providencia Administrativa SNAT/2024/00012"
     };
+
+    // Colores Institucionales
+    const colors = {
+        header: [15, 23, 42],    // Slate 900
+        textHeader: [255, 255, 255],
+        textDark: [30, 41, 59],  // Slate 800
+        textLight: [100, 116, 139], // Slate 500
+        accent: [37, 99, 235],   // Blue 600
+        bgRow: [248, 250, 252],  // Slate 50
+        line: [226, 232, 240]
+    };
+
+    // 1. ENCABEZADO FISCAL (SENIAT STYLE)
+    // Fondo oscuro para título
+    doc.setFillColor(...colors.header);
+    doc.rect(0, 0, pageWidth, 40, 'F'); // Aumenté altura para que quepa la data fiscal
+
+    // Título Principal
+    doc.setFontSize(18);
+    doc.setTextColor(...colors.textHeader);
+    doc.setFont('helvetica', 'bold');
+    doc.text("REPORTE DE CIERRE (Z)", 14, 15);
+
+    // Datos de la Empresa (Izquierda)
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text(FISCAL_INFO.name, 14, 22);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`RIF: ${FISCAL_INFO.rif}`, 14, 26);
+    // Dirección con salto de línea si es muy larga
+    const splitAddress = doc.splitTextToSize(FISCAL_INFO.address, 110);
+    doc.text(splitAddress, 14, 30);
+
+    // Datos del Reporte (Derecha)
+    doc.setFontSize(10);
+    doc.setTextColor(203, 213, 225); // Slate 300
+    doc.text(`CONTROL FISCAL INTERNO`, pageWidth - 14, 15, { align: 'right' });
+    
+    doc.setFontSize(9);
+    doc.text(`TURNO ID: #${shift.id}`, pageWidth - 14, 22, { align: 'right' });
+    //doc.text(`SERIAL: ${FISCAL_INFO.serial}`, pageWidth - 14, 26, { align: 'right' });
+    doc.text(`${new Date(shift.opened_at).toLocaleDateString('es-VE')} ${new Date().toLocaleTimeString('es-VE')}`, pageWidth - 14, 30, { align: 'right' });
+
+    let y = 55; // Bajamos el inicio del contenido
+
+    // --- SECCIÓN 1: RESUMEN DE MOVIMIENTOS ---
+    doc.setFontSize(11);
+    doc.setTextColor(...colors.textDark);
+    doc.setFont('helvetica', 'bold');
+    doc.text("1. CONCILIACIÓN DE EFECTIVO (GAVETA)", 14, y);
+    
+    doc.setDrawColor(...colors.accent);
+    doc.setLineWidth(0.5);
+    doc.line(14, y + 2, pageWidth - 14, y + 2);
+    y += 10;
+
+    const drawSummaryRow = (label, vesVal, usdVal, isDeduction = false, isTotal = false) => {
+        const xValVes = 140;
+        const xValUsd = 180;
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', isTotal ? 'bold' : 'normal');
+        doc.setTextColor(...(isDeduction ? [220, 38, 38] : (isTotal ? colors.textDark : colors.textLight)));
+        
+        doc.text(label, 14, y);
+        
+        const prefix = isDeduction ? '-' : '';
+        doc.text(`${prefix}Bs ${vesVal.toLocaleString('es-VE', {minimumFractionDigits:2})}`, xValVes, y, { align: 'right' });
+        doc.text(`${prefix}$${usdVal.toFixed(2)}`, xValUsd, y, { align: 'right' });
+        
+        y += 7;
+    };
+
+    // Valores
+    const baseVes = parseFloat(shift.initial_cash_ves || 0);
+    const baseUsd = parseFloat(shift.initial_cash_usd || 0);
+    const ventasVes = parseFloat(shift.system_cash_ves || 0);
+    const ventasUsd = parseFloat(shift.system_cash_usd || 0);
+    const avancesVes = parseFloat(shift.cash_outflows_ves || 0);
+    const avancesUsd = parseFloat(shift.cash_outflows_usd || 0);
+
+    const esperadoVes = (baseVes + ventasVes) - avancesVes;
+    const esperadoUsd = (baseUsd + ventasUsd) - avancesUsd;
+
+    drawSummaryRow("(+) Fondo de Caja Inicial", baseVes, baseUsd);
+    drawSummaryRow("(+) Ventas en Efectivo", ventasVes, ventasUsd);
+    
+    if (avancesVes > 0 || avancesUsd > 0) {
+        drawSummaryRow("(-) Avances / Retiros", avancesVes, avancesUsd, true);
+    }
+
+    doc.setDrawColor(200, 200, 200);
+    doc.line(100, y - 4, pageWidth - 14, y - 4);
+    
+    drawSummaryRow("(=) TOTAL ESPERADO EN GAVETA", esperadoVes, esperadoUsd, false, true);
+    
+    y += 10;
+
+    // --- SECCIÓN 2: DESGLOSE ---
+    doc.setFontSize(11);
+    doc.setTextColor(...colors.textDark);
+    doc.setFont('helvetica', 'bold');
+    doc.text("2. DESGLOSE POR MÉTODO DE PAGO", 14, y);
+    doc.setDrawColor(...colors.accent);
+    doc.line(14, y + 2, pageWidth - 14, y + 2);
+    y += 12;
+
+    // Header Tabla
+    doc.setFillColor(...colors.bgRow);
+    doc.rect(14, y - 6, pageWidth - 28, 10, 'F');
+    doc.setFontSize(9);
+    doc.text("MÉTODO", 18, y);
+    doc.text("ESPERADO (SISTEMA)", 90, y, {align:'right'});
+    doc.text("CONTADO (REAL)", 140, y, {align:'right'});
+    doc.text("DIFERENCIA", 190, y, {align:'right'});
+    y += 12;
+
+    const drawTableRow = (label, sysBs, sysRef, realBs, realRef) => {
+        const diffBs = realBs - sysBs;
+        const diffRef = realRef - sysRef;
+
+        if (sysBs===0 && sysRef===0 && realBs===0 && realRef===0) return;
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...colors.textDark);
+        doc.text(label, 18, y);
+
+        // Sistema
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Bs ${sysBs.toLocaleString('es-VE', {minimumFractionDigits:2})}`, 90, y, {align:'right'});
+        doc.setTextColor(...colors.textLight);
+        doc.setFontSize(8);
+        doc.text(`Ref ${sysRef.toFixed(2)}`, 90, y+4, {align:'right'});
+
+        // Real
+        doc.setFontSize(9);
+        doc.setTextColor(...colors.textDark);
+        doc.text(`Bs ${realBs.toLocaleString('es-VE', {minimumFractionDigits:2})}`, 140, y, {align:'right'});
+        doc.setTextColor(...colors.textLight);
+        doc.setFontSize(8);
+        doc.text(`Ref ${realRef.toFixed(2)}`, 140, y+4, {align:'right'});
+
+        // Diferencia
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        if (Math.abs(diffBs) < 1) doc.setTextColor(22, 163, 74);
+        else doc.setTextColor(220, 38, 38);
+        doc.text(`Bs ${diffBs.toLocaleString('es-VE', {minimumFractionDigits:2})}`, 190, y, {align:'right'});
+
+        if (Math.abs(diffRef) < 0.1) doc.setTextColor(22, 163, 74);
+        else doc.setTextColor(220, 38, 38);
+        doc.setFontSize(8);
+        doc.text(`Ref ${diffRef.toFixed(2)}`, 190, y+4, {align:'right'});
+
+        doc.setDrawColor(240, 240, 240);
+        doc.line(14, y+6, pageWidth-14, y+6);
+
+        y += 14;
+    };
+
+    drawTableRow("Efectivo (Gaveta)", esperadoVes, esperadoUsd, parseFloat(shift.real_cash_ves||0), parseFloat(shift.real_cash_usd||0));
+    drawTableRow("Pago Móvil", parseFloat(shift.system_pago_movil||0), 0, parseFloat(shift.real_pago_movil||0), 0);
+    drawTableRow("Punto de Venta", parseFloat(shift.system_punto||0), 0, parseFloat(shift.real_punto||0), 0);
+    drawTableRow("Zelle", 0, parseFloat(shift.system_zelle||0), 0, parseFloat(shift.real_zelle||0));
+
+    // --- SECCIÓN 3: PIE DE PÁGINA ---
+    y += 10;
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.setFont('helvetica', 'italic');
+    doc.text(FISCAL_INFO.providencia, 14, pageHeight - 15);
+    doc.text("Documento generado por Higea POS", pageWidth - 14, pageHeight - 15, { align: 'right' });
+
+    doc.save(`Cierre_Fiscal_${shift.id}.pdf`);
+};
 
     return (
         <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
@@ -5982,11 +5996,11 @@ const handleCashClose = async () => {
                                 </button>
                                 {/* NUEVO BOTÓN DE CIERRES */}
                                 <button
-                                    onClick={fetchClosingsHistory}
-                                    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap ${reportTab === 'CLOSINGS' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
-                                >
-                                    <span>🔐</span> Cierres
-                                </button>
+    onClick={() => fetchClosingsHistory()}
+    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap ${reportTab === 'CLOSINGS' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+>
+    <span>🔐</span> Cierres
+</button>
                             </div>
                         </div>
 
@@ -6417,98 +6431,149 @@ const handleCashClose = async () => {
                         </div>
                     )}
 
-                        {/* PESTAÑA 4: CIERRES (VENEZUELA: BS PREDOMINANTE) */}
-                        {reportTab === 'CLOSINGS' && (
-                            <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
-                                <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                                    <div>
-                                        <h3 className="font-bold text-slate-800 text-lg">Historial de Cierres de Caja</h3>
-                                        <p className="text-xs text-slate-500">Registro inmutable de arqueos (Multimoneda)</p>
+                        {/* PESTAÑA 4: CIERRES (VENEZUELA: BS PREDOMINANTE & AVANCES INCLUIDOS) */}
+{reportTab === 'CLOSINGS' && (
+    <div className="bg-white rounded-[2rem] shadow-xl border border-slate-200 overflow-hidden animate-fade-in flex flex-col h-[80vh]">
+        
+        {/* HEADER PREMIUM */}
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-slate-50 to-white">
+            <div>
+                <h3 className="font-black text-slate-800 text-xl tracking-tight">Historial de Auditoría</h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">Control Fiscal de Cajas • Bases, Ventas y Avances</p>
+            </div>
+            {/* El botón se mantiene por si acaso falla el internet, pero la carga es automática */}
+            <button onClick={fetchClosingsHistory} className="bg-white border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-200 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm hover:shadow-md transition-all">
+                <span>🔄</span> Sincronizar
+            </button>
+        </div>
+
+        <div className="overflow-x-auto flex-1 custom-scrollbar p-2">
+            <table className="w-full text-left text-sm text-slate-600 border-collapse">
+                <thead className="text-[10px] text-slate-400 uppercase tracking-widest bg-slate-50/50 sticky top-0 z-10 backdrop-blur-sm">
+                    <tr>
+                        <th className="px-6 py-4 rounded-l-xl">ID / Estado</th>
+                        <th className="px-6 py-4">Responsable / Fecha</th>
+                        <th className="px-6 py-4">Flujo de Caja (Base - Avances)</th>
+                        <th className="px-6 py-4 text-right">Sistema (Esperado)</th>
+                        <th className="px-6 py-4 text-right">Conteos (Real)</th>
+                        <th className="px-6 py-4 text-center">Diferencia</th>
+                        <th className="px-6 py-4 text-center rounded-r-xl">Fiscal</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                    {closingsHistory.map((shift) => (
+                        <tr key={shift.id} className="hover:bg-blue-50/30 transition-colors group">
+                            
+                            {/* ID y STATUS */}
+                            <td className="px-6 py-5">
+                                <div className="flex flex-col gap-1">
+                                    <span className="font-black text-slate-700 text-lg">#{shift.id}</span>
+                                    {shift.status === 'ABIERTA' 
+                                        ? <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold w-fit">🟢 ABIERTA</span>
+                                        : <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold w-fit">🔒 CERRADA</span>
+                                    }
+                                </div>
+                            </td>
+
+                            {/* FECHA Y HORA */}
+                            <td className="px-6 py-5">
+                                <div className="flex flex-col">
+                                    <span className="font-bold text-slate-600 text-xs uppercase">{shift.cashier_name || 'Cajero'}</span>
+                                    <span className="text-[10px] text-slate-400 mt-0.5">
+                                        {new Date(shift.opened_at).toLocaleDateString()} • {new Date(shift.opened_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </span>
+                                    {shift.closed_at && (
+                                        <span className="text-[9px] text-slate-300">
+                                            Cierre: {new Date(shift.closed_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        </span>
+                                    )}
+                                </div>
+                            </td>
+
+                            {/* FLUJO DE CAJA (Base Inicial y Avances) */}
+                            <td className="px-6 py-5">
+                                <div className="flex flex-col gap-2 text-xs">
+                                    {/* Base Inicial */}
+                                    <div className="flex justify-between items-center text-slate-500">
+                                        <span>📥 Base:</span>
+                                        <span className="font-bold">Bs {parseFloat(shift.initial_cash_ves || 0).toLocaleString('es-VE', {compactDisplay: 'short'})}</span>
                                     </div>
-                                    <button onClick={fetchClosingsHistory} className="text-higea-blue hover:underline text-sm font-bold flex items-center gap-1">
-                                        <span>🔄</span> Actualizar Lista
-                                    </button>
+                                    {/* Avances (Salidas) */}
+                                    {(parseFloat(shift.cash_outflows_ves || 0) > 0 || parseFloat(shift.cash_outflows_usd || 0) > 0) && (
+                                        <div className="flex justify-between items-center text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded">
+                                            <span>📤 Avances:</span>
+                                            <span className="font-bold">- Bs {parseFloat(shift.cash_outflows_ves || 0).toLocaleString('es-VE')}</span>
+                                        </div>
+                                    )}
                                 </div>
+                            </td>
 
-                                <div className="overflow-x-auto flex-1 custom-scrollbar">
-                                    <table className="w-full text-left text-sm text-slate-600">
-                                        <thead className="text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
-                                            <tr>
-                                                <th className="px-6 py-4">ID / Fecha</th>
-                                                <th className="px-6 py-4">Apertura</th>
-                                                <th className="px-6 py-4">Cierre</th>
-                                                <th className="px-6 py-4 text-right">Sistema (Bs / Ref)</th>
-                                                <th className="px-6 py-4 text-right">Real (Bs / Ref)</th>
-                                                <th className="px-6 py-4 text-center">Diferencia</th>
-                                                <th className="px-6 py-4 text-center">Acción</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-50">
-                                            {closingsHistory.map((shift) => (
-                                                <tr key={shift.id} className="hover:bg-slate-50 transition-colors">
-                                                    <td className="px-6 py-4 font-bold text-higea-blue">#{shift.id}</td>
-                                                    <td className="px-6 py-4 text-xs">{new Date(shift.opened_at).toLocaleString()}</td>
-                                                    <td className="px-6 py-4 font-bold text-xs">
-                                                        {shift.status === 'ABIERTA'
-                                                            ? <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-[10px]">EN CURSO</span>
-                                                            : new Date(shift.closed_at).toLocaleString()}
-                                                    </td>
-
-                                                    {/* COLUMNA SISTEMA (Bs Predomina) */}
-                                                    <td className="px-6 py-4 text-right">
-                                                        <div className="flex flex-col">
-                                                            <span className="text-slate-600 font-bold">Bs {parseFloat(shift.system_cash_ves || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-                                                            <span className="text-xs text-gray-400">Ref {parseFloat(shift.system_cash_usd || 0).toFixed(2)}</span>
-                                                        </div>
-                                                    </td>
-
-                                                    {/* COLUMNA REAL (Bs Predomina) */}
-                                                    <td className="px-6 py-4 text-right">
-                                                        <div className="flex flex-col">
-                                                            <span className="font-black text-slate-800">Bs {parseFloat(shift.real_cash_ves || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-                                                            <span className="text-xs font-bold text-gray-500">Ref {parseFloat(shift.real_cash_usd || 0).toFixed(2)}</span>
-                                                        </div>
-                                                    </td>
-
-                                                    {/* COLUMNA DIFERENCIA (Bs Arriba) */}
-                                                    <td className="px-6 py-4 text-center">
-                                                        <div className="flex flex-col gap-1 items-center">
-                                                            {/* Diferencia BS */}
-                                                            {Math.abs(parseFloat(shift.diff_ves)) < 1
-                                                                ? <span className="text-[10px] text-green-600 font-bold">Bs OK</span>
-                                                                : <span className="text-[10px] text-red-500 font-bold">Bs {parseFloat(shift.diff_ves).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-                                                            }
-                                                            {/* Diferencia USD */}
-                                                            {Math.abs(parseFloat(shift.diff_usd)) < 0.5
-                                                                ? <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Ref OK</span>
-                                                                : <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Ref {parseFloat(shift.diff_usd).toFixed(2)}</span>
-                                                            }
-                                                        </div>
-                                                    </td>
-
-                                                    <td className="px-6 py-4 text-center">
-                                                        <button
-                                                            onClick={() => printClosingReport(shift)}
-                                                            className="text-slate-400 hover:text-higea-blue transition-colors"
-                                                            title="Imprimir Reporte"
-                                                        >
-                                                            🖨️
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            {closingsHistory.length === 0 && (
-                                                <tr>
-                                                    <td colSpan="7" className="px-6 py-10 text-center text-slate-400">
-                                                        No hay cierres registrados aún.
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
+                            {/* SISTEMA (Cálculo corregido: Base + Ventas - Avances) */}
+                            <td className="px-6 py-5 text-right">
+                                <div className="flex flex-col">
+                                    <span className="text-slate-700 font-bold text-sm">
+                                        Bs {((parseFloat(shift.initial_cash_ves || 0) + parseFloat(shift.system_cash_ves || 0)) - parseFloat(shift.cash_outflows_ves || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 font-medium mt-0.5">
+                                        Ref {((parseFloat(shift.initial_cash_usd || 0) + parseFloat(shift.system_cash_usd || 0)) - parseFloat(shift.cash_outflows_usd || 0)).toFixed(2)}
+                                    </span>
                                 </div>
-                            </div>
-                        )}
+                            </td>
+
+                            {/* REAL (Lo que contó el cajero) */}
+                            <td className="px-6 py-5 text-right">
+                                <div className="flex flex-col">
+                                    <span className="font-black text-slate-800 text-sm">Bs {parseFloat(shift.real_cash_ves || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded self-end mt-0.5">
+                                        Ref {parseFloat(shift.real_cash_usd || 0).toFixed(2)}
+                                    </span>
+                                </div>
+                            </td>
+
+                            {/* DIFERENCIA */}
+                            <td className="px-6 py-5 text-center">
+                                <div className="flex flex-col items-center gap-1">
+                                    {Math.abs(parseFloat(shift.diff_ves)) < 1
+                                        ? <span className="text-[10px] font-black text-emerald-500">✨ OK</span>
+                                        : <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${parseFloat(shift.diff_ves) > 0 ? 'bg-blue-100 text-blue-700' : 'bg-rose-100 text-rose-700'}`}>
+                                            {parseFloat(shift.diff_ves) > 0 ? '+' : ''}Bs {parseFloat(shift.diff_ves).toLocaleString('es-VE', {maximumFractionDigits:0})}
+                                          </span>
+                                    }
+                                    {Math.abs(parseFloat(shift.diff_usd)) >= 0.5 && (
+                                         <span className={`text-[9px] font-bold ${parseFloat(shift.diff_usd) > 0 ? 'text-blue-500' : 'text-rose-500'}`}>
+                                            {parseFloat(shift.diff_usd) > 0 ? '+' : ''}Ref {parseFloat(shift.diff_usd).toFixed(2)}
+                                         </span>
+                                    )}
+                                </div>
+                            </td>
+
+                            {/* ACCIÓN PDF */}
+                            <td className="px-6 py-5 text-center">
+                                <button
+                                    onClick={() => printClosingReport(shift)}
+                                    className="bg-slate-800 hover:bg-black text-white p-2 rounded-xl transition-all shadow-lg hover:shadow-xl hover:scale-105"
+                                    title="Descargar Reporte Z Fiscal"
+                                >
+                                    🖨️
+                                </button>
+                            </td>
+                        </tr>
+                    ))}
+                    {closingsHistory.length === 0 && (
+                        <tr>
+                            <td colSpan="7" className="px-6 py-12 text-center">
+                                <div className="flex flex-col items-center opacity-50">
+                                    <span className="text-4xl mb-2">📂</span>
+                                    <span className="text-slate-500 font-medium">No hay historial de cierres disponible.</span>
+                                </div>
+                            </td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+    </div>
+)}
 
                         {/* MODAL DETALLE PRODUCTO (RESPONSIVE PRO: HEADER MÓVIL CORREGIDO + SIDEBAR PC + FINANZAS VENEZUELA) */}
                         {selectedAuditProduct && (
