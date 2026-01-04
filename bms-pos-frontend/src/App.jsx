@@ -2351,99 +2351,215 @@ function App() {
         }
     };
 
-    const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
-        const remaining = totalDebt - currentPaid;
+    // --- MODAL DE ABONO PREMIUM (COMPACT VERSION) ---
+const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
+    const remaining = totalDebt - currentPaid;
+    const currentRate = typeof bcvRate !== 'undefined' ? bcvRate : 0; 
 
-        const { value: formValues } = await Swal.fire({
-            title: `Abonar a Factura #${saleId}`,
-            html: `
-              <div class="text-left mb-4">
-                  <p class="text-sm text-gray-500">Deuda Total: <b>Ref ${totalDebt.toFixed(2)}</b></p>
-                  <p class="text-sm text-gray-500">Abonado: <b>Ref ${currentPaid.toFixed(2)}</b></p>
-                  <p class="text-lg text-higea-red font-bold">Restante: Ref ${remaining.toFixed(2)}</p>
-              </div>
+    // Métodos de Pago (Estilos)
+    const paymentMethods = [
+        { id: 'PAGO_MOVIL', label: 'Pago Móvil', icon: '📱', style: 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100' },
+        { id: 'PUNTO_VENTA', label: 'Punto Venta', icon: '💳', style: 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100' },
+        { id: 'EFECTIVO_USD', label: 'Efectivo $', icon: '💵', style: 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' },
+        { id: 'EFECTIVO_BS', label: 'Efectivo Bs', icon: '🇻🇪', style: 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100' },
+        { id: 'ZELLE', label: 'Zelle', icon: '🇺🇸', style: 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100' },
+        { id: 'TRANSFERENCIA', label: 'Transf.', icon: '🏦', style: 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100' },
+    ];
 
-              <label class="block text-left text-xs font-bold text-gray-600">Monto a Abonar (Ref)</label>
-              <input id="swal-amount" type="number" step="0.01" class="swal2-input" value="${remaining.toFixed(2)}" placeholder="Monto en USD">
-              
-              <label class="block text-left text-xs font-bold text-gray-600 mt-2">Método de Pago</label>
-              <select id="swal-method" class="swal2-input">
-                  <option value="EFECTIVO_USD">Efectivo Ref</option>
-                  <option value="ZELLE">Zelle</option>
-                  <option value="PAGO_MOVIL">Pago Móvil (Bs)</option>
-                  <option value="PUNTO_VENTA">Punto de Venta (Bs)</option>
-              </select>
-              <input id="swal-ref" class="swal2-input" placeholder="Referencia (Opcional)">
+    const { value: formValues } = await Swal.fire({
+        // Header Compacto
+        title: `<div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-0">
+                    <span class="text-sm font-black text-slate-700">Factura #${saleId}</span>
+                    <span class="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md uppercase tracking-wider">Cobranza</span>
+                </div>`,
+        background: '#ffffff',
+        width: 'auto', 
+        padding: '1rem', // Padding general reducido
+        buttonsStyling: false,
+        customClass: {
+            popup: 'rounded-2xl shadow-xl border border-slate-100 w-[95%] max-w-[380px]', // Ancho máximo reducido para parecer "App Móvil"
+            confirmButton: 'w-full bg-slate-900 text-white font-bold rounded-lg py-2.5 text-sm shadow-md hover:shadow-lg hover:scale-[1.01] transition-all mb-2',
+            cancelButton: 'w-full bg-white text-slate-400 font-bold rounded-lg py-1.5 text-xs hover:bg-slate-50 transition-all'
+        },
+        html: `
+            <div class="text-left font-sans mt-0 space-y-3">
+                
+                <div class="flex justify-between items-center bg-slate-50 rounded-lg p-2 border border-slate-100 text-[10px]">
+                    <div class="flex flex-col">
+                        <span class="text-slate-400 font-bold uppercase">Total</span>
+                        <span class="font-bold text-slate-600">$${totalDebt.toFixed(2)}</span>
+                    </div>
+                    <div class="w-px h-5 bg-slate-200 mx-2"></div>
+                    <div class="flex flex-col">
+                        <span class="text-emerald-500 font-bold uppercase">Abonado</span>
+                        <span class="font-bold text-emerald-600">$${currentPaid.toFixed(2)}</span>
+                    </div>
+                    <div class="w-px h-5 bg-slate-200 mx-2"></div>
+                    <div class="flex flex-col items-end">
+                        <span class="text-rose-500 font-black uppercase">Por Pagar</span>
+                        <span class="font-black text-rose-600 text-xs">$${remaining.toFixed(2)}</span>
+                    </div>
+                </div>
 
-              <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
-                  <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
-                      📄 Generar Factura Fiscal
-                  </span>
-                  <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" id="swal-is-fiscal" class="sr-only peer">
-                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-higea-blue"></div>
-                  </label>
-              </div>
-          `,
-            showCancelButton: true,
-            confirmButtonText: 'Procesar Pago',
-            confirmButtonColor: '#0056B3',
-            preConfirm: () => {
-                const amount = document.getElementById('swal-amount').value;
-                const method = document.getElementById('swal-method').value;
-                const ref = document.getElementById('swal-ref').value;
-                // Capturamos el estado del switch fiscal
-                const isFiscal = document.getElementById('swal-is-fiscal').checked;
+                <div class="relative">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase">Monto a abonar</label>
+                        <div id="conversion-helper" class="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                            🇻🇪 Bs ${(remaining * currentRate).toLocaleString('es-VE', {minimumFractionDigits: 2})}
+                        </div>
+                    </div>
+                    
+                    <div class="relative group">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 font-bold text-lg">$</span>
+                        <input id="swal-amount" type="number" step="0.01" 
+                            class="w-full pl-7 pr-12 py-2 bg-white border border-slate-200 rounded-xl font-black text-slate-700 text-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition-all placeholder:text-slate-200 shadow-sm" 
+                            value="${remaining.toFixed(2)}" placeholder="0.00">
+                        
+                        <button type="button" id="btn-max" class="absolute right-2 top-1/2 -translate-y-1/2 bg-slate-100 text-[9px] font-bold text-slate-500 px-2 py-1 rounded hover:bg-slate-800 hover:text-white transition-colors uppercase border border-slate-200">
+                            Max
+                        </button>
+                    </div>
+                </div>
 
-                // Validaciones originales
-                if (!amount || parseFloat(amount) <= 0) return Swal.showValidationMessage('Ingrese un monto válido');
-                if (parseFloat(amount) > remaining + 0.05) return Swal.showValidationMessage('El monto excede la deuda');
+                <div>
+                    <label class="block text-[9px] font-bold text-slate-400 uppercase mb-1.5">Método de Pago</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        ${paymentMethods.map(m => `
+                            <button type="button" class="method-card flex flex-col items-center justify-center py-2 rounded-lg border transition-all duration-200 active:scale-95 group ${m.style}" 
+                                data-value="${m.id}"
+                                data-active-class="ring-2 ring-offset-1 ring-indigo-500 border-transparent shadow-sm">
+                                <span class="text-base filter drop-shadow-sm mb-0.5 group-hover:scale-110 transition-transform">${m.icon}</span>
+                                <span class="text-[8px] font-bold uppercase tracking-tight leading-none">${m.label}</span>
+                            </button>
+                        `).join('')}
+                    </div>
+                    <input type="hidden" id="swal-method" value="PAGO_MOVIL">
+                </div>
 
-                // ADAPTACIÓN PUNTO 2.2: VALIDACIÓN UX DE CLIENTE
-                if (isFiscal) {
-                    // Verificamos que el cliente seleccionado tenga RIF (id_number)
-                    // Nota: selectedCreditCustomer debe estar disponible en el contexto
-                    if (!selectedCreditCustomer || !selectedCreditCustomer.id_number) {
-                        return Swal.showValidationMessage('❌ REQUISITO FISCAL: El cliente debe tener RIF/Cédula registrado.');
-                    }
-                    // Aquí puedes agregar validación de dirección si tu sistema ya maneja ese campo
-                    // if (!selectedCreditCustomer.address) return Swal.showValidationMessage('❌ REQUISITO FISCAL: Falta la dirección del cliente.');
-                }
+                <div class="flex gap-2">
+                    <input id="swal-ref" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-600 text-[11px] focus:outline-none focus:border-indigo-400 focus:bg-white transition-all placeholder:text-slate-300" placeholder="📝 Referencia (Opcional)...">
+                    
+                    <label class="flex items-center justify-center w-10 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all group" title="Activar Factura Fiscal">
+                        <input type="checkbox" id="swal-is-fiscal" class="peer sr-only">
+                        <span class="text-slate-300 peer-checked:text-blue-600 text-base transition-colors group-hover:text-blue-400">🖨️</span>
+                    </label>
+                </div>
+            </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: 'Confirmar Pago',
+        cancelButtonText: 'Cancelar',
+        reverseButtons: true,
+        
+        // --- LÓGICA JAVASCRIPT INTACTA ---
+        didOpen: () => {
+            const popup = Swal.getPopup();
+            const inputAmount = popup.querySelector('#swal-amount');
+            const helper = popup.querySelector('#conversion-helper');
+            const methodInput = popup.querySelector('#swal-method');
+            const cards = popup.querySelectorAll('.method-card');
+            const btnMax = popup.querySelector('#btn-max');
 
-                return { amount, method, ref, isFiscal };
-            }
-        });
+            // Actualizar Bs en vivo
+            const updateBs = (val) => {
+                const bsVal = (parseFloat(val) || 0) * currentRate;
+                helper.innerHTML = `🇻🇪 Bs ${bsVal.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            };
 
-        if (formValues) {
-            try {
-                Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading() });
-                const paymentDetails = `${formValues.method}${formValues.ref ? ` [Ref: ${formValues.ref}]` : ''}`;
+            // Listeners
+            inputAmount.addEventListener('input', (e) => updateBs(e.target.value));
 
-                await axios.post(`${API_URL}/sales/${saleId}/pay-credit`, {
-                    paymentDetails,
-                    amountUSD: formValues.amount,
-                    // Opcional: Si el backend soporta actualizar el tipo de factura en el abono, lo enviamos
-                    invoice_type: formValues.isFiscal ? 'FISCAL' : 'TICKET'
+            btnMax.addEventListener('click', () => {
+                inputAmount.value = remaining.toFixed(2);
+                updateBs(remaining);
+                inputAmount.focus();
+                // Feedback visual sutil
+                inputAmount.classList.add('ring-2', 'ring-indigo-500/20');
+                setTimeout(() => inputAmount.classList.remove('ring-2', 'ring-indigo-500/20'), 300);
+            });
+
+            // Lógica de Selección de Tarjetas
+            const selectMethod = (card) => {
+                // Resetear estilos visuales
+                cards.forEach(c => {
+                    // Restaurar clases originales (quitando las de activo)
+                    c.className = `method-card flex flex-col items-center justify-center py-2 rounded-lg border transition-all duration-200 active:scale-95 group ${paymentMethods.find(m => m.id === c.dataset.value).style}`;
+                    c.querySelector('span:first-child').classList.add('grayscale');
+                    c.querySelector('span:first-child').classList.remove('scale-110');
                 });
+                
+                // Aplicar estilo activo
+                const activeClasses = card.getAttribute('data-active-class');
+                // Al activar, quitamos grayscale y añadimos el anillo de foco
+                card.className = `method-card flex flex-col items-center justify-center py-2 rounded-lg border transition-all duration-200 active:scale-95 group ${paymentMethods.find(m => m.id === card.dataset.value).style} ${activeClasses}`;
+                card.querySelector('span:first-child').classList.remove('grayscale');
+                card.querySelector('span:first-child').classList.add('scale-110');
+                
+                methodInput.value = card.getAttribute('data-value');
+            };
 
-                Swal.fire('Éxito', 'Abono registrado correctamente', 'success');
+            // Inicializar eventos click
+            cards.forEach(card => {
+                card.addEventListener('click', () => selectMethod(card));
+                // Estado inicial
+                if(card.querySelector('span:first-child')) card.querySelector('span:first-child').classList.add('grayscale');
+                // Preseleccionar primero
+                if(card.getAttribute('data-value') === 'PAGO_MOVIL') selectMethod(card);
+            });
+        },
 
-                // Si se solicitó factura fiscal, disparamos la impresión aquí (Paso 3)
-                if (formValues.isFiscal) {
-                    // Llamamos a la función de impresión fiscal (asegúrate de tener los datos de venta/items a mano o hacer un fetch rápido)
-                    // printFiscalReceipt(datosDeVenta, selectedCreditCustomer, itemsDeVenta);
-                    console.log("Imprimiendo comprobante fiscal...");
-                }
+        preConfirm: () => {
+            const amount = document.getElementById('swal-amount').value;
+            const method = document.getElementById('swal-method').value;
+            const ref = document.getElementById('swal-ref').value;
+            const isFiscal = document.getElementById('swal-is-fiscal').checked;
 
-                // Recargar datos del cliente específico para ver cambios al instante
-                const res = await axios.get(`${API_URL}/credits/customer/${selectedCreditCustomer.customer_id}`);
-                setCustomerCreditsDetails(res.data);
-                fetchData(); // Actualizar dashboard general
-            } catch (error) {
-                Swal.fire('Error', error.response?.data?.error || 'Falló el pago', 'error');
+            if (!amount || parseFloat(amount) <= 0) return Swal.showValidationMessage('Ingrese un monto válido');
+            if (parseFloat(amount) > remaining + 0.05) return Swal.showValidationMessage('El monto excede la deuda');
+
+            // Asegúrate de que selectedCreditCustomer exista en el contexto superior
+            if (isFiscal && (typeof selectedCreditCustomer === 'undefined' || !selectedCreditCustomer || !selectedCreditCustomer.id_number)) {
+                return Swal.showValidationMessage('El cliente requiere Cédula/RIF para fiscal');
             }
+
+            return { amount, method, ref, isFiscal };
         }
-    };
+    });
+
+    // --- PROCESAMIENTO (INTACTO) ---
+    if (formValues) {
+        try {
+            Swal.fire({ title: '', html: 'Procesando pago...', timerProgressBar: true, didOpen: () => Swal.showLoading() });
+            
+            const paymentDetails = `${formValues.method}${formValues.ref ? ` [Ref: ${formValues.ref}]` : ''}`;
+
+            await axios.post(`${API_URL}/sales/${saleId}/pay-credit`, {
+                paymentDetails,
+                amountUSD: formValues.amount,
+                invoice_type: formValues.isFiscal ? 'FISCAL' : 'TICKET'
+            });
+
+            await Swal.fire({
+                icon: 'success',
+                title: '¡Abono Registrado!',
+                html: `<span class="text-slate-600">Se han abonado <b class="text-emerald-600">$${formValues.amount}</b> correctamente.</span>`,
+                confirmButtonColor: '#10B981',
+                timer: 2000
+            });
+
+            if (formValues.isFiscal) console.log("Imprimiendo Fiscal...");
+
+            // Asegúrate de tener acceso a setCustomerCreditsDetails y fetchData
+            if (typeof selectedCreditCustomer !== 'undefined') {
+                const res = await axios.get(`${API_URL}/credits/customer/${selectedCreditCustomer.customer_id}`);
+                if (typeof setCustomerCreditsDetails === 'function') setCustomerCreditsDetails(res.data);
+                if (typeof fetchData === 'function') fetchData();
+            }
+        } catch (error) {
+            Swal.fire('Error', error.response?.data?.error || 'Error en el proceso', 'error');
+        }
+    }
+};
 
     // --- Funciones de Reporte de Crédito ---
     const markAsPaid = async (saleId) => {
@@ -4222,37 +4338,76 @@ function App() {
                             </div>
                         </div>
 
-                        {/* ÚLTIMAS TRANSACCIONES (Igual que antes pero con mejor estilo) */}
-                        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                            <div className="p-5 border-b border-gray-100 flex justify-between items-center">
-                                <h3 className="font-bold text-gray-800">Últimas Transacciones</h3>
-                                <span className="text-xs text-gray-400">Mostrando últimas 10</span>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left text-xs md:text-sm text-gray-600">
-                                    <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
-                                        <tr><th className="px-4 py-3">ID</th><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3 text-center">Estatus</th><th className="px-4 py-3 text-right">Monto Ref</th><th className="px-4 py-3 text-right">Monto Bs</th></tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {recentSales.map((sale) => (
-                                            <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer transition-colors">
-                                                <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
-                                                <td className="px-4 py-3">{sale.full_date}</td>
-                                                <td className="px-4 py-3 font-medium text-gray-700">{sale.full_name || 'Consumidor Final'}</td>
-                                                <td className="px-4 py-3 text-center">
-                                                    <span className={`px-2 py-1 rounded text-[10px] font-bold ${sale.status === 'PENDIENTE' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
-                                                        }`}>
-                                                        {sale.status}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3 text-right font-black text-gray-800">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
-                                                <td className="px-4 py-3 text-right text-gray-500">Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                        {/* ÚLTIMAS TRANSACCIONES (Adaptado: Estatus Diferenciado + Método de Pago) */}
+<div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+    <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+        <h3 className="font-bold text-gray-800">Últimas Transacciones</h3>
+        <span className="text-xs text-gray-400">Mostrando últimas 10</span>
+    </div>
+    <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs md:text-sm text-gray-600">
+            <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
+                <tr>
+                    <th className="px-4 py-3">ID</th>
+                    <th className="px-4 py-3">Fecha</th>
+                    <th className="px-4 py-3">Cliente</th>
+                    {/* Nueva Columna: Método */}
+                    <th className="px-4 py-3 text-center">Método</th>
+                    <th className="px-4 py-3 text-center">Estatus</th>
+                    <th className="px-4 py-3 text-right">Monto Ref</th>
+                    <th className="px-4 py-3 text-right">Monto Bs</th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+                {recentSales.map((sale) => (
+                    <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer transition-colors group">
+                        
+                        {/* ID */}
+                        <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
+                        
+                        {/* Fecha */}
+                        <td className="px-4 py-3">{sale.full_date}</td>
+                        
+                        {/* Cliente */}
+                        <td className="px-4 py-3 font-medium text-gray-700 truncate max-w-[150px]" title={sale.full_name}>
+                            {sale.full_name || 'Consumidor Final'}
+                        </td>
+
+                        {/* Nueva Celda: Método de Pago */}
+                        <td className="px-4 py-3 text-center">
+                            <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded-lg text-[10px] font-bold text-gray-500 truncate max-w-[100px] inline-block" title={sale.payment_method}>
+                                {sale.payment_method || 'N/A'}
+                            </span>
+                        </td>
+
+                        {/* Celda: Estatus Mejorado (Nuevos Colores UX) */}
+                        <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide border ${
+                                sale.status === 'ANULADO' 
+                                    ? 'bg-rose-50 text-rose-500 border-rose-100 line-through' // Anulado: Rojo Suave Tachado
+                                : sale.status === 'PENDIENTE' 
+                                    ? 'bg-amber-50 text-amber-600 border-amber-200' // Pendiente: Ámbar (Alerta)
+                                : sale.status === 'PARCIAL'
+                                    ? 'bg-indigo-50 text-indigo-600 border-indigo-200' // Parcial: Índigo (En proceso)
+                                : 'bg-emerald-50 text-emerald-600 border-emerald-200' // Pagado: Verde Esmeralda
+                            }`}>
+                                {sale.status}
+                            </span>
+                        </td>
+
+                        {/* Montos (Se tachan si está anulado) */}
+                        <td className={`px-4 py-3 text-right font-black ${sale.status === 'ANULADO' ? 'text-slate-300 decoration-slate-300 line-through' : 'text-gray-800'}`}>
+                            Ref {parseFloat(sale.total_usd).toFixed(2)}
+                        </td>
+                        <td className={`px-4 py-3 text-right ${sale.status === 'ANULADO' ? 'text-slate-300 decoration-slate-300 line-through' : 'text-gray-500'}`}>
+                            Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    </div>
+</div>
                     </div>
                 ) : view === 'CREDIT_REPORT' ? (
                     /* --- MÓDULO DE CRÉDITO (REDISEÑO CON BÚSQUEDA Y PAGINACIÓN) --- */
@@ -6640,166 +6795,228 @@ function App() {
                 </div>
             )}
 
-            {/* --- MODAL DETALLE VENTA (CORREGIDO Y PROFESIONAL) --- */}
-            {selectedSaleDetail && (
-                <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                    <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scale-up border-4 border-white">
+            {/* --- MODAL DETALLE VENTA (UX PREMIUM: LOGICA DE COLOR DINÁMICA & CLIENTE OPTIMIZADO) --- */}
+{selectedSaleDetail && (
+    <div className="fixed inset-0 z-[90] bg-[#020617]/80 backdrop-blur-xl flex items-center justify-center p-4 animate-fade-in font-sans antialiased">
+        
+        {/* CARD PRINCIPAL */}
+        <div className="bg-[#F8FAFC] rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl shadow-black/40 relative animate-scale-up flex flex-col max-h-[92vh] ring-1 ring-white/10">
 
-                        {/* BOTÓN CERRAR */}
-                        <button
-                            onClick={() => setSelectedSaleDetail(null)}
-                            className="absolute top-3 right-3 text-gray-500 hover:text-red-600 bg-white rounded-full p-2 shadow-sm z-20 font-bold"
-                        >
-                            ✕
-                        </button>
+            {/* 1. HEADER HERO (Colores Semánticos: Azul=Fiscal, Naranja=Deuda, Esmeralda=Pagado) */}
+            <div className={`relative px-8 pt-10 pb-8 shrink-0 text-white overflow-hidden transition-all duration-700 ${
+                selectedSaleDetail.invoice_type === 'FISCAL' 
+                    ? 'bg-gradient-to-br from-blue-700 via-indigo-800 to-slate-900 shadow-lg shadow-indigo-900/20' 
+                    : (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') 
+                        ? 'bg-gradient-to-br from-orange-500 via-orange-600 to-red-700 shadow-lg shadow-orange-900/20' // <--- NARANJA ENCABEZADO
+                        : 'bg-gradient-to-br from-emerald-500 via-teal-600 to-emerald-800 shadow-lg shadow-emerald-900/20' 
+            }`}>
+                
+                {/* Decoración Fondo */}
+                <div className="absolute inset-0 opacity-[0.08] mix-blend-overlay bg-[url('https://www.transparenttextures.com/patterns/stardust.png')]"></div>
+                
+                {/* Botón Cerrar */}
+                <button
+                    onClick={() => setSelectedSaleDetail(null)}
+                    className="absolute top-5 right-5 bg-white/10 hover:bg-white/20 hover:rotate-90 border border-white/10 backdrop-blur-md text-white rounded-full w-9 h-9 flex items-center justify-center transition-all duration-300 z-20 shadow-lg"
+                >
+                    ✕
+                </button>
 
-                        {/* --- CABECERA DINÁMICA --- */}
-                        <div className={`p-6 text-center border-b ${
-                            selectedSaleDetail.invoice_type === 'FISCAL' ? 'bg-blue-600 text-white' :
-                            (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'bg-red-600 text-white' :
-                            'bg-gray-100 text-gray-800'
-                        }`}>
-                            <h3 className="font-black text-2xl uppercase tracking-wide">
-                                {selectedSaleDetail.invoice_type === 'FISCAL' ? 'DOCUMENTO FISCAL' :
-                                (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'CRÉDITO / DEUDA' :
-                                'TICKET DE VENTA'}
-                            </h3>
-                            <p className="text-sm font-medium opacity-90 mt-1">
-                                Venta #{selectedSaleDetail.id} • {new Date(selectedSaleDetail.created_at || new Date()).toLocaleDateString()}
+                {/* Contenido Header */}
+                <div className="relative z-10 text-center flex flex-col items-center">
+                    
+                    {/* Badge Estatus */}
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/20 backdrop-blur-md border border-white/10 shadow-lg mb-2">
+                        <div className={`w-1.5 h-1.5 rounded-full shadow-[0_0_8px_currentColor] ${selectedSaleDetail.status === 'PAGADO' ? 'bg-emerald-300 text-emerald-300' : 'bg-white text-white animate-pulse'}`}></div>
+                        <span className="text-[9px] font-black tracking-[0.2em] uppercase text-white/90">
+                            {selectedSaleDetail.status}
+                        </span>
+                    </div>
+
+                    <h3 className="font-bold text-base tracking-widest uppercase text-white/80 mb-2">
+                        {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Documento Fiscal' :
+                        (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'Cuenta por Cobrar' :
+                        'Ticket de Venta'}
+                    </h3>
+
+                    {/* MONTO PRINCIPAL */}
+                    <div className="flex flex-col items-center">
+                         <div className="flex items-baseline justify-center gap-1 drop-shadow-xl">
+                            <span className="text-2xl font-medium text-white/70 translate-y-[-2px]">Bs</span>
+                            <span className="text-5xl md:text-6xl font-black tracking-tighter text-white leading-none">
+                                {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
+                            </span>
+                        </div>
+                        <div className="mt-2 bg-white/10 px-4 py-1 rounded-full backdrop-blur-md border border-white/20 shadow-inner">
+                             <p className="text-xs font-bold font-mono tracking-wider text-white">
+                                Ref ${parseFloat(selectedSaleDetail.total_usd).toFixed(2)}
                             </p>
-
-                            <div className="mt-3">
-                                <span className={`px-4 py-1 rounded-full text-xs font-black uppercase tracking-wider shadow-sm ${
-                                    selectedSaleDetail.status === 'PAGADO' ? 'bg-green-400 text-green-900' : 'bg-yellow-400 text-yellow-900'
-                                }`}>
-                                    ESTADO: {selectedSaleDetail.status}
-                                </span>
-                            </div>
-                        </div>
-
-                        <div className="max-h-[60vh] overflow-y-auto bg-gray-50">
-
-                            {/* --- SECCIÓN DATOS DEL CLIENTE --- */}
-                            <div className="p-5 bg-white border-b border-gray-200">
-                                <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Datos del Cliente</p>
-                                {selectedSaleDetail.full_name ? (
-                                    <div className="space-y-1">
-                                        <p className="text-lg font-bold text-gray-800">{selectedSaleDetail.full_name}</p>
-                                        <p className="text-sm text-gray-500 font-mono">ID: {selectedSaleDetail.id_number || 'No registrado'}</p>
-                                        {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') && selectedSaleDetail.due_date && (
-                                            <p className="text-xs font-bold text-red-600 mt-2 bg-red-50 p-2 rounded-lg inline-block">
-                                                ⚠️ Vence: {new Date(selectedSaleDetail.due_date).toLocaleDateString()}
-                                            </p>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <p className="text-sm text-gray-400 italic">Cliente Consumidor Final (Anónimo)</p>
-                                )}
-                            </div>
-
-                            {/* --- LISTA DE PRODUCTOS --- */}
-                            <div className="p-5">
-                                <p className="text-xs font-bold uppercase text-gray-400 mb-3 tracking-wider">Items Vendidos</p>
-                                <div className="space-y-3">
-                                    {selectedSaleDetail.items.map((item, idx) => (
-                                        <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
-                                            <div>
-                                                <p className="font-bold text-sm text-gray-700">{item.name}</p>
-                                                <p className="text-xs text-gray-400">Ref {parseFloat(item.price_at_moment_usd || item.price_usd).toFixed(2)} x {item.quantity}</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="font-black text-gray-800">Ref {(parseFloat(item.price_at_moment_usd || item.price_usd) * item.quantity).toFixed(2)}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* --- TOTALES Y PAGOS --- */}
-                            <div className="p-5 bg-white border-t border-gray-200">
-                                <div className="flex justify-between items-end mb-4">
-                                    <span className="text-sm font-bold text-gray-500">Total Pagado</span>
-                                    <div className="text-right">
-                                        <span className="block text-2xl font-black text-gray-900">Ref {parseFloat(selectedSaleDetail.total_usd).toFixed(2)}</span>
-                                        <span className="block text-xs text-gray-500 font-medium">Bs {parseFloat(selectedSaleDetail.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 2 })}</span>
-                                    </div>
-                                </div>
-
-                                <div className="bg-gray-50 p-3 rounded-xl text-xs text-gray-600 space-y-1">
-                                    <p><span className="font-bold">Método:</span> {selectedSaleDetail.payment_method}</p>
-                                    {selectedSaleDetail.taxBreakdown && selectedSaleDetail.taxBreakdown.ivaUSD > 0 && (
-                                        <p><span className="font-bold text-blue-600">Incluye IVA (16%):</span> Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</p>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* --- PIE DE PÁGINA CON ACCIONES --- */}
-                        <div className="p-4 bg-white border-t border-gray-200 flex flex-col gap-3">
-
-                            {/* 1. BOTÓN DE REIMPRESIÓN (CORREGIDO PARA USAR handlePrintTicket) */}
-                            <button
-                                onClick={() => handlePrintTicket(selectedSaleDetail)} 
-                                className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-all active:scale-95"
-                            >
-                                <span className="text-xl">🖨️</span>
-                                {selectedSaleDetail.invoice_type === 'FISCAL' ? 'Reimprimir Copia Fiscal' : 'Imprimir Ticket / Nota'}
-                            </button>
-
-                            {/* 2. BOTÓN DE ANULACIÓN (INTACTO) */}
-                            {selectedSaleDetail.status !== 'ANULADO' ? (
-                                <div className="mt-3 pt-3 border-t border-gray-100">
-                                    <button
-                                        onClick={() => handleVoidSale(selectedSaleDetail)}
-                                        disabled={selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL'}
-                                        className={`w-full group relative flex items-center justify-center gap-3 px-6 py-3 rounded-xl border-2 transition-all duration-300 shadow-sm
-                                            ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
-                                                ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
-                                                : 'bg-white border-red-100 text-red-600 hover:bg-red-50 hover:border-red-200 active:scale-95'
-                                            }`}
-                                    >
-                                        <div className={`p-2 rounded-lg transition-colors
-                                            ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
-                                                ? 'bg-gray-200'
-                                                : 'bg-red-50 group-hover:bg-red-100'
-                                            }`}>
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                            </svg>
-                                        </div>
-                                        <div className="text-left flex-1">
-                                            <span className="block text-sm font-bold tracking-wide">
-                                                {selectedSaleDetail.status === 'ANULADO' 
-                                                    ? 'VENTA YA ANULADA' 
-                                                    : selectedSaleDetail.status === 'PARCIAL' 
-                                                        ? 'ACCIÓN BLOQUEADA (PAGOS PARCIALES)' 
-                                                        : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'EMITIR NOTA DE CRÉDITO' : 'ANULAR VENTA (DEVOLVER STOCK)')
-                                                }
-                                            </span>
-                                            <span className={`block text-[10px] font-medium
-                                                ${(selectedSaleDetail.status === 'ANULADO' || selectedSaleDetail.status === 'PARCIAL')
-                                                    ? 'text-gray-400'
-                                                    : 'text-red-400'
-                                                }`}>
-                                                {selectedSaleDetail.status === 'ANULADO' 
-                                                    ? 'Esta operación ya fue procesada anteriormente' 
-                                                    : selectedSaleDetail.status === 'PARCIAL' 
-                                                        ? 'Debe liquidar la deuda o gestionar reembolso manual antes de anular' 
-                                                        : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'Genera documento fiscal de reverso' : 'Reversa inventario y contabilidad')
-                                                }
-                                            </span>
-                                        </div>
-                                    </button>
-                                </div>
-                            ) : (
-                                <div className="mt-3 w-full bg-gray-100 text-gray-500 font-bold py-3 rounded-xl text-center border border-gray-200 flex items-center justify-center gap-2">
-                                    <span>🚫</span> ESTA VENTA FUE ANULADA
-                                </div>
-                            )}
                         </div>
                     </div>
                 </div>
-            )}
+            </div>
+
+            {/* 2. CUERPO (DATOS ORGANIZADOS) */}
+            <div className="flex-1 overflow-y-auto px-5 py-6 custom-scrollbar space-y-5 bg-[#F8FAFC]">
+                
+                {/* --- BLOQUE DE METADATOS UNIFICADO (GRID 2x2) --- */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-1">
+                    <div className="grid grid-cols-2 divide-x divide-slate-50">
+                        {/* Fecha */}
+                        <div className="p-3 flex flex-col items-center justify-center border-b border-slate-50">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Fecha</span>
+                            <span className="text-xs font-bold text-slate-700">
+                                {new Date(selectedSaleDetail.created_at || new Date()).toLocaleDateString()}
+                            </span>
+                        </div>
+                        {/* Control */}
+                        <div className="p-3 flex flex-col items-center justify-center border-b border-slate-50">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Control</span>
+                            <span className="text-xs font-black text-slate-800 font-mono">#{selectedSaleDetail.id}</span>
+                        </div>
+                        {/* Tipo Doc */}
+                        <div className="p-3 flex flex-col items-center justify-center">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1">Tipo</span>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                                selectedSaleDetail.invoice_type === 'FISCAL' 
+                                ? 'bg-blue-50 text-blue-700 border-blue-100' 
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                            }`}>
+                                {selectedSaleDetail.invoice_type === 'FISCAL' ? 'FISCAL' : 'TICKET'}
+                            </span>
+                        </div>
+                        {/* Condición (Aquí aplicamos Naranja si es Crédito) */}
+                        <div className="p-3 flex flex-col items-center justify-center">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1">Modo</span>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                                (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') 
+                                ? 'bg-orange-50 text-orange-700 border-orange-200' // <--- NARANJA BADGE
+                                : 'bg-slate-100 text-slate-600 border-slate-200'
+                            }`}>
+                                {(selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL') ? 'CRÉDITO' : 'CONTADO'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* --- CLIENTE CARD (ICONO ADAPTABLE) --- */}
+                <div className={`p-4 rounded-2xl shadow-sm border flex items-center gap-4 relative overflow-hidden group transition-colors ${
+                     (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL')
+                     ? 'bg-orange-50/30 border-orange-100' // Fondo sutil naranja si es deuda
+                     : 'bg-white border-slate-100'
+                }`}>
+                    
+                    {/* Icono Cliente (Cambia a Naranja si es deuda) */}
+                    <div className={`relative z-10 h-12 w-12 rounded-2xl flex items-center justify-center shadow-md transform group-hover:scale-105 transition-transform duration-300 ${
+                        selectedSaleDetail.invoice_type === 'FISCAL' 
+                            ? 'bg-gradient-to-br from-blue-500 to-indigo-600' 
+                        : (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL')
+                            ? 'bg-gradient-to-br from-orange-400 to-orange-600' // <--- NARANJA ICONO
+                            : 'bg-gradient-to-br from-emerald-400 to-emerald-600'
+                    }`}>
+                        <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                    </div>
+
+                    <div className="flex-1 min-w-0 relative z-10">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Cliente</p>
+                        <p className="text-sm font-bold text-slate-800 truncate leading-tight">
+                            {selectedSaleDetail.full_name || 'Consumidor Final'}
+                        </p>
+                        <p className="text-[10px] font-mono text-slate-500 mt-0.5">
+                            {selectedSaleDetail.id_number || 'ID: No registrado'}
+                        </p>
+                    </div>
+                </div>
+
+                {/* --- LISTA DE ÍTEMS --- */}
+                <div>
+                     <div className="flex justify-between items-end px-2 mb-2">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Detalle Compra</p>
+                        <span className="text-[9px] font-bold text-slate-400">{selectedSaleDetail.items.length} Ítems</span>
+                     </div>
+                     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                        {selectedSaleDetail.items.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center p-3 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <span className={`text-[10px] font-black h-7 w-7 flex items-center justify-center rounded-lg shadow-sm ${
+                                        selectedSaleDetail.invoice_type === 'FISCAL' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'
+                                    }`}>
+                                        {item.quantity}
+                                    </span>
+                                    <div className="min-w-0">
+                                        <p className="font-bold text-xs text-slate-700 truncate">{item.name}</p>
+                                        <p className="text-[9px] text-slate-400 font-medium">Ref {parseFloat(item.price_at_moment_usd || item.price_usd).toFixed(2)}</p>
+                                    </div>
+                                </div>
+                                <span className="font-bold text-xs text-slate-800 whitespace-nowrap pl-2">
+                                    Ref {(parseFloat(item.price_at_moment_usd || item.price_usd) * item.quantity).toFixed(2)}
+                                </span>
+                            </div>
+                        ))}
+                     </div>
+                </div>
+
+                {/* --- INFO FINANCIERA --- */}
+                <div className="bg-slate-50 rounded-2xl p-4 text-xs space-y-2 border border-slate-100">
+                     <div className="flex justify-between items-center">
+                        <span className="font-semibold text-slate-500">Método de Pago</span>
+                        <span className="font-bold text-slate-700 uppercase bg-white px-2 py-0.5 rounded border border-slate-200 shadow-sm">
+                            {selectedSaleDetail.payment_method}
+                        </span>
+                     </div>
+                     {selectedSaleDetail.taxBreakdown && selectedSaleDetail.taxBreakdown.ivaUSD > 0 && (
+                        <div className="flex justify-between items-center pt-2 border-t border-slate-200/50">
+                            <span className="font-semibold text-blue-500">Impuesto (IVA 16%)</span>
+                            <span className="font-bold text-blue-600">Ref {selectedSaleDetail.taxBreakdown.ivaUSD.toFixed(2)}</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* 3. FOOTER ACCIONES (Botón Principal cambia a Naranja si es Crédito) */}
+            <div className="p-5 bg-white border-t border-slate-100 flex flex-col gap-3 shadow-[0_-20px_40px_-15px_rgba(0,0,0,0.05)] z-10">
+                
+                {/* Botón Imprimir (Dinámico) */}
+                <button
+                    onClick={() => handlePrintTicket(selectedSaleDetail)} 
+                    className={`w-full relative overflow-hidden text-white font-bold py-3.5 rounded-xl shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300 active:scale-95 group flex items-center justify-center gap-2 ${
+                        selectedSaleDetail.invoice_type === 'FISCAL' 
+                        ? 'bg-slate-900' // Fiscal = Oscuro
+                        : (selectedSaleDetail.status === 'PENDIENTE' || selectedSaleDetail.status === 'PARCIAL')
+                            ? 'bg-orange-600 hover:bg-orange-500' // Crédito = NARANJA
+                            : 'bg-emerald-600 hover:bg-emerald-500' // Pagado = Esmeralda
+                    }`}
+                >
+                    <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                    <span className="tracking-wide uppercase text-xs">{selectedSaleDetail.invoice_type === 'FISCAL' ? 'Reimprimir Fiscal' : 'Imprimir Ticket'}</span>
+                </button>
+
+                {/* Botón Anular */}
+                {selectedSaleDetail.status !== 'ANULADO' ? (
+                    <button
+                        onClick={() => handleVoidSale(selectedSaleDetail)}
+                        disabled={selectedSaleDetail.status === 'PARCIAL'}
+                        className={`w-full py-3 px-4 rounded-xl font-bold text-[10px] uppercase tracking-widest border transition-all duration-300 flex items-center justify-center gap-2 ${
+                            selectedSaleDetail.status === 'PARCIAL' 
+                            ? 'bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed'
+                            : 'bg-white border-rose-100 text-rose-500 hover:bg-rose-50 hover:border-rose-200'
+                        }`}
+                    >
+                        {selectedSaleDetail.status === 'PARCIAL' ? '🔒 Bloqueado' : (selectedSaleDetail.invoice_type === 'FISCAL' ? 'Emitir Nota de Crédito' : 'Anular Venta')}
+                    </button>
+                ) : (
+                    <div className="w-full py-3 rounded-xl bg-slate-50 border border-slate-100 text-slate-300 font-black text-[10px] uppercase tracking-[0.2em] text-center select-none">
+                         ⛔ Venta Anulada
+                    </div>
+                )}
+            </div>
+
+        </div>
+    </div>
+)}
 
             {/* MODAL: STOCK COMPLETO (UX Mejorada) */}
             {showStockModal && (
