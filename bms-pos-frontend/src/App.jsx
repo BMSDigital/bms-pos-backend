@@ -413,74 +413,131 @@ function App() {
     const [inventorySearch, setInventorySearch] = useState(''); // Exclusivo para Inventario
     const [isSearchingSales, setIsSearchingSales] = useState(false); // Spinner local
 
-    // --- NUEVA FUNCIÓN UI/UX: APERTURA DE CAJA MODERNA ---
-    const promptOpenCash = async () => {
-        // Diseño moderno con HTML personalizado
-        const { value: formValues } = await Swal.fire({
-            title: '<h2 class="text-2xl font-bold text-gray-800">☀️ Apertura de Jornada</h2>',
-            html: `
-            <div class="text-left font-sans mt-2">
-                <p class="text-gray-500 mb-6 text-sm">Para comenzar a procesar ventas, es necesario inicializar la caja. Ingrese el fondo de maniobra (sencillo/cambio) inicial.</p>
-                
-                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200 space-y-4">
-                    <div>
-                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">💵 Fondo en Divisas ($)</label>
+    // --- REEMPLAZA TU FUNCIÓN promptOpenCash CON ESTA ---
+const promptOpenCash = async () => {
+    const { value: formValues } = await Swal.fire({
+        // ... (MANTENEMOS TU DISEÑO VISUAL ACTUAL DE SWEETALERT) ...
+        title: `<div class="flex flex-col items-center pt-3 pb-1">
+                    <span class="text-4xl animate-bounce-slow">☀️</span>
+                    <span class="text-2xl font-black text-slate-800 mt-2 tracking-tight">Iniciar Jornada</span>
+                </div>`,
+        html: `
+            <div class="text-left font-sans px-1">
+                <p class="text-center text-slate-400 text-xs mb-6 font-medium leading-relaxed">
+                    Indica el efectivo inicial en gaveta (Sencillo/Cambio) para comenzar.
+                </p>
+                <div class="space-y-4">
+                    <div class="bg-slate-50 p-1 rounded-2xl border border-slate-100 group focus-within:border-blue-300 focus-within:bg-blue-50/30 transition-all duration-300">
+                        <label class="block text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-1 ml-3 mt-2">Fondo en Bolívares</label>
                         <div class="relative">
-                            <span class="absolute left-3 top-2.5 text-gray-400">$</span>
-                            <input id="init-usd" type="number" step="0.01" class="w-full pl-8 pr-4 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all font-bold text-gray-700" placeholder="0.00" value="0">
+                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-blue-500 font-black text-xl">Bs</span>
+                            <input id="init-ves" type="number" step="0.01" class="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-slate-700 text-2xl focus:outline-none focus:ring-0 transition-all placeholder:text-slate-200 shadow-sm group-focus-within:shadow-md" placeholder="0.00">
                         </div>
                     </div>
-                    
-                    <div>
-                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">🇻🇪 Fondo en Bolívares (Bs)</label>
+                    <div class="bg-slate-50 p-1 rounded-2xl border border-slate-100 group focus-within:border-emerald-300 focus-within:bg-emerald-50/30 transition-all duration-300">
+                        <label class="block text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-1 ml-3 mt-2">Fondo en Divisas</label>
                         <div class="relative">
-                            <span class="absolute left-3 top-2.5 text-gray-400">Bs</span>
-                            <input id="init-ves" type="number" step="0.01" class="w-full pl-8 pr-4 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all font-bold text-gray-700" placeholder="0.00" value="0">
+                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-500 font-black text-sm uppercase tracking-wider">Ref</span>
+                            <input id="init-usd" type="number" step="0.01" class="w-full pl-14 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-slate-700 text-2xl focus:outline-none focus:ring-0 transition-all placeholder:text-slate-200 shadow-sm group-focus-within:shadow-md" placeholder="0.00">
                         </div>
                     </div>
                 </div>
             </div>
         `,
-            showCancelButton: true,
-            confirmButtonText: '🚀 Abrir Caja y Comenzar',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#2563EB', // Un azul fuerte y moderno
-            cancelButtonColor: '#9CA3AF',
-            focusConfirm: false,
-            allowOutsideClick: false,
-            customClass: {
-                popup: 'rounded-2xl shadow-xl', // Bordes redondeados modernos
-            },
-            preConfirm: () => {
-                const usd = document.getElementById('init-usd').value;
-                const ves = document.getElementById('init-ves').value;
-                if (!usd && !ves) {
-                    Swal.showValidationMessage('Por favor ingrese al menos un monto (puede ser 0)');
-                    return false;
+        showCancelButton: true,
+        confirmButtonText: 'Abrir Caja',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#0056B3',
+        cancelButtonColor: '#ffffff',
+        background: '#ffffff',
+        width: '420px',
+        padding: '1.5rem',
+        buttonsStyling: false,
+        customClass: {
+            popup: 'rounded-[2.5rem] shadow-2xl border border-slate-50',
+            confirmButton: 'w-full bg-higea-blue text-white font-bold rounded-xl py-4 text-sm shadow-lg shadow-blue-200 hover:shadow-xl hover:scale-[1.01] transition-all mb-2 mx-4',
+            cancelButton: 'w-full bg-white text-slate-400 font-bold rounded-xl py-3 text-xs hover:text-rose-500 transition-all mx-4 border border-transparent hover:border-slate-100'
+        },
+        didOpen: () => {
+            document.getElementById('init-ves').focus();
+        },
+        preConfirm: () => {
+            const usd = document.getElementById('init-usd').value;
+            const ves = document.getElementById('init-ves').value;
+            return { 
+                usd: usd ? parseFloat(usd) : 0, 
+                ves: ves ? parseFloat(ves) : 0 
+            };
+        }
+    });
+
+    if (formValues) {
+        try {
+            Swal.fire({ 
+                title: '', 
+                html: '<span class="text-sm font-bold text-slate-500">Iniciando sistema...</span>', 
+                timerProgressBar: true, 
+                didOpen: () => Swal.showLoading(),
+                background: 'transparent',
+                backdrop: 'rgba(255,255,255,0.8)'
+            });
+
+            await axios.post(`${API_URL}/cash/open`, {
+                initial_cash_usd: formValues.usd,
+                initial_cash_ves: formValues.ves
+            });
+
+            const Toast = Swal.mixin({
+                toast: true,
+                position: 'top',
+                showConfirmButton: false,
+                timer: 3000,
+                timerProgressBar: true,
+                didOpen: (toast) => {
+                    toast.addEventListener('mouseenter', Swal.stopTimer)
+                    toast.addEventListener('mouseleave', Swal.resumeTimer)
                 }
-                return { usd: usd || 0, ves: ves || 0 };
-            }
-        });
+            });
 
-        if (formValues) {
-            try {
-                await axios.post(`${API_URL}/cash/open`, {
-                    initial_cash_usd: formValues.usd,
-                    initial_cash_ves: formValues.ves
+            Toast.fire({
+                icon: 'success',
+                title: '¡Caja Abierta!',
+                text: 'Listo para procesar ventas'
+            });
+
+            checkCashStatus(); 
+
+        } catch (err) {
+            // --- AQUÍ ESTÁ LA MEJORA UX (VALIDACIÓN DE SEGURIDAD) ---
+            if (err.response && err.response.data && err.response.data.error === 'CONFLICTO_TURNO_ABIERTO') {
+                Swal.fire({
+                    title: '⛔ ACCESO DENEGADO',
+                    html: `
+                        <div class="text-left">
+                            <p class="mb-3 text-slate-600 text-sm">Por seguridad fiscal, no pueden existir dos turnos simultáneos.</p>
+                            <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded shadow-sm">
+                                <p class="font-bold text-red-800 text-xs uppercase">ERROR CRÍTICO:</p>
+                                <p class="text-red-700 text-xs font-mono mt-1">${err.response.data.message}</p>
+                            </div>
+                            <p class="mt-4 text-xs text-slate-400">Solución: Realiza el ARQUEO del turno anterior antes de iniciar uno nuevo.</p>
+                        </div>
+                    `,
+                    icon: 'error',
+                    confirmButtonText: 'Entendido, ir a cerrar',
+                    confirmButtonColor: '#ef4444'
                 });
-
-                // Feedback visual de éxito
-                const Toast = Swal.mixin({
-                    toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true
+            } else {
+                // Error genérico (Conexión, etc)
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: err.response?.data?.error || 'Error de conexión',
+                    confirmButtonColor: '#E11D2B'
                 });
-                Toast.fire({ icon: 'success', title: '¡Caja Abierta Correctamente!' });
-
-                checkCashStatus(); // Recargar estado visualmente
-            } catch (err) {
-                Swal.fire('Error', err.response?.data?.error || 'No se pudo abrir la caja', 'error');
             }
         }
-    };
+    }
+};
 
     // 1. Carga inicial de datos al montar el componente
     useEffect(() => {
@@ -3125,188 +3182,273 @@ const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
         }
     };
 
-    // --- 💰 FUNCIÓN MAESTRA DE CIERRE DE CAJA (UX EN TIEMPO REAL & MULTI-MÉTODO) ---
-    const handleCashClose = async () => {
-        // 1. Obtener datos del backend
-        Swal.fire({ title: 'Auditando transacciones...', didOpen: () => Swal.showLoading() });
-        let statusData;
-        try {
-            const res = await axios.get(`${API_URL}/cash/current-status`);
-            statusData = res.data;
-            if (statusData.status === 'CERRADA') return Swal.fire('Error', 'No hay caja abierta.', 'error');
-        } catch (e) {
-            return Swal.fire('Error', 'Error de conexión', 'error');
-        }
+    // -----------------------------------------------------------------------------
+// 🇻🇪 ARQUEO DE CAJA "PREMIUM DASHBOARD" (LAYOUT 2 COLUMNAS)
+// -----------------------------------------------------------------------------
+const handleCashClose = async () => {
+    
+    // 1. PANTALLA DE CARGA (Feedback Inmediato)
+    Swal.fire({
+        title: 'Auditoría en curso...',
+        html: '<div class="text-sm text-slate-500 font-medium animate-pulse">Sincronizando contadores fiscales...</div>',
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading(),
+        background: '#ffffff',
+        showConfirmButton: false,
+        width: 400,
+        padding: '2em'
+    });
+
+    let statusData;
+    try {
+        const res = await axios.get(`${API_URL}/cash/current-status`);
+        statusData = res.data;
         Swal.close();
 
-        const sys = statusData.system_totals;
-        const initial = statusData.shift_info;
+        if (statusData.status === 'CERRADA') {
+            return Swal.fire({ icon: 'info', title: 'Turno Cerrado', text: 'No hay caja abierta.', confirmButtonColor: '#3b82f6' });
+        }
+    } catch (e) {
+        Swal.close();
+        return Swal.fire('Error', 'Sin conexión al servidor.', 'error');
+    }
 
-        // --- CÁLCULOS DE TOTALES ESPERADOS ---
-        // Efectivo (Base + Ventas)
-        const expCashUSD = parseFloat(initial.initial_cash_usd) + sys.cash_usd;
-        const expCashBs = parseFloat(initial.initial_cash_ves) + sys.cash_ves;
+    // --- CÁLCULOS (PREDICCIÓN DEL SISTEMA) ---
+    const sys = statusData.system_totals;
+    const initial = statusData.shift_info;
 
-        // Bancos y Digitales (Solo Ventas)
-        const expZelle = sys.zelle;
-        const expPunto = sys.punto;
-        const expPagoMovil = sys.pm;
+    // Fórmula: (Base + Ventas) - Salidas
+    const expectedBs  = (parseFloat(initial.initial_cash_ves) + sys.cash_ves) - (sys.cash_outflows_ves || 0);
+    const expectedUsd = (parseFloat(initial.initial_cash_usd) + sys.cash_usd) - (sys.cash_outflows_usd || 0);
+    const expectedPm    = sys.pm || 0;
+    const expectedPunto = sys.punto || 0;
+    const expectedZelle = sys.zelle || 0;
 
-        // No Monetarios (Informativo: Salidas de inventario sin ingreso de dinero)
-        const totalDonations = sys.donations || 0;
+    // --- UI/UX PREMIUM LAYOUT ---
+    await Swal.fire({
+        title: '',
+        width: '1050px', // Ancho suficiente para 2 columnas cómodas
+        padding: 0,
+        background: '#f8fafc', // Slate-50 background
+        showCancelButton: true,
+        // BOTONES ROBUSTOS CON ICONOS
+        confirmButtonText: '<span class="flex items-center gap-3"><span>🔒</span> <span>CONFIRMAR CIERRE</span></span>',
+        cancelButtonText: 'Cancelar Operación',
+        
+        // --- ESTILOS DE BOTONES NIVEL "APP NATIVA" ---
+        buttonsStyling: false, // Desactivamos estilos default para usar Tailwind puro
+        customClass: {
+            popup: 'rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100', // Bordes muy curvos
+            actions: 'p-6 bg-white border-t border-slate-100 w-full flex gap-4 justify-end items-center z-10', // Barra de acciones
+            confirmButton: 'bg-slate-900 text-white hover:bg-black px-8 py-4 rounded-2xl font-bold text-sm tracking-wide shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 transform', 
+            cancelButton: 'bg-white text-slate-400 hover:text-slate-600 hover:bg-slate-50 px-6 py-4 rounded-2xl font-bold text-sm border border-transparent hover:border-slate-200 transition-all duration-300'
+        },
 
-        // 2. MODAL INTERACTIVO CON CÁLCULO EN VIVO
-        await Swal.fire({
-            title: '<h2 class="text-2xl font-black text-gray-800">📠 Resumen General de Caja</h2>',
-            width: '900px', // Más ancho para visualizar todo cómodamente
-            html: `
-                <div class="text-left font-sans mb-4 space-y-6">
-                    
-                    <div class="bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-sm">
-                        <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 border-b pb-1 flex items-center gap-2">
-                            <span>💵</span> Dinero en Efectivo (Gaveta)
-                        </h4>
-                        <div class="grid grid-cols-3 gap-4 items-center">
-                            <div class="text-center pb-2"><span class="text-[10px] font-bold text-gray-400">MONEDA</span></div>
-                            <div class="text-center pb-2"><span class="text-[10px] font-bold text-gray-400">SISTEMA (BASE + VENTA)</span></div>
-                            <div class="text-center pb-2"><span class="text-[10px] font-bold text-higea-blue">CONTEO REAL (TU CUENTAS)</span></div>
-
-                            <div class="flex items-center gap-2 pl-2"><span class="text-xl">🇺🇸</span> <span class="font-bold text-gray-700 text-sm">Dólares ($)</span></div>
-                            <div class="flex items-center justify-center bg-white rounded border border-gray-100 py-1"><span class="text-lg font-bold text-gray-500">$${expCashUSD.toFixed(2)}</span></div>
-                            <div>
-                                <input id="swal-input-cash" type="number" step="0.01" class="w-full text-center text-xl font-bold text-higea-blue border-2 border-gray-200 rounded-lg focus:border-higea-blue outline-none p-1 transition-all" placeholder="0.00">
-                            </div>
-
-                            <div class="flex items-center gap-2 pl-2"><span class="text-xl">🇻🇪</span> <span class="font-bold text-gray-700 text-sm">Bolívares (Bs)</span></div>
-                            <div class="flex items-center justify-center bg-white rounded border border-gray-100 py-1"><span class="text-lg font-bold text-gray-500">Bs ${expCashBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
-                            <div>
-                                <input id="swal-input-bs" type="number" step="0.01" class="w-full text-center text-xl font-bold text-blue-600 border-2 border-gray-200 rounded-lg focus:border-blue-500 outline-none p-1 transition-all" placeholder="0.00">
-                            </div>
-                        </div>
+        html: `
+            <div class="bg-white px-10 py-6 border-b border-slate-100 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+                <div>
+                    <h2 class="text-3xl font-black text-slate-800 tracking-tighter">Cierre de Caja</h2>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase">Turno #${initial.id}</span>
+                        <span class="text-slate-400 text-xs font-medium">${new Date().toLocaleDateString()}</span>
                     </div>
-
-                    <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm">
-                        <h4 class="text-xs font-bold text-blue-500 uppercase tracking-widest mb-3 border-b border-blue-200 pb-1 flex items-center gap-2">
-                            <span>🏦</span> Bancos y Plataformas Digitales
-                        </h4>
-                        <div class="grid grid-cols-3 gap-4">
-                            <div class="flex items-center gap-2"><span class="text-xl">💳</span> <span class="font-bold text-gray-700 text-sm">Punto Venta</span></div>
-                            <div class="flex items-center justify-center"><span class="text-sm font-bold text-gray-400">Esp: Bs ${expPunto.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
-                            <div><input id="swal-input-punto" type="number" step="0.01" class="w-full text-center text-md font-bold text-gray-700 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-300 outline-none p-1 bg-white" placeholder="0.00"></div>
-
-                            <div class="flex items-center gap-2"><span class="text-xl">📱</span> <span class="font-bold text-gray-700 text-sm">Pago Móvil</span></div>
-                            <div class="flex items-center justify-center"><span class="text-sm font-bold text-gray-400">Esp: Bs ${expPagoMovil.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
-                            <div><input id="swal-input-pm" type="number" step="0.01" class="w-full text-center text-md font-bold text-gray-700 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-300 outline-none p-1 bg-white" placeholder="0.00"></div>
-
-                            <div class="flex items-center gap-2"><span class="text-xl">🟣</span> <span class="font-bold text-gray-700 text-sm">Zelle</span></div>
-                            <div class="flex items-center justify-center"><span class="text-sm font-bold text-gray-400">Esp: $${expZelle.toFixed(2)}</span></div>
-                            <div><input id="swal-input-zelle" type="number" step="0.01" class="w-full text-center text-md font-bold text-purple-600 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-300 outline-none p-1 bg-white" placeholder="0.00"></div>
-                        </div>
-                    </div>
-
-                    ${totalDonations > 0 ? `
-                    <div class="bg-yellow-50 p-3 rounded-xl border border-yellow-200 flex items-center justify-between shadow-sm animate-pulse">
-                        <div class="flex items-center gap-3">
-                            <div class="bg-yellow-100 p-2 rounded-full"><span class="text-xl">🎁</span></div>
-                            <div>
-                                <p class="text-sm font-bold text-yellow-800">Donaciones / Regalos Hoy</p>
-                                <p class="text-xs text-yellow-600">Salida de inventario autorizada sin ingreso monetario.</p>
-                            </div>
-                        </div>
-                        <div class="text-right">
-                            <span class="text-xs font-bold text-yellow-600 block">MONTO ESTIMADO</span>
-                            <span class="text-xl font-black text-yellow-700">Ref ${totalDonations.toFixed(2)}</span>
-                        </div>
-                    </div>
-                    ` : ''}
-                    
-                    <textarea id="swal-notes" class="w-full p-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100 shadow-inner" placeholder="📝 Observaciones del Cierre (Sobrantes, faltantes justificados, notas)..."></textarea>
                 </div>
-            `,
-            confirmButtonText: '🔐 Confirmar y Cerrar',
-            confirmButtonColor: '#1e293b',
-            showCancelButton: true,
-            cancelButtonText: 'Cancelar',
-            customClass: { popup: 'rounded-3xl' },
+                <div class="text-right">
+                    <p class="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-1">Tasa Oficial</p>
+                    <div class="text-xl font-black text-emerald-600 bg-emerald-50 px-4 py-1.5 rounded-xl border border-emerald-100 shadow-sm inline-block">
+                        ${bcvRate.toFixed(2)} Bs
+                    </div>
+                </div>
+            </div>
 
-            // --- PRE-LLENADO INTELIGENTE (UX) ---
-            didOpen: () => {
-                // Pre-llenamos los campos digitales porque suelen ser exactos (menos error humano)
-                // El usuario puede editarlos si el banco cobró comisión o hubo un error
-                document.getElementById('swal-input-punto').value = expPunto.toFixed(2);
-                document.getElementById('swal-input-pm').value = expPagoMovil.toFixed(2);
-                document.getElementById('swal-input-zelle').value = expZelle.toFixed(2);
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-0 min-h-[450px]">
+                
+                <div class="md:col-span-7 p-8 space-y-6 border-r border-slate-100 bg-[#FAFAFA]">
+                    <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-blue-500"></span> Conteo de Efectivo
+                    </h3>
 
-                // Dejamos Efectivo vacío para obligar al conteo físico
-                document.getElementById('swal-input-cash').focus();
-            },
-
-            preConfirm: () => {
-                return {
-                    cash_usd: document.getElementById('swal-input-cash').value || 0,
-                    cash_ves: document.getElementById('swal-input-bs').value || 0,
-                    zelle: document.getElementById('swal-input-zelle').value || 0,
-                    pm: document.getElementById('swal-input-pm').value || 0,
-                    punto: document.getElementById('swal-input-punto').value || 0,
-                    notes: document.getElementById('swal-notes').value
-                }
-            }
-        }).then(async (result) => {
-            if (result.isConfirmed) {
-                const declared = result.value;
-
-                // Calculamos diferencias (Principalmente en efectivo, que es lo crítico)
-                const diffCash = parseFloat(declared.cash_usd) - expCashUSD;
-
-                // Validación suave: Si hay mucha diferencia en efectivo, pedir confirmación extra
-                if (Math.abs(diffCash) > 1) {
-                    const confirmDiff = await Swal.fire({
-                        title: '⚠️ Diferencia en Efectivo',
-                        html: `
-                            <p class="text-gray-600 mb-2">El efectivo declarado no coincide con el sistema.</p>
-                            <div class="bg-red-50 p-3 rounded text-red-700 font-bold mb-2">
-                                Diferencia: ${diffCash < 0 ? '-' : '+'}$${Math.abs(diffCash).toFixed(2)}
+                    <div class="bg-white p-6 rounded-3xl shadow-[0_4px_20px_-10px_rgba(0,0,0,0.1)] border border-slate-100 group focus-within:ring-4 focus-within:ring-blue-50 transition-all cursor-text relative overflow-hidden" onclick="document.getElementById('inp-bs').focus()">
+                        <div class="absolute top-0 right-0 bg-slate-800 text-white text-[9px] font-bold px-3 py-1.5 rounded-bl-xl z-0">
+                            MONEDA NACIONAL
+                        </div>
+                        
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">En Gaveta (Bolívares)</label>
+                        <div class="flex items-center gap-3 relative z-10">
+                            <span class="text-4xl">🇻🇪</span>
+                            <div class="flex-1">
+                                <input id="inp-bs" type="number" step="0.01" placeholder="0,00"
+                                    class="w-full text-4xl font-black text-slate-800 bg-transparent outline-none placeholder-slate-200 tabular-nums">
                             </div>
-                            <p class="text-sm text-gray-500">¿Deseas cerrar la caja registrando esta diferencia?</p>
-                        `,
-                        icon: 'warning',
-                        showCancelButton: true,
-                        confirmButtonText: 'Sí, Registrar Diferencia',
-                        confirmButtonColor: '#E11D2B',
-                        cancelButtonText: 'Verificar Conteo'
-                    });
-                    if (!confirmDiff.isConfirmed) return;
+                        </div>
+
+                        <div class="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center">
+                            <span class="text-xs text-slate-400 font-medium">El sistema calcula: <b class="text-slate-600">${formatBs(expectedBs)} Bs</b></span>
+                            <span id="badge-bs" class="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded transition-all">Esperando...</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 group focus-within:ring-4 focus-within:ring-emerald-50 transition-all cursor-text" onclick="document.getElementById('inp-usd').focus()">
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">En Gaveta (Divisas)</label>
+                        <div class="flex items-center gap-3">
+                            <span class="text-4xl text-emerald-500">$</span>
+                            <div class="flex-1">
+                                <input id="inp-usd" type="number" step="0.01" placeholder="0.00"
+                                    class="w-full text-4xl font-black text-emerald-600 bg-transparent outline-none placeholder-emerald-100/50 tabular-nums">
+                            </div>
+                        </div>
+
+                        <div class="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center">
+                            <span class="text-xs text-slate-400 font-medium">El sistema calcula: <b class="text-slate-600">$${formatUSD(expectedUsd)}</b></span>
+                            <span id="badge-usd" class="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded transition-all">Esperando...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="md:col-span-5 p-8 bg-white flex flex-col h-full">
+                    <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-purple-500"></span> Verificación Digital
+                    </h3>
+                    
+                    <div class="space-y-3 flex-1">
+                        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+                            <div class="flex flex-col">
+                                <span class="text-xs font-bold text-slate-700">Pago Móvil</span>
+                                <span class="text-[10px] text-slate-400">Esp: ${formatBs(expectedPm)}</span>
+                            </div>
+                            <input id="inp-pm" type="number" value="${expectedPm > 0 ? expectedPm : ''}"
+                                class="w-28 text-right font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 focus:border-blue-500 text-sm" placeholder="0.00">
+                        </div>
+
+                        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+                            <div class="flex flex-col">
+                                <span class="text-xs font-bold text-slate-700">Punto de Venta</span>
+                                <span class="text-[10px] text-slate-400">Esp: ${formatBs(expectedPunto)}</span>
+                            </div>
+                            <input id="inp-punto" type="number" value="${expectedPunto > 0 ? expectedPunto : ''}"
+                                class="w-28 text-right font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 focus:border-blue-500 text-sm" placeholder="0.00">
+                        </div>
+
+                        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+                            <div class="flex flex-col">
+                                <span class="text-xs font-bold text-purple-600">Zelle (Ref)</span>
+                                <span class="text-[10px] text-slate-400">Esp: $${formatUSD(expectedZelle)}</span>
+                            </div>
+                            <input id="inp-zelle" type="number" value="${expectedZelle > 0 ? expectedZelle : ''}"
+                                class="w-28 text-right font-bold text-purple-700 bg-transparent outline-none border-b border-purple-200 focus:border-purple-500 text-sm" placeholder="0.00">
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-6 border-t border-slate-100">
+                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-2">Observaciones / Incidencias</label>
+                        <textarea id="inp-notes" rows="3" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs font-medium text-slate-600 focus:bg-white focus:ring-2 focus:ring-slate-100 focus:border-slate-300 outline-none resize-none transition-all" placeholder="Escribe aquí si hubo devoluciones, billetes rotos o diferencias justificadas..."></textarea>
+                    </div>
+                </div>
+
+            </div>
+        `,
+        // --- 🧠 LÓGICA REACTIVA (Mantiene el semáforo visual) ---
+        didOpen: () => {
+            const inpBs = document.getElementById('inp-bs');
+            const inpUsd = document.getElementById('inp-usd');
+            const badgeBs = document.getElementById('badge-bs');
+            const badgeUsd = document.getElementById('badge-usd');
+
+            const auditLive = () => {
+                // Cálculo Bs
+                const valBs = parseFloat(inpBs.value) || 0;
+                const diffBs = valBs - expectedBs;
+                if(inpBs.value === '') {
+                    badgeBs.className = 'text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded';
+                    badgeBs.innerText = 'Esperando...';
+                } else if (Math.abs(diffBs) < 1) {
+                    badgeBs.className = 'text-[10px] font-bold bg-emerald-100 text-emerald-600 px-2 py-1 rounded border border-emerald-200';
+                    badgeBs.innerHTML = '✨ EXACTO';
+                } else {
+                    const color = diffBs > 0 ? 'blue' : 'rose';
+                    const sign = diffBs > 0 ? '+' : '';
+                    badgeBs.className = `text-[10px] font-bold bg-${color}-50 text-${color}-600 px-2 py-1 rounded border border-${color}-100`;
+                    badgeBs.innerHTML = `${sign}${formatBs(diffBs)} Bs`;
                 }
 
-                // ENVÍO AL BACKEND
-                try {
-                    Swal.fire({ title: 'Cerrando turno...', didOpen: () => Swal.showLoading() });
-                    await axios.post(`${API_URL}/cash/close`, { declared, notes: declared.notes });
-
-                    // --- ACTUALIZACIÓN UI INMEDIATA ---
-                    setCashShift(null); // Actualiza widget lateral a ROJO
-
-                    // Si el usuario está viendo el reporte de cierres, recargarlo
-                    if (view === 'ADVANCED_REPORTS' && reportTab === 'CLOSINGS') fetchClosingsHistory();
-
-                    Swal.fire({
-                        icon: 'success',
-                        title: '¡Caja Cerrada Exitosamente!',
-                        text: 'El reporte final ha sido guardado y el turno finalizado.',
-                        confirmButtonText: '🖨️ Generar PDF',
-                        showCancelButton: true,
-                        cancelButtonText: 'Cerrar'
-                    }).then((resPDF) => {
-                        if (resPDF.isConfirmed) fetchClosingsHistory(); // O llamar directo a printClosingReport si tienes el objeto
-                    });
-
-                } catch (err) {
-                    console.error(err);
-                    Swal.fire('Error', 'No se pudo cerrar la caja. Intente nuevamente.', 'error');
+                // Cálculo USD
+                const valUsd = parseFloat(inpUsd.value) || 0;
+                const diffUsd = valUsd - expectedUsd;
+                if(inpUsd.value === '') {
+                    badgeUsd.className = 'text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded';
+                    badgeUsd.innerText = 'Esperando...';
+                } else if (Math.abs(diffUsd) < 0.1) {
+                    badgeUsd.className = 'text-[10px] font-bold bg-emerald-100 text-emerald-600 px-2 py-1 rounded border border-emerald-200';
+                    badgeUsd.innerHTML = '✨ EXACTO';
+                } else {
+                    const color = diffUsd > 0 ? 'blue' : 'rose';
+                    const sign = diffUsd > 0 ? '+' : '';
+                    badgeUsd.className = `text-[10px] font-bold bg-${color}-50 text-${color}-600 px-2 py-1 rounded border border-${color}-100`;
+                    badgeUsd.innerHTML = `${sign}$${formatUSD(diffUsd)}`;
                 }
+            };
+
+            inpBs.addEventListener('input', auditLive);
+            inpUsd.addEventListener('input', auditLive);
+            setTimeout(() => inpBs.focus(), 150);
+        },
+
+        preConfirm: () => {
+            return {
+                cash_ves: parseFloat(document.getElementById('inp-bs').value) || 0,
+                cash_usd: parseFloat(document.getElementById('inp-usd').value) || 0,
+                pm: parseFloat(document.getElementById('inp-pm').value) || 0,
+                punto: parseFloat(document.getElementById('inp-punto').value) || 0,
+                zelle: parseFloat(document.getElementById('inp-zelle').value) || 0,
+                notes: document.getElementById('inp-notes').value
+            };
+        }
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            const declared = result.value;
+
+            // --- ALERTA DE SEGURIDAD (Si hay mucha diferencia) ---
+            const finalDiffBs = declared.cash_ves - expectedBs;
+            const finalDiffUsd = declared.cash_usd - expectedUsd;
+            const isAlarming = Math.abs(finalDiffBs) > 20 || Math.abs(finalDiffUsd) > 1;
+
+            if (isAlarming) {
+                const confirmMistake = await Swal.fire({
+                    title: 'Diferencia Detectada',
+                    text: 'Los montos ingresados no coinciden con el sistema. ¿Deseas continuar de todas formas?',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, Registrar Faltante/Sobrante',
+                    cancelButtonText: 'Recontar',
+                    confirmButtonColor: '#f59e0b',
+                    cancelButtonColor: '#1e293b'
+                });
+                if (!confirmMistake.isConfirmed) return handleCashClose(); // Recursividad para reabrir
             }
-        });
-    };
+
+            // --- ENVÍO AL BACKEND ---
+            try {
+                Swal.fire({ title: 'Generando Reporte Z...', didOpen: () => Swal.showLoading(), showConfirmButton: false, background: '#fff' });
+                await axios.post(`${API_URL}/cash/close`, { declared, notes: declared.notes });
+                
+                setCashShift(null); // Actualiza estado React
+                
+                Swal.fire({
+                    title: '¡Cierre Exitoso!',
+                    html: '<span class="text-slate-500">El turno ha finalizado correctamente.</span>',
+                    icon: 'success',
+                    confirmButtonText: 'Entendido',
+                    confirmButtonColor: '#10b981'
+                });
+
+                if (view === 'ADVANCED_REPORTS' && typeof fetchClosingsHistory === 'function') fetchClosingsHistory();
+            } catch (error) {
+                console.error(error);
+                Swal.fire('Error', 'No se pudo guardar el cierre.', 'error');
+            }
+        }
+    });
+};
 
     // --- NUEVO: FUNCIÓN PARA ANULAR VENTA (NOTA DE CRÉDITO) ---
     const handleVoidSale = async (sale) => {
