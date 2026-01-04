@@ -1155,44 +1155,39 @@ app.post('/api/sales/:id/void', async (req, res) => {
 
 // --- 🚀 NUEVO MÓDULO: GESTIÓN Y CIERRE DE CAJA ---
 
-// --- BUSCA ESTA RUTA EN TU server.js Y REEMPLÁZALA ---
-// 1. Verificar si hay caja abierta / Abrir Caja (BLINDADO CON VALIDACIÓN)
+// 1. Verificar si hay caja abierta / Abrir Caja
 app.post('/api/cash/open', async (req, res) => {
     const { initial_cash_usd, initial_cash_ves } = req.body;
-    
     const client = await pool.connect();
+    
     try {
-        // Iniciamos una transacción para seguridad de datos (ACID)
+        // A. Iniciamos transacción para seguridad (ACID)
         await client.query('BEGIN');
 
-        // A. VALIDACIÓN DE SEGURIDAD (LEY VENEZOLANA: NO SOLAPAMIENTO DE TURNOS)
-        // Verificamos si alguien dejó la caja abierta (status = 'ABIERTA')
+        // B. Verificamos si ya hay una abierta
         const checkOpen = await client.query("SELECT id FROM cash_shifts WHERE status = 'ABIERTA' LIMIT 1");
         
         if (checkOpen.rows.length > 0) {
-            await client.query('ROLLBACK'); // Cancelamos operación
+            await client.query('ROLLBACK'); // Cancelamos
             
-            // Retornamos el código de error exacto que espera tu Frontend Premium
+            // C. Retornamos el código de error específico para la alerta UX Premium
             return res.status(400).json({ 
                 error: 'CONFLICTO_TURNO_ABIERTO', 
-                message: `Imposible abrir: La Caja #${checkOpen.rows[0].id} ya está ABIERTA. Debe realizar el cierre primero.` 
+                message: `Ya existe la caja #${checkOpen.rows[0].id} abierta. Debe realizar el arqueo y cierre primero.` 
             });
         }
 
-        // B. APERTURA DE CAJA (Si no hay conflicto)
-        // Nota: Asegúrate que tu tabla se llame 'cash_shifts' y tenga estos campos. 
-        // Si usas otros nombres, adáptalos aquí.
+        // D. Insertamos si todo está limpio (Tu query original)
         const result = await client.query(`
-            INSERT INTO cash_shifts (initial_cash_usd, initial_cash_ves, status, start_time)
-            VALUES ($1, $2, 'ABIERTA', NOW()) RETURNING *
+            INSERT INTO cash_shifts (initial_cash_usd, initial_cash_ves, status)
+            VALUES ($1, $2, 'ABIERTA') RETURNING *
         `, [initial_cash_usd || 0, initial_cash_ves || 0]);
         
-        await client.query('COMMIT'); // Confirmamos el guardado
+        await client.query('COMMIT'); // Guardamos cambios
         res.json(result.rows[0]);
 
     } catch (err) {
-        await client.query('ROLLBACK'); // Revertimos cambios si hubo error técnico
-        console.error("Error crítico al abrir caja:", err);
+        await client.query('ROLLBACK'); // Revertimos si hay error técnico
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
