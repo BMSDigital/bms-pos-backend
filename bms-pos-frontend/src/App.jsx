@@ -1649,6 +1649,7 @@ const promptOpenCash = async () => {
     }
 
 
+   // FUNCIÓN DE CARGA DE DATOS (BLINDADA)
     const fetchData = async () => {
         try {
             // 1. Cargar estado y configuración
@@ -1672,7 +1673,8 @@ const promptOpenCash = async () => {
 
             // 3. Reportes básicos
             const statsRes = await axios.get(`${API_URL}/reports/daily`);
-            setStats(statsRes.data);
+            // ❌ NO actualizamos setStats todavía para evitar el "Flash"
+            const rawStats = statsRes.data; 
 
             const recentRes = await axios.get(`${API_URL}/reports/recent-sales`);
             setRecentSales(Array.isArray(recentRes.data) ? recentRes.data : []);
@@ -1681,13 +1683,12 @@ const promptOpenCash = async () => {
             setLowStock(Array.isArray(stockRes.data) ? stockRes.data : []);
 
             // ===========================================================================
-            // --- CORRECCIÓN CRÍTICA: CONVERSIÓN NUMÉRICA DE VENTAS ---
+            // --- CORRECCIÓN CRÍTICA: FILTRO DOBLE (ESTATUS + DESCRIPCIÓN) ---
             // ===========================================================================
             const salesRes = await axios.get(`${API_URL}/reports/sales-today`);
-
             const rawSales = Array.isArray(salesRes.data) ? salesRes.data : [];
 
-            // 💡 IMPORTANTE: Convertimos todo a números AQUÍ para evitar el error .toFixed
+            // Conversión numérica
             const sales = rawSales.map(sale => ({
                 ...sale,
                 total_usd: parseFloat(sale.total_usd) || 0,
@@ -1699,62 +1700,78 @@ const promptOpenCash = async () => {
 
             setDailySalesList(sales);
 
-            // Recalculamos totales del Dashboard (Dinero en Mano)
+            // Recalculamos totales del Dashboard
             let totalRef = 0;
+            let totalBs = 0;
             let count = 0;
 
             sales.forEach(sale => {
-                if (sale.status !== 'ANULADO') {
-                    // [CORRECCIÓN DEFINITIVA APLICADA AQUÍ]
-                    // 1. Tomamos el monto pagado base
-                    let montoReal = sale.amount_paid_usd;
+                // [LÓGICA BLINDADA]
+                // 1. Verificamos el Estatus
+                const isStatusDonation = sale.status === 'DONADO';
+                
+                // 2. Verificamos la Descripción (Respaldo por si el estatus falló en guardado anterior)
+                const methodStr = (sale.payment_method || '').toUpperCase();
+                const isDescDonation = methodStr.includes('DONACI') || methodStr.includes('DONACIÓN');
 
-                    // 2. Verificamos si es un AVANCE DE EFECTIVO buscando el tag [CAP:...]
-                    // Si existe, restamos ese capital para dejar solo la ganancia (comisión).
-                    if (sale.payment_method && sale.payment_method.includes('[CAP:')) {
+                // Si NO es anulado Y TAMPOCO es donación (por ninguno de los dos criterios), sumamos.
+                if (sale.status !== 'ANULADO' && !isStatusDonation && !isDescDonation) {
+                    
+                    let montoReal = sale.amount_paid_usd;
+                    let montoRealBs = sale.total_ves;
+
+                    // Lógica de Avance de Efectivo (Restar Capital)
+                    if (methodStr.includes('[CAP:')) {
                         try {
                             const match = sale.payment_method.match(/\[CAP:([\d\.]+)\]/);
                             if (match && match[1]) {
                                 const capital = parseFloat(match[1]);
                                 montoReal -= capital; 
                             }
-                        } catch (e) {
-                            console.error("Error restando capital en frontend:", e);
-                        }
+                        } catch (e) { console.error("Error CAP:", e); }
                     }
 
-                    // 3. Sumamos el monto neto al total acumulado
                     totalRef += montoReal;
+                    totalBs += montoRealBs; 
                     count++;
                 }
             });
 
-            // Actualizamos la tarjeta de "Ventas Hoy"
-            setStats(prev => ({
-                ...prev,
-                total_usd: totalRef
-            }));
+            // ✅ ACTUALIZAMOS LA PANTALLA AHORA (SIN FLASH)
+            setStats({
+                ...rawStats,       // Mantenemos otros datos que vengan del backend
+                total_usd: totalRef, // Sobrescribimos con el total filtrado
+                total_ves: totalBs,  // Sobrescribimos con el total filtrado
+                sales_count: count
+            });
             // ===========================================================================
 
-            // 4. Créditos (AHORA SÍ SE EJECUTARÁ ESTA PARTE SIN ERRORES)
+            // 4. Créditos
             const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
             const creditsData = Array.isArray(creditsRes.data) ? creditsRes.data : [];
             setPendingCredits(creditsData);
 
             const overdue = creditsData.filter(c => c.is_overdue).length;
             setOverdueCount(overdue);
-
+            
             const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
             setGroupedCredits(Array.isArray(groupedRes.data) ? groupedRes.data : []);
 
-            // 5. Analíticas / Top Deudores
+            // 5. Analíticas
             try {
                 const analyticsRes = await axios.get(`${API_URL}/reports/analytics`);
-                // Aquí es donde se llenan los "Top Deudores" del Dashboard
                 setTopDebtors(analyticsRes.data.topDebtors || []);
                 setAnalyticsData(analyticsRes.data);
-            } catch (analyticsError) {
-                console.warn("Analytics endpoint not ready yet", analyticsError);
+            } catch (e) { console.warn("Analytics error", e); }
+
+            // Estado de Caja
+            const cashRes = await axios.get(`${API_URL}/cash/current-status`);
+            if (cashRes.data.status === 'ABIERTA') {
+                setIsCashOpen(true);
+                setCashShift(cashRes.data.shift_info);
+            } else {
+                setIsCashOpen(false);
+                setCashShift(null);
             }
 
             setLoading(false);
@@ -2345,86 +2362,83 @@ const promptOpenCash = async () => {
     `;
     };
 
-    // FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO
+    // FUNCIÓN UNIFICADA DE PROCESAMIENTO (BLINDADA CONTRA ACENTOS/MAYÚSCULAS)
     const processSale = async (isCreditFlow = false) => {
+        
+        // --- 1. DETECCIÓN ROBUSTA DEL TIPO DE VENTA ---
+        
+        // Limpiamos la variable para evitar errores si es undefined
+        const currentMethodName = (typeof paymentMethod !== 'undefined' && paymentMethod) ? paymentMethod.toUpperCase() : '';
+        
+        // DETECCIÓN DE DONACIÓN (Acepta: 'DONACION', 'DONACIÓN', 'Donacion', etc.)
+        const isDonationTab = currentMethodName.includes('DONACI'); 
+        const isDonationSplit = isCreditFlow && (parseFloat(paymentShares['Donación']) || 0) > 0;
+        
+        // Variable definitiva
+        const isDonationSale = isDonationTab || isDonationSplit;
 
-        // Detección de flujos especiales
+        // DETECCIÓN DE CRÉDITO
         const isCreditSale = isCreditFlow && (parseFloat(paymentShares['Crédito']) || 0) > 0;
-        // [NUEVO] Detectamos si es una Donación
-        const isDonationSale = isCreditFlow && (parseFloat(paymentShares['Donación']) || 0) > 0;
 
-        // --- 1. VALIDACIÓN PARA FACTURA FISCAL (UX MEJORADO) ---
-        // Si el switch está encendido, OBLIGAMOS a tener Nombre y RIF
+        // --- 2. VALIDACIONES DE DATOS ---
         if (isFiscalInvoice) {
             if (!customerData.full_name || !customerData.id_number) {
-                return Swal.fire({
-                    icon: 'warning',
-                    title: 'Datos Fiscales Requeridos',
-                    text: 'Para emitir una Factura Fiscal, es obligatorio asignar un Cliente (Nombre y RIF).',
-                    confirmButtonText: 'Ingresar Datos del Cliente',
-                    confirmButtonColor: '#0056B3',
-                    showCancelButton: true,
-                    cancelButtonText: 'Cancelar'
-                }).then((result) => {
-                    if (result.isConfirmed) {
-                        // Cerramos el modal de pago y abrimos el de cliente para que llenen los datos
-                        setIsPaymentModalOpen(false);
-                        setIsCustomerModalOpen(true);
-                    }
-                });
+                return Swal.fire('Datos Fiscales Requeridos', 'Nombre y RIF son obligatorios.', 'warning');
             }
         }
 
-        // 2. VALIDACIÓN DE DATOS MÍNIMOS (CRÉDITO O DONACIÓN)
-        // [ADAPTADO] Ahora valida también si es Donación (Beneficiario)
         if ((isCreditSale || isDonationSale) && (!customerData.full_name || !customerData.id_number)) {
             const typeMsg = isDonationSale ? 'Beneficiario (Donación)' : 'Cliente (Crédito)';
-            return Swal.fire('Datos Incompletos', `Nombre y Cédula del ${typeMsg} son obligatorios por seguridad.`, 'warning');
+            return Swal.fire('Datos Faltantes', `Debe registrar Nombre y Cédula del ${typeMsg} para auditoría.`, 'warning');
         }
 
-        // Definición de Estatus para la Base de Datos
-        let currentStatus = 'PAGADO';
+        // --- 3. DEFINICIÓN DE ESTATUS ---
+        let currentStatus = 'PAGADO'; 
         if (isCreditSale) currentStatus = 'PENDIENTE';
-        if (isDonationSale) currentStatus = 'DONADO'; // Estatus para auditoría
+        if (isDonationSale) currentStatus = 'DONADO'; // Estatus para la Base de Datos
 
-        const paymentDescription = Object.entries(paymentShares)
-            .filter(([_, amt]) => parseFloat(amt) > 0)
-            .map(([method, amt]) => {
-                const methodData = paymentMethods.find(m => m.name === method);
-                const currencySymbol = methodData.currency === 'Ref' ? 'Ref' : 'Bs';
-                const reference = paymentReferences[method] ? ` [Ref: ${paymentReferences[method]}]` : '';
-                return `${method.replace('Ref', '(Ref)').replace('Bs', '(Bs)')}: ${currencySymbol}${amt}${reference}`;
-            })
-            .join(' + ');
+        // --- 4. DESCRIPCIÓN DEL PAGO ---
+        let paymentDescription = '';
+        
+        if (isDonationSale) {
+            // FORZAMOS esta descripción para que fetchData la reconozca después
+            paymentDescription = 'DONACIÓN (Salida de Inventario)';
+        } else {
+            const activeMethods = Object.keys(paymentShares).filter(k => (parseFloat(paymentShares[k]) || 0) > 0);
+            
+            if (activeMethods.length > 0) {
+                paymentDescription = activeMethods.map(m => {
+                    const amt = paymentShares[m];
+                    return `${m}: ${amt}`; 
+                }).join(' + ');
+            } else {
+                // Fallback seguro
+                const safeName = currentMethodName || 'PAGO DIRECTO';
+                paymentDescription = `${safeName}: Ref ${finalTotalUSD.toFixed(2)}`;
+            }
+        }
 
         try {
             const saleData = {
-                payment_method: paymentDescription || 'Pago Completo (0 USD)',
-                
-                // ITEMS CON ESTATUS FISCAL
+                payment_method: paymentDescription,
                 items: cart.map(i => ({
                     product_id: i.id,
                     name: i.name, 
                     quantity: i.quantity,
                     price_usd: i.price_usd,
-                    is_taxable: i.is_taxable // CRUCIAL para el reporte Z
+                    is_taxable: i.is_taxable
                 })),
                 
                 is_credit: isCreditSale,
-                
-                // [CORRECCIÓN CLAVE] Enviamos cliente si es Crédito, Fiscal O Donación
                 customer_data: (isCreditSale || isFiscalInvoice || isDonationSale) ? customerData : null,
-                
                 due_days: isCreditSale ? dueDays : null,
                 invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET',
-
-                // DATOS MONETARIOS (Backend requeridos)
+                
                 bcv_rate_snapshot: bcvRate, 
                 total_usd: finalTotalUSD,   
                 total_ves: totalVES,
 
-                // [NUEVO] Enviamos el estatus correcto (DONADO, PENDIENTE o PAGADO)
-                status: currentStatus
+                status: currentStatus // Enviamos 'DONADO'
             };
 
             Swal.fire({ title: `Procesando...`, didOpen: () => Swal.showLoading() });
@@ -2434,30 +2448,32 @@ const promptOpenCash = async () => {
 
             Swal.fire({
                 icon: 'success',
-                title: isDonationSale ? '¡Donación Registrada!' : (isCreditSale ? '¡Crédito Registrado!' : '¡Venta Registrada!'),
-                html: `Inventario actualizado. Total: Ref ${finalTotalUsd}`,
-                confirmButtonColor: '#0056B3'
+                title: isDonationSale ? '¡Donación Exitosa!' : '¡Venta Procesada!',
+                text: isDonationSale ? 'Inventario descontado. No suma a caja.' : `Ticket #${saleId} generado.`,
+                confirmButtonColor: isDonationSale ? '#F59E0B' : '#0056B3'
             });
 
-            // VISUALIZACIÓN PREVIA (Si es fiscal)
+            // Visualización Previa
             if (isFiscalInvoice) {
                 const html = generateReceiptHTML(saleId || '000', customerData, cart);
                 setReceiptPreview(html);
             }
 
-            // Resetear estados
+            // Limpieza
             setCart([]);
             setIsCustomerModalOpen(false);
             setIsPaymentModalOpen(false);
             setCustomerData({ full_name: '', id_number: '', phone: '', institution: '' });
             setIsFiscalInvoice(false);
-            fetchData();
+            
+            fetchData(); 
+
         } catch (error) {
-            const message = error.response?.data?.message || error.message;
-            Swal.fire('Error', `Fallo al procesar: ${message}`, 'error');
             console.error(error);
+            const msg = error.response?.data?.message || error.message;
+            Swal.fire('Error', `Fallo al guardar: ${msg}`, 'error');
         }
-    }
+    };
 
 
     // Función de validación y apertura de modal de cliente para Crédito / Donación
@@ -4718,20 +4734,27 @@ const printClosingReport = (shift) => {
                             </span>
                         </td>
 
-                        {/* Celda: Estatus Mejorado (Nuevos Colores UX) */}
-                        <td className="px-4 py-3 text-center">
-                            <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide border ${
-                                sale.status === 'ANULADO' 
-                                    ? 'bg-rose-50 text-rose-500 border-rose-100 line-through' // Anulado: Rojo Suave Tachado
-                                : sale.status === 'PENDIENTE' 
-                                    ? 'bg-amber-50 text-amber-600 border-amber-200' // Pendiente: Ámbar (Alerta)
-                                : sale.status === 'PARCIAL'
-                                    ? 'bg-indigo-50 text-indigo-600 border-indigo-200' // Parcial: Índigo (En proceso)
-                                : 'bg-emerald-50 text-emerald-600 border-emerald-200' // Pagado: Verde Esmeralda
-                            }`}>
-                                {sale.status}
-                            </span>
-                        </td>
+                        {/* Celda: Estatus Inteligente (Detecta Donación por texto también) */}
+                                <td className="px-4 py-3 text-center">
+                                    {(() => {
+                                        // LÓGICA VISUAL: Si dice 'DONADO' O si la descripción contiene 'DONACI'
+                                        const isDonationVisual = sale.status === 'DONADO' || 
+                                            (sale.payment_method && sale.payment_method.toUpperCase().includes('DONACI'));
+
+                                        return (
+                                            <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide border ${
+                                                sale.status === 'ANULADO'   ? 'bg-rose-50 text-rose-500 border-rose-100 line-through' :
+                                                sale.status === 'PENDIENTE' ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                                                sale.status === 'PARCIAL'   ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
+                                                isDonationVisual            ? 'bg-yellow-50 text-yellow-600 border-yellow-200' : // <--- AQUI APLICA EL AMARILLO
+                                                'bg-emerald-50 text-emerald-600 border-emerald-200' // Pagado
+                                            }`}>
+                                                {/* Texto a mostrar */}
+                                                {isDonationVisual ? '🎁 DONADO' : sale.status}
+                                            </span>
+                                        );
+                                    })()}
+                                </td>
 
                         {/* Montos (Se tachan si está anulado) */}
                         <td className={`px-4 py-3 text-right font-black ${sale.status === 'ANULADO' ? 'text-slate-300 decoration-slate-300 line-through' : 'text-gray-800'}`}>
