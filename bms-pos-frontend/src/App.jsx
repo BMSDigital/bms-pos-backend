@@ -389,6 +389,101 @@ function App() {
         });
     };
 	
+	// [NUEVO] FUNCIÓN DE VALIDACIÓN DE FONDOS PARA AVANCES
+    // Ubicación: Pegar esto antes del "return (" del componente App
+    const validateAndAddAdvance = async (e) => {
+        e.preventDefault(); // Evita que se recargue la página
+
+        // 1. Validaciones básicas
+        if (!advanceData.amountBs || parseFloat(advanceData.amountBs) <= 0) {
+            return Swal.fire('Error', 'Ingrese un monto válido', 'warning');
+        }
+
+        const requestedBs = parseFloat(advanceData.amountBs);
+
+        // 2. Consultar disponibilidad REAL en caja (Backend)
+        try {
+            Swal.fire({ 
+                title: 'Verificando fondos...', 
+                didOpen: () => Swal.showLoading(),
+                background: '#fff',
+                showConfirmButton: false
+            });
+            
+            const res = await axios.get(`${API_URL}/cash/current-status`);
+            Swal.close();
+
+            const status = res.data;
+            
+            // Si la caja no está abierta, no se puede sacar dinero
+            if (status.status !== 'ABIERTA') {
+                return Swal.fire('Caja Cerrada', 'Debe realizar la apertura de caja primero.', 'warning');
+            }
+
+            const sys = status.system_totals;
+            const initial = status.shift_info;
+
+            // --- FÓRMULA DE DISPONIBILIDAD ---
+            // (Base Inicial + Ventas Efectivo) - (Salidas Efectivo ya realizadas)
+            const cashInBs = parseFloat(initial.initial_cash_ves) + sys.cash_ves;
+            const cashOutBs = sys.cash_outflows_ves || 0;
+            const availableBs = cashInBs - cashOutBs;
+
+            // 3. COMPARAR: ¿Tengo suficiente billete?
+            if (requestedBs > availableBs) {
+                return Swal.fire({
+                    icon: 'error',
+                    title: '🚫 Fondos Insuficientes',
+                    html: `
+                        <div class="text-left font-sans">
+                            <p class="mb-3 text-slate-600">No hay suficiente efectivo físico en la gaveta.</p>
+                            <div class="bg-red-50 p-3 rounded border border-red-100 text-sm text-red-800">
+                                <p><strong>Solicitado:</strong> Bs ${requestedBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
+                                <p><strong>Disponible:</strong> Bs ${availableBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
+                                <hr class="border-red-200 my-1"/>
+                                <p><strong>Faltante:</strong> Bs ${(requestedBs - availableBs).toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
+                            </div>
+                            <p class="mt-2 text-xs text-slate-400 text-center">Debe ingresar más ventas en efectivo primero.</p>
+                        </div>
+                    `,
+                    confirmButtonColor: '#ef4444'
+                });
+            }
+
+            // 4. SI HAY FONDOS -> AGREGAR AL CARRITO (Tu lógica original)
+            const commissionAmount = requestedBs * (parseFloat(advanceData.commission) / 100);
+            const totalWithCommission = requestedBs + commissionAmount;
+            
+            addToCart({
+                id: Date.now(),
+                name: 'Avance de Efectivo',
+                // El precio base para el sistema es la comisión (ganancia), 
+                // pero guardamos la metadata del avance para el cierre.
+                price_usd: totalWithCommission / bcvRate, 
+                price_bs: totalWithCommission,
+                is_advance: true,
+                advance_amount_bs: requestedBs, // Lo que sale de caja
+                commission_bs: commissionAmount, // Lo que ganamos
+                commission_percent: advanceData.commission
+            });
+
+            // 5. CERRAR MODAL Y LIMPIAR
+            setShowAdvanceModal(false);
+            setAdvanceData({ amountBs: '', commission: 10 });
+            
+            Swal.fire({
+                icon: 'success',
+                title: 'Validado',
+                text: 'Avance agregado al carrito correctamente.',
+                timer: 1500,
+                showConfirmButton: false
+            });
+
+        } catch (error) {
+            console.error(error);
+            Swal.fire('Error', 'Error de conexión al verificar caja.', 'error');
+        }
+    };
 
     // 💡 MEJORA UX: Rango de fechas AUTOMÁTICO (Desde el 1° del mes hasta Hoy)
     const [reportDateRange, setReportDateRange] = useState(() => {
@@ -3181,274 +3276,319 @@ const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
             Swal.fire('Error', 'No se pudo cargar el reporte de hoy', 'error');
         }
     };
-
-    // -----------------------------------------------------------------------------
-// 🇻🇪 ARQUEO DE CAJA "PREMIUM DASHBOARD" (LAYOUT 2 COLUMNAS)
 // -----------------------------------------------------------------------------
-const handleCashClose = async () => {
-    
-    // 1. PANTALLA DE CARGA (Feedback Inmediato)
-    Swal.fire({
-        title: 'Auditoría en curso...',
-        html: '<div class="text-sm text-slate-500 font-medium animate-pulse">Sincronizando contadores fiscales...</div>',
-        allowOutsideClick: false,
-        didOpen: () => Swal.showLoading(),
-        background: '#ffffff',
-        showConfirmButton: false,
-        width: 400,
-        padding: '2em'
-    });
-
-    let statusData;
-    try {
-        const res = await axios.get(`${API_URL}/cash/current-status`);
-        statusData = res.data;
-        Swal.close();
-
-        if (statusData.status === 'CERRADA') {
-            return Swal.fire({ icon: 'info', title: 'Turno Cerrado', text: 'No hay caja abierta.', confirmButtonColor: '#3b82f6' });
-        }
-    } catch (e) {
-        Swal.close();
-        return Swal.fire('Error', 'Sin conexión al servidor.', 'error');
-    }
-
-    // --- CÁLCULOS (PREDICCIÓN DEL SISTEMA) ---
-    const sys = statusData.system_totals;
-    const initial = statusData.shift_info;
-
-    // Fórmula: (Base + Ventas) - Salidas
-    const expectedBs  = (parseFloat(initial.initial_cash_ves) + sys.cash_ves) - (sys.cash_outflows_ves || 0);
-    const expectedUsd = (parseFloat(initial.initial_cash_usd) + sys.cash_usd) - (sys.cash_outflows_usd || 0);
-    const expectedPm    = sys.pm || 0;
-    const expectedPunto = sys.punto || 0;
-    const expectedZelle = sys.zelle || 0;
-
-    // --- UI/UX PREMIUM LAYOUT ---
-    await Swal.fire({
-        title: '',
-        width: '1050px', // Ancho suficiente para 2 columnas cómodas
-        padding: 0,
-        background: '#f8fafc', // Slate-50 background
-        showCancelButton: true,
-        // BOTONES ROBUSTOS CON ICONOS
-        confirmButtonText: '<span class="flex items-center gap-3"><span>🔒</span> <span>CONFIRMAR CIERRE</span></span>',
-        cancelButtonText: 'Cancelar Operación',
+    // 🇻🇪 ARQUEO DE CAJA "PREMIUM DASHBOARD" (LAYOUT 2 COLUMNAS + AUDITORÍA)
+    // -----------------------------------------------------------------------------
+    const handleCashClose = async () => {
         
-        // --- ESTILOS DE BOTONES NIVEL "APP NATIVA" ---
-        buttonsStyling: false, // Desactivamos estilos default para usar Tailwind puro
-        customClass: {
-            popup: 'rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100', // Bordes muy curvos
-            actions: 'p-6 bg-white border-t border-slate-100 w-full flex gap-4 justify-end items-center z-10', // Barra de acciones
-            confirmButton: 'bg-slate-900 text-white hover:bg-black px-8 py-4 rounded-2xl font-bold text-sm tracking-wide shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 transform', 
-            cancelButton: 'bg-white text-slate-400 hover:text-slate-600 hover:bg-slate-50 px-6 py-4 rounded-2xl font-bold text-sm border border-transparent hover:border-slate-200 transition-all duration-300'
-        },
+        // 1. PANTALLA DE CARGA (Feedback Inmediato)
+        Swal.fire({
+            title: 'Auditoría en curso...',
+            html: '<div class="text-sm text-slate-500 font-medium animate-pulse">Sincronizando contadores fiscales y donaciones...</div>',
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading(),
+            background: '#ffffff',
+            showConfirmButton: false,
+            width: 400,
+            padding: '2em'
+        });
 
-        html: `
-            <div class="bg-white px-10 py-6 border-b border-slate-100 flex justify-between items-center sticky top-0 z-10 shadow-sm">
-                <div>
-                    <h2 class="text-3xl font-black text-slate-800 tracking-tighter">Cierre de Caja</h2>
-                    <div class="flex items-center gap-2 mt-1">
-                        <span class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase">Turno #${initial.id}</span>
-                        <span class="text-slate-400 text-xs font-medium">${new Date().toLocaleDateString()}</span>
+        let statusData;
+        try {
+            const res = await axios.get(`${API_URL}/cash/current-status`);
+            statusData = res.data;
+            Swal.close();
+
+            if (statusData.status === 'CERRADA') {
+                return Swal.fire({ icon: 'info', title: 'Turno Cerrado', text: 'No hay caja abierta.', confirmButtonColor: '#3b82f6' });
+            }
+        } catch (e) {
+            Swal.close();
+            return Swal.fire('Error', 'Sin conexión al servidor.', 'error');
+        }
+
+        // --- CÁLCULOS (PREDICCIÓN DEL SISTEMA) ---
+        const sys = statusData.system_totals;
+        const initial = statusData.shift_info;
+
+        // Fórmula: (Base + Ventas) - Salidas
+        const expectedBs  = (parseFloat(initial.initial_cash_ves) + sys.cash_ves) - (sys.cash_outflows_ves || 0);
+        const expectedUsd = (parseFloat(initial.initial_cash_usd) + sys.cash_usd) - (sys.cash_outflows_usd || 0);
+        
+        // [NUEVO] Lógica de Caja en Rojo (Matemática Negativa)
+        const isNegativeBs = expectedBs < 0;
+        const isNegativeUsd = expectedUsd < 0;
+
+        // [NUEVO] Auditoría de Donaciones (Inventario que salió sin dinero)
+        const totalDonationsRef = sys.donations || 0;
+
+        const expectedPm    = sys.pm || 0;
+        const expectedPunto = sys.punto || 0;
+        const expectedZelle = sys.zelle || 0;
+
+        // --- UI/UX PREMIUM LAYOUT ---
+        await Swal.fire({
+            title: '',
+            width: '1050px', // Ancho suficiente para 2 columnas cómodas
+            padding: 0,
+            background: '#f8fafc', // Slate-50 background
+            showCancelButton: true,
+            // BOTONES ROBUSTOS CON ICONOS
+            confirmButtonText: '<span class="flex items-center gap-3"><span>🔒</span> <span>CONFIRMAR CIERRE</span></span>',
+            cancelButtonText: 'Cancelar Operación',
+            
+            // --- ESTILOS DE BOTONES NIVEL "APP NATIVA" ---
+            buttonsStyling: false, 
+            customClass: {
+                popup: 'rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100', 
+                actions: 'p-6 bg-white border-t border-slate-100 w-full flex gap-4 justify-end items-center z-10', 
+                confirmButton: 'bg-slate-900 text-white hover:bg-black px-8 py-4 rounded-2xl font-bold text-sm tracking-wide shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 transform', 
+                cancelButton: 'bg-white text-slate-400 hover:text-slate-600 hover:bg-slate-50 px-6 py-4 rounded-2xl font-bold text-sm border border-transparent hover:border-slate-200 transition-all duration-300'
+            },
+
+            html: `
+                <div class="bg-white px-10 py-6 border-b border-slate-100 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+                    <div>
+                        <h2 class="text-3xl font-black text-slate-800 tracking-tighter">Cierre de Caja</h2>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase">Turno #${initial.id}</span>
+                            <span class="text-slate-400 text-xs font-medium">${new Date().toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-1">Tasa Oficial</p>
+                        <div class="text-xl font-black text-emerald-600 bg-emerald-50 px-4 py-1.5 rounded-xl border border-emerald-100 shadow-sm inline-block">
+                            ${bcvRate.toFixed(2)} Bs
+                        </div>
                     </div>
                 </div>
-                <div class="text-right">
-                    <p class="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-1">Tasa Oficial</p>
-                    <div class="text-xl font-black text-emerald-600 bg-emerald-50 px-4 py-1.5 rounded-xl border border-emerald-100 shadow-sm inline-block">
-                        ${bcvRate.toFixed(2)} Bs
+
+                ${totalDonationsRef > 0 ? `
+                <div class="mx-10 mt-6 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r shadow-sm flex items-start gap-4 animate-in fade-in slide-in-from-top-2">
+                    <div class="text-2xl">🎁</div>
+                    <div class="flex-1 text-left">
+                        <h4 class="font-bold text-yellow-800 uppercase text-xs tracking-widest">Auditoría de Donaciones</h4>
+                        <p class="text-xs text-yellow-700 mt-1">Se detectó salida de mercancía por concepto de donación. Verifica los tickets firmados.</p>
+                    </div>
+                    <div class="text-right">
+                        <span class="block text-[10px] font-bold text-yellow-600 uppercase">Total Ref</span>
+                        <span class="text-xl font-black text-yellow-800">$${totalDonationsRef.toFixed(2)}</span>
                     </div>
                 </div>
-            </div>
+                ` : ''}
 
-            <div class="grid grid-cols-1 md:grid-cols-12 gap-0 min-h-[450px]">
-                
-                <div class="md:col-span-7 p-8 space-y-6 border-r border-slate-100 bg-[#FAFAFA]">
-                    <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-blue-500"></span> Conteo de Efectivo
-                    </h3>
-
-                    <div class="bg-white p-6 rounded-3xl shadow-[0_4px_20px_-10px_rgba(0,0,0,0.1)] border border-slate-100 group focus-within:ring-4 focus-within:ring-blue-50 transition-all cursor-text relative overflow-hidden" onclick="document.getElementById('inp-bs').focus()">
-                        <div class="absolute top-0 right-0 bg-slate-800 text-white text-[9px] font-bold px-3 py-1.5 rounded-bl-xl z-0">
-                            MONEDA NACIONAL
-                        </div>
-                        
-                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">En Gaveta (Bolívares)</label>
-                        <div class="flex items-center gap-3 relative z-10">
-                            <span class="text-4xl">🇻🇪</span>
-                            <div class="flex-1">
-                                <input id="inp-bs" type="number" step="0.01" placeholder="0,00"
-                                    class="w-full text-4xl font-black text-slate-800 bg-transparent outline-none placeholder-slate-200 tabular-nums">
-                            </div>
-                        </div>
-
-                        <div class="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center">
-                            <span class="text-xs text-slate-400 font-medium">El sistema calcula: <b class="text-slate-600">${formatBs(expectedBs)} Bs</b></span>
-                            <span id="badge-bs" class="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded transition-all">Esperando...</span>
-                        </div>
-                    </div>
-
-                    <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 group focus-within:ring-4 focus-within:ring-emerald-50 transition-all cursor-text" onclick="document.getElementById('inp-usd').focus()">
-                        <label class="block text-xs font-bold text-slate-400 uppercase mb-2">En Gaveta (Divisas)</label>
-                        <div class="flex items-center gap-3">
-                            <span class="text-4xl text-emerald-500">$</span>
-                            <div class="flex-1">
-                                <input id="inp-usd" type="number" step="0.01" placeholder="0.00"
-                                    class="w-full text-4xl font-black text-emerald-600 bg-transparent outline-none placeholder-emerald-100/50 tabular-nums">
-                            </div>
-                        </div>
-
-                        <div class="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center">
-                            <span class="text-xs text-slate-400 font-medium">El sistema calcula: <b class="text-slate-600">$${formatUSD(expectedUsd)}</b></span>
-                            <span id="badge-usd" class="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded transition-all">Esperando...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="md:col-span-5 p-8 bg-white flex flex-col h-full">
-                    <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-purple-500"></span> Verificación Digital
-                    </h3>
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-0 min-h-[450px] mt-2">
                     
-                    <div class="space-y-3 flex-1">
-                        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
-                            <div class="flex flex-col">
-                                <span class="text-xs font-bold text-slate-700">Pago Móvil</span>
-                                <span class="text-[10px] text-slate-400">Esp: ${formatBs(expectedPm)}</span>
-                            </div>
-                            <input id="inp-pm" type="number" value="${expectedPm > 0 ? expectedPm : ''}"
-                                class="w-28 text-right font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 focus:border-blue-500 text-sm" placeholder="0.00">
-                        </div>
+                    <div class="md:col-span-7 p-8 space-y-6 border-r border-slate-100 bg-[#FAFAFA]">
+                        <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-blue-500"></span> Conteo de Efectivo
+                        </h3>
 
-                        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
-                            <div class="flex flex-col">
-                                <span class="text-xs font-bold text-slate-700">Punto de Venta</span>
-                                <span class="text-[10px] text-slate-400">Esp: ${formatBs(expectedPunto)}</span>
+                        <div class="bg-white p-6 rounded-3xl shadow-[0_4px_20px_-10px_rgba(0,0,0,0.1)] border border-slate-100 group focus-within:ring-4 focus-within:ring-blue-50 transition-all cursor-text relative overflow-hidden" onclick="document.getElementById('inp-bs').focus()">
+                            <div class="absolute top-0 right-0 bg-slate-800 text-white text-[9px] font-bold px-3 py-1.5 rounded-bl-xl z-0">
+                                MONEDA NACIONAL
                             </div>
-                            <input id="inp-punto" type="number" value="${expectedPunto > 0 ? expectedPunto : ''}"
-                                class="w-28 text-right font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 focus:border-blue-500 text-sm" placeholder="0.00">
-                        </div>
+                            
+                            <label class="block text-xs font-bold text-slate-400 uppercase mb-2">En Gaveta (Bolívares)</label>
+                            <div class="flex items-center gap-3 relative z-10">
+                                <span class="text-4xl">🇻🇪</span>
+                                <div class="flex-1">
+                                    <input id="inp-bs" type="number" step="0.01" placeholder="0,00"
+                                        class="w-full text-4xl font-black text-slate-800 bg-transparent outline-none placeholder-slate-200 tabular-nums">
+                                </div>
+                            </div>
 
-                        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
-                            <div class="flex flex-col">
-                                <span class="text-xs font-bold text-purple-600">Zelle (Ref)</span>
-                                <span class="text-[10px] text-slate-400">Esp: $${formatUSD(expectedZelle)}</span>
+                            <div class="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center">
+                                ${isNegativeBs 
+                                    ? `<div class="flex items-center gap-2 text-xs font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100 w-full">
+                                         <span>⚠️ Saldo Negativo (Faltante Op.):</span>
+                                         <span class="ml-auto">${formatBs(expectedBs)} Bs</span>
+                                       </div>`
+                                    : `<span class="text-xs text-slate-400 font-medium">El sistema calcula: <b class="text-slate-600">${formatBs(expectedBs)} Bs</b></span>`
+                                }
+                                
+                                ${!isNegativeBs ? `<span id="badge-bs" class="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded transition-all">Esperando...</span>` : ''}
                             </div>
-                            <input id="inp-zelle" type="number" value="${expectedZelle > 0 ? expectedZelle : ''}"
-                                class="w-28 text-right font-bold text-purple-700 bg-transparent outline-none border-b border-purple-200 focus:border-purple-500 text-sm" placeholder="0.00">
+                            ${isNegativeBs ? `<span id="badge-bs" class="hidden"></span>` : ''} </div>
+
+                        <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 group focus-within:ring-4 focus-within:ring-emerald-50 transition-all cursor-text" onclick="document.getElementById('inp-usd').focus()">
+                            <label class="block text-xs font-bold text-slate-400 uppercase mb-2">En Gaveta (Divisas)</label>
+                            <div class="flex items-center gap-3">
+                                <span class="text-4xl text-emerald-500">$</span>
+                                <div class="flex-1">
+                                    <input id="inp-usd" type="number" step="0.01" placeholder="0.00"
+                                        class="w-full text-4xl font-black text-emerald-600 bg-transparent outline-none placeholder-emerald-100/50 tabular-nums">
+                                </div>
+                            </div>
+
+                            <div class="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center">
+                                ${isNegativeUsd 
+                                    ? `<div class="flex items-center gap-2 text-xs font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100 w-full">
+                                         <span>⚠️ Saldo Negativo (Faltante Op.):</span>
+                                         <span class="ml-auto">$${formatUSD(expectedUsd)}</span>
+                                       </div>`
+                                    : `<span class="text-xs text-slate-400 font-medium">El sistema calcula: <b class="text-slate-600">$${formatUSD(expectedUsd)}</b></span>`
+                                }
+                                
+                                ${!isNegativeUsd ? `<span id="badge-usd" class="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded transition-all">Esperando...</span>` : ''}
+                            </div>
+                            ${isNegativeUsd ? `<span id="badge-usd" class="hidden"></span>` : ''}
                         </div>
                     </div>
 
-                    <div class="mt-6 pt-6 border-t border-slate-100">
-                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-2">Observaciones / Incidencias</label>
-                        <textarea id="inp-notes" rows="3" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs font-medium text-slate-600 focus:bg-white focus:ring-2 focus:ring-slate-100 focus:border-slate-300 outline-none resize-none transition-all" placeholder="Escribe aquí si hubo devoluciones, billetes rotos o diferencias justificadas..."></textarea>
+                    <div class="md:col-span-5 p-8 bg-white flex flex-col h-full">
+                        <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-purple-500"></span> Verificación Digital
+                        </h3>
+                        
+                        <div class="space-y-3 flex-1">
+                            <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+                                <div class="flex flex-col">
+                                    <span class="text-xs font-bold text-slate-700">Pago Móvil</span>
+                                    <span class="text-[10px] text-slate-400">Esp: ${formatBs(expectedPm)}</span>
+                                </div>
+                                <input id="inp-pm" type="number" value="${expectedPm > 0 ? expectedPm : ''}"
+                                    class="w-28 text-right font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 focus:border-blue-500 text-sm" placeholder="0.00">
+                            </div>
+
+                            <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+                                <div class="flex flex-col">
+                                    <span class="text-xs font-bold text-slate-700">Punto de Venta</span>
+                                    <span class="text-[10px] text-slate-400">Esp: ${formatBs(expectedPunto)}</span>
+                                </div>
+                                <input id="inp-punto" type="number" value="${expectedPunto > 0 ? expectedPunto : ''}"
+                                    class="w-28 text-right font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 focus:border-blue-500 text-sm" placeholder="0.00">
+                            </div>
+
+                            <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+                                <div class="flex flex-col">
+                                    <span class="text-xs font-bold text-purple-600">Zelle (Ref)</span>
+                                    <span class="text-[10px] text-slate-400">Esp: $${formatUSD(expectedZelle)}</span>
+                                </div>
+                                <input id="inp-zelle" type="number" value="${expectedZelle > 0 ? expectedZelle : ''}"
+                                    class="w-28 text-right font-bold text-purple-700 bg-transparent outline-none border-b border-purple-200 focus:border-purple-500 text-sm" placeholder="0.00">
+                            </div>
+                        </div>
+
+                        <div class="mt-6 pt-6 border-t border-slate-100">
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-2">Observaciones / Incidencias</label>
+                            <textarea id="inp-notes" rows="3" class="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs font-medium text-slate-600 focus:bg-white focus:ring-2 focus:ring-slate-100 focus:border-slate-300 outline-none resize-none transition-all" placeholder="Escribe aquí si hubo devoluciones, billetes rotos o diferencias justificadas..."></textarea>
+                        </div>
                     </div>
+
                 </div>
+            `,
+            // --- 🧠 LÓGICA REACTIVA (Mantiene el semáforo visual) ---
+            didOpen: () => {
+                const inpBs = document.getElementById('inp-bs');
+                const inpUsd = document.getElementById('inp-usd');
+                const badgeBs = document.getElementById('badge-bs');
+                const badgeUsd = document.getElementById('badge-usd');
 
-            </div>
-        `,
-        // --- 🧠 LÓGICA REACTIVA (Mantiene el semáforo visual) ---
-        didOpen: () => {
-            const inpBs = document.getElementById('inp-bs');
-            const inpUsd = document.getElementById('inp-usd');
-            const badgeBs = document.getElementById('badge-bs');
-            const badgeUsd = document.getElementById('badge-usd');
+                const auditLive = () => {
+                    // Cálculo Bs
+                    const valBs = parseFloat(inpBs.value) || 0;
+                    const diffBs = valBs - expectedBs;
+                    
+                    // Solo actualizamos el badge si NO es negativo (si es negativo el badge está oculto y se muestra el aviso rojo)
+                    if(badgeBs && !badgeBs.classList.contains('hidden')) {
+                        if(inpBs.value === '') {
+                            badgeBs.className = 'text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded';
+                            badgeBs.innerText = 'Esperando...';
+                        } else if (Math.abs(diffBs) < 1) {
+                            badgeBs.className = 'text-[10px] font-bold bg-emerald-100 text-emerald-600 px-2 py-1 rounded border border-emerald-200';
+                            badgeBs.innerHTML = '✨ EXACTO';
+                        } else {
+                            const color = diffBs > 0 ? 'blue' : 'rose';
+                            const sign = diffBs > 0 ? '+' : '';
+                            badgeBs.className = `text-[10px] font-bold bg-${color}-50 text-${color}-600 px-2 py-1 rounded border border-${color}-100`;
+                            badgeBs.innerHTML = `${sign}${formatBs(diffBs)} Bs`;
+                        }
+                    }
 
-            const auditLive = () => {
-                // Cálculo Bs
-                const valBs = parseFloat(inpBs.value) || 0;
-                const diffBs = valBs - expectedBs;
-                if(inpBs.value === '') {
-                    badgeBs.className = 'text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded';
-                    badgeBs.innerText = 'Esperando...';
-                } else if (Math.abs(diffBs) < 1) {
-                    badgeBs.className = 'text-[10px] font-bold bg-emerald-100 text-emerald-600 px-2 py-1 rounded border border-emerald-200';
-                    badgeBs.innerHTML = '✨ EXACTO';
-                } else {
-                    const color = diffBs > 0 ? 'blue' : 'rose';
-                    const sign = diffBs > 0 ? '+' : '';
-                    badgeBs.className = `text-[10px] font-bold bg-${color}-50 text-${color}-600 px-2 py-1 rounded border border-${color}-100`;
-                    badgeBs.innerHTML = `${sign}${formatBs(diffBs)} Bs`;
+                    // Cálculo USD
+                    const valUsd = parseFloat(inpUsd.value) || 0;
+                    const diffUsd = valUsd - expectedUsd;
+                    
+                    if(badgeUsd && !badgeUsd.classList.contains('hidden')) {
+                        if(inpUsd.value === '') {
+                            badgeUsd.className = 'text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded';
+                            badgeUsd.innerText = 'Esperando...';
+                        } else if (Math.abs(diffUsd) < 0.1) {
+                            badgeUsd.className = 'text-[10px] font-bold bg-emerald-100 text-emerald-600 px-2 py-1 rounded border border-emerald-200';
+                            badgeUsd.innerHTML = '✨ EXACTO';
+                        } else {
+                            const color = diffUsd > 0 ? 'blue' : 'rose';
+                            const sign = diffUsd > 0 ? '+' : '';
+                            badgeUsd.className = `text-[10px] font-bold bg-${color}-50 text-${color}-600 px-2 py-1 rounded border border-${color}-100`;
+                            badgeUsd.innerHTML = `${sign}$${formatUSD(diffUsd)}`;
+                        }
+                    }
+                };
+
+                inpBs.addEventListener('input', auditLive);
+                inpUsd.addEventListener('input', auditLive);
+                setTimeout(() => inpBs.focus(), 150);
+            },
+
+            preConfirm: () => {
+                return {
+                    cash_ves: parseFloat(document.getElementById('inp-bs').value) || 0,
+                    cash_usd: parseFloat(document.getElementById('inp-usd').value) || 0,
+                    pm: parseFloat(document.getElementById('inp-pm').value) || 0,
+                    punto: parseFloat(document.getElementById('inp-punto').value) || 0,
+                    zelle: parseFloat(document.getElementById('inp-zelle').value) || 0,
+                    notes: document.getElementById('inp-notes').value
+                };
+            }
+        }).then(async (result) => {
+            if (result.isConfirmed) {
+                const declared = result.value;
+
+                // --- ALERTA DE SEGURIDAD (Si hay mucha diferencia) ---
+                const finalDiffBs = declared.cash_ves - expectedBs;
+                const finalDiffUsd = declared.cash_usd - expectedUsd;
+                
+                // Ajustamos la lógica de alarma para tolerar los negativos si están justificados
+                const isAlarming = Math.abs(finalDiffBs) > 20 || Math.abs(finalDiffUsd) > 1;
+
+                if (isAlarming) {
+                    const confirmMistake = await Swal.fire({
+                        title: 'Diferencia Detectada',
+                        text: 'Los montos ingresados no coinciden con el sistema. ¿Deseas continuar de todas formas?',
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonText: 'Sí, Registrar Faltante/Sobrante',
+                        cancelButtonText: 'Recontar',
+                        confirmButtonColor: '#f59e0b',
+                        cancelButtonColor: '#1e293b'
+                    });
+                    if (!confirmMistake.isConfirmed) return handleCashClose(); // Recursividad para reabrir
                 }
 
-                // Cálculo USD
-                const valUsd = parseFloat(inpUsd.value) || 0;
-                const diffUsd = valUsd - expectedUsd;
-                if(inpUsd.value === '') {
-                    badgeUsd.className = 'text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-1 rounded';
-                    badgeUsd.innerText = 'Esperando...';
-                } else if (Math.abs(diffUsd) < 0.1) {
-                    badgeUsd.className = 'text-[10px] font-bold bg-emerald-100 text-emerald-600 px-2 py-1 rounded border border-emerald-200';
-                    badgeUsd.innerHTML = '✨ EXACTO';
-                } else {
-                    const color = diffUsd > 0 ? 'blue' : 'rose';
-                    const sign = diffUsd > 0 ? '+' : '';
-                    badgeUsd.className = `text-[10px] font-bold bg-${color}-50 text-${color}-600 px-2 py-1 rounded border border-${color}-100`;
-                    badgeUsd.innerHTML = `${sign}$${formatUSD(diffUsd)}`;
+                // --- ENVÍO AL BACKEND ---
+                try {
+                    Swal.fire({ title: 'Generando Reporte Z...', didOpen: () => Swal.showLoading(), showConfirmButton: false, background: '#fff' });
+                    await axios.post(`${API_URL}/cash/close`, { declared, notes: declared.notes });
+                    
+                    setCashShift(null); // Actualiza estado React
+                    
+                    Swal.fire({
+                        title: '¡Cierre Exitoso!',
+                        html: '<span class="text-slate-500">El turno ha finalizado correctamente.</span>',
+                        icon: 'success',
+                        confirmButtonText: 'Entendido',
+                        confirmButtonColor: '#10b981'
+                    });
+
+                    if (view === 'ADVANCED_REPORTS' && typeof fetchClosingsHistory === 'function') fetchClosingsHistory();
+                } catch (error) {
+                    console.error(error);
+                    Swal.fire('Error', 'No se pudo guardar el cierre.', 'error');
                 }
-            };
-
-            inpBs.addEventListener('input', auditLive);
-            inpUsd.addEventListener('input', auditLive);
-            setTimeout(() => inpBs.focus(), 150);
-        },
-
-        preConfirm: () => {
-            return {
-                cash_ves: parseFloat(document.getElementById('inp-bs').value) || 0,
-                cash_usd: parseFloat(document.getElementById('inp-usd').value) || 0,
-                pm: parseFloat(document.getElementById('inp-pm').value) || 0,
-                punto: parseFloat(document.getElementById('inp-punto').value) || 0,
-                zelle: parseFloat(document.getElementById('inp-zelle').value) || 0,
-                notes: document.getElementById('inp-notes').value
-            };
-        }
-    }).then(async (result) => {
-        if (result.isConfirmed) {
-            const declared = result.value;
-
-            // --- ALERTA DE SEGURIDAD (Si hay mucha diferencia) ---
-            const finalDiffBs = declared.cash_ves - expectedBs;
-            const finalDiffUsd = declared.cash_usd - expectedUsd;
-            const isAlarming = Math.abs(finalDiffBs) > 20 || Math.abs(finalDiffUsd) > 1;
-
-            if (isAlarming) {
-                const confirmMistake = await Swal.fire({
-                    title: 'Diferencia Detectada',
-                    text: 'Los montos ingresados no coinciden con el sistema. ¿Deseas continuar de todas formas?',
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: 'Sí, Registrar Faltante/Sobrante',
-                    cancelButtonText: 'Recontar',
-                    confirmButtonColor: '#f59e0b',
-                    cancelButtonColor: '#1e293b'
-                });
-                if (!confirmMistake.isConfirmed) return handleCashClose(); // Recursividad para reabrir
             }
-
-            // --- ENVÍO AL BACKEND ---
-            try {
-                Swal.fire({ title: 'Generando Reporte Z...', didOpen: () => Swal.showLoading(), showConfirmButton: false, background: '#fff' });
-                await axios.post(`${API_URL}/cash/close`, { declared, notes: declared.notes });
-                
-                setCashShift(null); // Actualiza estado React
-                
-                Swal.fire({
-                    title: '¡Cierre Exitoso!',
-                    html: '<span class="text-slate-500">El turno ha finalizado correctamente.</span>',
-                    icon: 'success',
-                    confirmButtonText: 'Entendido',
-                    confirmButtonColor: '#10b981'
-                });
-
-                if (view === 'ADVANCED_REPORTS' && typeof fetchClosingsHistory === 'function') fetchClosingsHistory();
-            } catch (error) {
-                console.error(error);
-                Swal.fire('Error', 'No se pudo guardar el cierre.', 'error');
-            }
-        }
-    });
-};
+        });
+    };
 
     // --- NUEVO: FUNCIÓN PARA ANULAR VENTA (NOTA DE CRÉDITO) ---
     const handleVoidSale = async (sale) => {
@@ -7649,7 +7789,7 @@ const printClosingReport = (shift) => {
 
                         {/* Cuerpo del Formulario */}
                         <div className="p-8 bg-slate-50/30">
-                            <form onSubmit={handleAddCashAdvance}>
+                            <form onSubmit={validateAndAddAdvance}>
 
                                 {/* GRUPO: DATOS DEL AVANCE */}
                                 <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 mb-6 relative">
