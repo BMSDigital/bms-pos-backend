@@ -2348,9 +2348,12 @@ const promptOpenCash = async () => {
     // FUNCIÓN UNIFICADA DE PROCESAMIENTO DE VENTA/CRÉDITO
     const processSale = async (isCreditFlow = false) => {
 
+        // Detección de flujos especiales
         const isCreditSale = isCreditFlow && (parseFloat(paymentShares['Crédito']) || 0) > 0;
+        // [NUEVO] Detectamos si es una Donación
+        const isDonationSale = isCreditFlow && (parseFloat(paymentShares['Donación']) || 0) > 0;
 
-        // --- [NUEVO] 1. VALIDACIÓN PARA FACTURA FISCAL (UX) ---
+        // --- 1. VALIDACIÓN PARA FACTURA FISCAL (UX MEJORADO) ---
         // Si el switch está encendido, OBLIGAMOS a tener Nombre y RIF
         if (isFiscalInvoice) {
             if (!customerData.full_name || !customerData.id_number) {
@@ -2372,10 +2375,17 @@ const promptOpenCash = async () => {
             }
         }
 
-        // 2. Validar datos mínimos del cliente para Crédito (si aplica)
-        if (isCreditSale && (!customerData.full_name || !customerData.id_number)) {
-            return Swal.fire('Datos Incompletos', 'Nombre y Número de Identificador son obligatorios para ventas a crédito.', 'warning');
+        // 2. VALIDACIÓN DE DATOS MÍNIMOS (CRÉDITO O DONACIÓN)
+        // [ADAPTADO] Ahora valida también si es Donación (Beneficiario)
+        if ((isCreditSale || isDonationSale) && (!customerData.full_name || !customerData.id_number)) {
+            const typeMsg = isDonationSale ? 'Beneficiario (Donación)' : 'Cliente (Crédito)';
+            return Swal.fire('Datos Incompletos', `Nombre y Cédula del ${typeMsg} son obligatorios por seguridad.`, 'warning');
         }
+
+        // Definición de Estatus para la Base de Datos
+        let currentStatus = 'PAGADO';
+        if (isCreditSale) currentStatus = 'PENDIENTE';
+        if (isDonationSale) currentStatus = 'DONADO'; // Estatus para auditoría
 
         const paymentDescription = Object.entries(paymentShares)
             .filter(([_, amt]) => parseFloat(amt) > 0)
@@ -2391,48 +2401,48 @@ const promptOpenCash = async () => {
             const saleData = {
                 payment_method: paymentDescription || 'Pago Completo (0 USD)',
                 
-                // MODIFICADO: Incluir si el item es gravado o exento en el envío al backend
+                // ITEMS CON ESTATUS FISCAL
                 items: cart.map(i => ({
                     product_id: i.id,
-                    name: i.name, // <--- CRITICO: Esto envía la etiqueta [CAP:...] al servidor
+                    name: i.name, 
                     quantity: i.quantity,
                     price_usd: i.price_usd,
-                    is_taxable: i.is_taxable // <-- CRUCIAL: Enviar el estatus fiscal
+                    is_taxable: i.is_taxable // CRUCIAL para el reporte Z
                 })),
                 
                 is_credit: isCreditSale,
                 
-                // --- [CORRECCIÓN CLAVE AQUÍ] ---
-                // Enviamos los datos del cliente si es Crédito O si es Factura Fiscal
-                customer_data: (isCreditSale || isFiscalInvoice) ? customerData : null,
+                // [CORRECCIÓN CLAVE] Enviamos cliente si es Crédito, Fiscal O Donación
+                customer_data: (isCreditSale || isFiscalInvoice || isDonationSale) ? customerData : null,
+                
                 due_days: isCreditSale ? dueDays : null,
-
-                // --- ASEGÚRATE DE QUE ESTO ESTÉ AQUÍ ---
                 invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET',
 
-                // ✅ NUEVO: Datos monetarios requeridos por el backend para evitar Error 500
-                bcv_rate_snapshot: bcvRate, // Se envía la tasa actual
-                total_usd: finalTotalUSD,   // Se envía el total calculado en $
-                total_ves: totalVES         // Se envía el total calculado en Bs
+                // DATOS MONETARIOS (Backend requeridos)
+                bcv_rate_snapshot: bcvRate, 
+                total_usd: finalTotalUSD,   
+                total_ves: totalVES,
+
+                // [NUEVO] Enviamos el estatus correcto (DONADO, PENDIENTE o PAGADO)
+                status: currentStatus
             };
 
-            Swal.fire({ title: `Procesando ${isCreditSale ? 'Crédito' : 'Venta'}...`, didOpen: () => Swal.showLoading() });
+            Swal.fire({ title: `Procesando...`, didOpen: () => Swal.showLoading() });
 
             const res = await axios.post(`${API_URL}/sales`, saleData);
-            // Recuperamos saleId también para poder imprimir el número correcto
             const { finalTotalUsd, saleId } = res.data;
 
             Swal.fire({
                 icon: 'success',
-                title: isCreditSale ? '¡Crédito Registrado!' : '¡Venta Registrada!',
-                html: `Inventario actualizado. Total Final: Ref ${finalTotalUsd}`,
+                title: isDonationSale ? '¡Donación Registrada!' : (isCreditSale ? '¡Crédito Registrado!' : '¡Venta Registrada!'),
+                html: `Inventario actualizado. Total: Ref ${finalTotalUsd}`,
                 confirmButtonColor: '#0056B3'
             });
 
-            // --- NUEVO: MOSTRAR VISUALIZACIÓN PREVIA EN EL CENTRO ---
+            // VISUALIZACIÓN PREVIA (Si es fiscal)
             if (isFiscalInvoice) {
                 const html = generateReceiptHTML(saleId || '000', customerData, cart);
-                setReceiptPreview(html); // Esto abrirá el nuevo modal
+                setReceiptPreview(html);
             }
 
             // Resetear estados
@@ -2440,27 +2450,32 @@ const promptOpenCash = async () => {
             setIsCustomerModalOpen(false);
             setIsPaymentModalOpen(false);
             setCustomerData({ full_name: '', id_number: '', phone: '', institution: '' });
-            setIsFiscalInvoice(false); // Resetear el switch para la próxima venta
+            setIsFiscalInvoice(false);
             fetchData();
         } catch (error) {
             const message = error.response?.data?.message || error.message;
-            Swal.fire('Error', `Fallo al procesar ${isCreditSale ? 'crédito' : 'venta'}`, 'error');
+            Swal.fire('Error', `Fallo al procesar: ${message}`, 'error');
             console.error(error);
         }
     }
 
 
-    // Función de validación y apertura de modal de cliente para Crédito
+    // Función de validación y apertura de modal de cliente para Crédito / Donación
     const handleCreditProcess = async () => {
         const creditAmount = parseFloat(paymentShares['Crédito']) || 0;
+        const donationAmount = parseFloat(paymentShares['Donación']) || 0; // [NUEVO] - Capturamos Donación
+
         const creditUsed = creditAmount > 0;
+        const donationUsed = donationAmount > 0; // [NUEVO]
+
         const isOverpaid = remainingUSD < -0.05; // Más de 5 centavos de cambio
 
-        if (remainingUSD > 0.05 && (!creditUsed || creditAmount < remainingUSD)) {
+        // VALIDACIÓN: Si falta dinero y no se cubre con lo declarado en Crédito ni en Donación
+        if (remainingUSD > 0.05 && (!creditUsed || creditAmount < remainingUSD) && (!donationUsed || donationAmount < remainingUSD)) {
             return Swal.fire('Monto Insuficiente', `Faltan Ref ${remainingUSD.toFixed(2)} por cubrir.`, 'warning');
         }
 
-        // 💡 MEJORA UX: Confirmación de Vuelto
+        // 💡 MEJORA UX: Confirmación de Vuelto (Se mantiene intacta)
         if (isOverpaid) {
             const changeUSD = Math.abs(remainingUSD).toFixed(2);
             // 💡 UX: Mostrar el vuelto en Bolívares con más precisión.
@@ -2482,7 +2497,8 @@ const promptOpenCash = async () => {
             }
         }
 
-        if (creditUsed) {
+        // [CAMBIO] Si es Crédito O Donación, abrimos el modal de Clientes/Beneficiarios
+        if (creditUsed || donationUsed) {
             setIsCustomerModalOpen(true);
             setIsPaymentModalOpen(false);
         } else {
@@ -3009,6 +3025,7 @@ const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
 
     // Detectamos si estamos aquí por crédito o solo por factura fiscal
     const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
+	const isDonationUsed = (parseFloat(paymentShares['Donación']) || 0) > 0; // [NUEVO]
 
     // Usamos el debounce para no saturar el servidor mientras escribes
     const debouncedSearch = useCallback(
@@ -3069,7 +3086,7 @@ const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
 
     // --- LOGICA DEL BOTÓN PRINCIPAL ---
     const handleConfirm = () => {
-        if (isCreditUsed) {
+        if (isCreditUsed || isDonationUsed) {
             // Si es crédito, procesamos la venta completa como PENDIENTE
             processSale(true);
         } else {
@@ -3136,116 +3153,141 @@ const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
     const isFormReadyToSubmit = customerData.full_name.trim() && customerData.id_number.trim();
 
     // --- FUNCIÓN DE RENDERIZADO VISUAL ---
-    // Al ser una función (renderCustomerModal) y no un componente (<CustomerModal />),
-    // React mantiene el estado del DOM y NO pierdes el foco al escribir.
-    const renderCustomerModal = () => (
-        <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
-                {/* HEADER DIFERENCIADO POR COLOR (CON POSICIÓN RELATIVA PARA EL BOTÓN) */}
-                <div className={`p-5 text-white text-center relative ${isCreditUsed ? 'bg-higea-red' : 'bg-higea-blue'}`}>
+    const renderCustomerModal = () => {
+        // [AJUSTE] Detectar si es Donación para cambiar colores y textos
+        const isDonationUsed = (parseFloat(paymentShares['Donación']) || 0) > 0;
 
-                    {/* --- BOTÓN NUEVO: LIMPIAR TODO (Esquina superior derecha) --- */}
-                    <button
-                        onClick={handleClear}
-                        className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-full transition-all text-white shadow-sm"
-                        title="Limpiar Formulario"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                    </button>
-                    {/* ----------------------------------------------------------- */}
+        return (
+            <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
+                    
+                    {/* HEADER DIFERENCIADO POR COLOR: Donación (Amarillo) / Crédito (Rojo) / Fiscal (Azul) */}
+                    <div className={`p-5 text-white text-center relative ${
+                        isDonationUsed ? 'bg-yellow-500' : (isCreditUsed ? 'bg-higea-red' : 'bg-higea-blue')
+                    }`}>
 
-                    <h3 className="text-xl font-bold">
-                        {isCreditUsed ? 'Registro de Crédito' : 'Datos para Factura Fiscal'}
-                    </h3>
-                    <p className="text-sm mt-1 opacity-90">
-                        {isCreditUsed ? 'Esta venta quedará PENDIENTE de pago' : 'Ingrese los datos del cliente para la factura'}
-                    </p>
-                </div>
+                        {/* --- BOTÓN NUEVO: LIMPIAR TODO (Esquina superior derecha) --- */}
+                        <button
+                            onClick={handleClear}
+                            className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-full transition-all text-white shadow-sm"
+                            title="Limpiar Formulario"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                        {/* ----------------------------------------------------------- */}
 
-                <div className="p-5 space-y-4">
-                    {/* Solo mostrar selector de días si es CRÉDITO */}
-                    {isCreditUsed && (
-                        <div className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-200">
-                            <span className="font-bold text-yellow-800 text-sm">Plazo de Pago</span>
-                            <div className="flex gap-2">
-                                <button onClick={() => setDueDays(15)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 15 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>15 Días</button>
-                                <button onClick={() => setDueDays(30)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 30 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>30 Días</button>
-                            </div>
-                        </div>
-                    )}
+                        <h3 className="text-xl font-bold">
+                            {isDonationUsed 
+                                ? 'Registro de Donación' 
+                                : (isCreditUsed ? 'Registro de Crédito' : 'Datos para Factura Fiscal')}
+                        </h3>
+                        <p className="text-sm mt-1 opacity-90">
+                            {isDonationUsed 
+                                ? 'Ingrese los datos del BENEFICIARIO de la donación' 
+                                : (isCreditUsed ? 'Esta venta quedará PENDIENTE de pago' : 'Ingrese los datos del cliente para la factura')}
+                        </p>
+                    </div>
 
-                    {/* INPUT NOMBRE (AHORA CON LA LÓGICA DE BÚSQUEDA AQUÍ) */}
-                    <div className="relative">
-                        <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Razón Social / Nombre (*)</label>
-                        <input
-                            type="text"
-                            name="full_name"
-                            placeholder="Escribe para buscar cliente..."
-                            onChange={handleNameChange}
-                            value={customerData.full_name}
-                            className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-800"
-                            autoFocus={true}
-                        />
-
-                        {/* Spinner de carga dentro del input */}
-                        {isSearchingCustomer && <div className="absolute right-3 top-9 w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>}
-
-                        {/* DROPDOWN DE RESULTADOS (MOVIDO AQUÍ) */}
-                        {customerSearchResults.length > 0 && (
-                            <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-xl z-50 max-h-48 overflow-y-auto">
-                                {customerSearchResults.map(customer => (
-                                    <div
-                                        key={customer.id}
-                                        onClick={() => handleListSelect(customer)}
-                                        className="p-3 border-b border-gray-50 hover:bg-blue-50 cursor-pointer flex justify-between items-center transition-colors"
-                                    >
-                                        <div className="flex flex-col">
-                                            <span className="font-bold text-gray-800 text-sm">{customer.full_name}</span>
-                                            <span className="text-xs text-gray-400">{customer.institution || 'Sin dirección'}</span>
-                                        </div>
-                                        <span className="text-xs font-mono font-bold text-higea-blue bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                                            {customer.id_number}
-                                        </span>
-                                    </div>
-                                ))}
+                    <div className="p-5 space-y-4">
+                        {/* Solo mostrar selector de días si es CRÉDITO (Oculto en Donación) */}
+                        {isCreditUsed && !isDonationUsed && (
+                            <div className="flex justify-between items-center bg-yellow-50 p-3 rounded-xl border border-yellow-200">
+                                <span className="font-bold text-yellow-800 text-sm">Plazo de Pago</span>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setDueDays(15)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 15 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>15 Días</button>
+                                    <button onClick={() => setDueDays(30)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${dueDays === 30 ? 'bg-yellow-600 text-white' : 'bg-yellow-100 text-yellow-800'}`}>30 Días</button>
+                                </div>
                             </div>
                         )}
+
+                        {/* INPUT NOMBRE (AHORA CON LA LÓGICA DE BÚSQUEDA AQUÍ) */}
+                        <div className="relative">
+                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">
+                                {isDonationUsed ? 'Nombre del Beneficiario (*)' : 'Razón Social / Nombre (*)'}
+                            </label>
+                            
+                            <input
+                                type="text"
+                                name="full_name"
+                                placeholder={isDonationUsed ? "Buscar beneficiario..." : "Escribe para buscar cliente..."}
+                                onChange={handleNameChange}
+                                value={customerData.full_name}
+                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-bold text-gray-800"
+                                autoFocus={true}
+                            />
+
+                            {/* Spinner de carga dentro del input */}
+                            {isSearchingCustomer && <div className="absolute right-3 top-9 w-4 h-4 border-2 border-higea-blue border-t-transparent rounded-full animate-spin"></div>}
+
+                            {/* DROPDOWN DE RESULTADOS (MOVIDO AQUÍ) */}
+                            {customerSearchResults.length > 0 && (
+                                <div className="absolute top-full left-0 w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-xl z-50 max-h-48 overflow-y-auto">
+                                    {customerSearchResults.map(customer => (
+                                        <div
+                                            key={customer.id}
+                                            onClick={() => handleListSelect(customer)}
+                                            className="p-3 border-b border-gray-50 hover:bg-blue-50 cursor-pointer flex justify-between items-center transition-colors"
+                                        >
+                                            <div className="flex flex-col">
+                                                <span className="font-bold text-gray-800 text-sm">{customer.full_name}</span>
+                                                <span className="text-xs text-gray-400">{customer.institution || 'Sin dirección'}</span>
+                                            </div>
+                                            <span className="text-xs font-mono font-bold text-higea-blue bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                                                {customer.id_number}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* INPUT CÉDULA (SIMPLE) */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">
+                                {isDonationUsed ? 'Cédula del Beneficiario (*)' : 'Cédula / RIF (*)'}
+                            </label>
+                            <input
+                                type="text"
+                                name="id_number"
+                                placeholder="V-12345678"
+                                onChange={handleIdChange}
+                                value={customerData.id_number}
+                                className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-mono text-gray-700 font-medium"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                            <input type="text" name="institution" placeholder="Dirección Fiscal" onChange={handleChange} value={customerData.institution} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
+                        </div>
                     </div>
 
-                    {/* INPUT CÉDULA (SIMPLE) */}
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Cédula / RIF (*)</label>
-                        <input
-                            type="text"
-                            name="id_number"
-                            placeholder="V-12345678"
-                            onChange={handleIdChange}
-                            value={customerData.id_number}
-                            className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none font-mono text-gray-700 font-medium"
-                        />
+                    <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
+                        <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-50 rounded-xl transition-colors">Volver</button>
+                        
+                        <button
+                            onClick={handleConfirm}
+                            disabled={!isFormReadyToSubmit}
+                            className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 ${
+                                !isFormReadyToSubmit 
+                                    ? 'bg-gray-300' 
+                                    : (isDonationUsed 
+                                        ? 'bg-yellow-500 hover:bg-yellow-600' 
+                                        : (isCreditUsed ? 'bg-higea-red hover:bg-red-700' : 'bg-higea-blue hover:bg-blue-700')
+                                      )
+                            }`}
+                        >
+                            {isDonationUsed 
+                                ? 'Confirmar Donación' 
+                                : (isCreditUsed ? 'Confirmar Crédito' : 'Guardar Datos Fiscales')}
+                        </button>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <input type="tel" name="phone" placeholder="Teléfono" onChange={handleChange} value={customerData.phone} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
-                        <input type="text" name="institution" placeholder="Dirección Fiscal" onChange={handleChange} value={customerData.institution} className="w-full border p-3 rounded-xl focus:border-higea-blue outline-none" />
-                    </div>
-                </div>
-
-                <div className="p-5 flex gap-3 bg-white border-t border-gray-50">
-                    <button onClick={() => { setIsCustomerModalOpen(false); setIsPaymentModalOpen(true); }} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-50 rounded-xl transition-colors">Volver</button>
-                    <button
-                        onClick={handleConfirm}
-                        disabled={!isFormReadyToSubmit}
-                        className={`flex-1 py-3 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 ${!isFormReadyToSubmit ? 'bg-gray-300' : (isCreditUsed ? 'bg-higea-red hover:bg-red-700' : 'bg-higea-blue hover:bg-blue-700')}`}
-                    >
-                        {isCreditUsed ? 'Confirmar Crédito' : 'Guardar Datos Fiscales'}
-                    </button>
                 </div>
             </div>
-        </div>
-    );
+        );
+    }
 
     const openDailySalesDetail = async () => {
         try {
