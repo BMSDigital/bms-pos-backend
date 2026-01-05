@@ -501,12 +501,24 @@ app.get('/api/reports/daily', async (req, res) => {
     }
 });
 
-// B. Últimas Ventas
+// B. Últimas Ventas (CORREGIDO)
 app.get('/api/reports/recent-sales', async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT s.id, s.total_usd, s.total_ves, s.payment_method, to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as full_date, s.status, c.full_name, c.id_number
-            FROM sales s LEFT JOIN customers c ON s.customer_id = c.id ORDER BY s.id DESC LIMIT 10
+            SELECT 
+                s.id, 
+                s.total_usd, 
+                s.total_ves, 
+                s.payment_method, 
+                to_char(s.created_at, 'DD/MM/YYYY HH12:MI AM') as full_date, 
+                s.status, 
+                s.invoice_type,  -- <--- ¡ESTO ES LO QUE FALTABA!
+                c.full_name, 
+                c.id_number
+            FROM sales s 
+            LEFT JOIN customers c ON s.customer_id = c.id 
+            ORDER BY s.id DESC 
+            LIMIT 10
         `);
         res.json(result.rows);
     } catch (err) {

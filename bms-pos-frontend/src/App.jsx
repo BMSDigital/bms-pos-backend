@@ -2380,16 +2380,43 @@ const promptOpenCash = async () => {
         // DETECCIÓN DE CRÉDITO
         const isCreditSale = isCreditFlow && (parseFloat(paymentShares['Crédito']) || 0) > 0;
 
-        // --- 2. VALIDACIONES DE DATOS ---
+        // --- 2. VALIDACIONES DE DATOS (CON REDIRECCIÓN AL FORMULARIO) ---
+        
+        // CASO A: FACTURA FISCAL
         if (isFiscalInvoice) {
             if (!customerData.full_name || !customerData.id_number) {
-                return Swal.fire('Datos Fiscales Requeridos', 'Nombre y RIF son obligatorios.', 'warning');
+                return Swal.fire({
+                    icon: 'warning',
+                    title: 'Datos Fiscales Requeridos',
+                    text: 'Para emitir Factura Fiscal, Nombre y RIF son obligatorios.',
+                    confirmButtonText: 'Ingresar Datos',
+                    confirmButtonColor: '#0056B3',
+                    showCancelButton: true,
+                    cancelButtonText: 'Cancelar'
+                }).then((result) => {
+                    // Si confirma, cerramos pagos y abrimos clientes
+                    if (result.isConfirmed) {
+                        setIsPaymentModalOpen(false);
+                        setIsCustomerModalOpen(true);
+                    }
+                });
             }
         }
 
+        // CASO B: CRÉDITO O DONACIÓN
         if ((isCreditSale || isDonationSale) && (!customerData.full_name || !customerData.id_number)) {
             const typeMsg = isDonationSale ? 'Beneficiario (Donación)' : 'Cliente (Crédito)';
-            return Swal.fire('Datos Faltantes', `Debe registrar Nombre y Cédula del ${typeMsg} para auditoría.`, 'warning');
+            return Swal.fire({
+                icon: 'warning',
+                title: 'Datos Faltantes', 
+                text: `Debe registrar Nombre y Cédula del ${typeMsg} para auditoría.`, 
+                confirmButtonText: 'Registrar Datos',
+                confirmButtonColor: isDonationSale ? '#F59E0B' : '#EF4444'
+            }).then(() => {
+                // Lo llevamos directo al formulario
+                setIsPaymentModalOpen(false);
+                setIsCustomerModalOpen(true);
+            });
         }
 
         // --- 3. DEFINICIÓN DE ESTATUS ---
@@ -2409,7 +2436,10 @@ const promptOpenCash = async () => {
             if (activeMethods.length > 0) {
                 paymentDescription = activeMethods.map(m => {
                     const amt = paymentShares[m];
-                    return `${m}: ${amt}`; 
+                    const methodData = paymentMethods.find(pm => pm.name === m);
+                    // Manejo seguro del símbolo de moneda
+                    const symbol = methodData?.currency === 'Ref' ? 'Ref' : 'Bs'; 
+                    return `${m}: ${symbol}${amt}`; 
                 }).join(' + ');
             } else {
                 // Fallback seguro
@@ -2455,7 +2485,8 @@ const promptOpenCash = async () => {
 
             // Visualización Previa
             if (isFiscalInvoice) {
-                const html = generateReceiptHTML(saleId || '000', customerData, cart);
+                // [CORRECCIÓN] Pasamos 'FISCAL' explícitamente para que el PDF diga "FACTURA"
+                const html = generateReceiptHTML(saleId || '000', customerData, cart, 'FISCAL');
                 setReceiptPreview(html);
             }
 
@@ -3170,8 +3201,13 @@ const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
 
     // --- FUNCIÓN DE RENDERIZADO VISUAL ---
     const renderCustomerModal = () => {
-        // [AJUSTE] Detectar si es Donación para cambiar colores y textos
-        const isDonationUsed = (parseFloat(paymentShares['Donación']) || 0) > 0;
+        // [AJUSTE ROBUSTO] Detectar si es Donación (Igual que en processSale)
+        const currentMethodName = (typeof paymentMethod !== 'undefined' && paymentMethod) ? paymentMethod.toUpperCase() : '';
+        const isDonationTab = currentMethodName.includes('DONACI');
+        const isDonationSplit = (parseFloat(paymentShares['Donación']) || 0) > 0;
+        
+        const isDonationUsed = isDonationTab || isDonationSplit;
+        const isCreditUsed = (parseFloat(paymentShares['Crédito']) || 0) > 0;
 
         return (
             <div className="fixed inset-0 z-[65] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -4713,59 +4749,71 @@ const printClosingReport = (shift) => {
                 </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-                {recentSales.map((sale) => (
-                    <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer transition-colors group">
-                        
-                        {/* ID */}
-                        <td className="px-4 py-3 font-bold text-higea-blue">#{sale.id}</td>
-                        
-                        {/* Fecha */}
-                        <td className="px-4 py-3">{sale.full_date}</td>
-                        
-                        {/* Cliente */}
-                        <td className="px-4 py-3 font-medium text-gray-700 truncate max-w-[150px]" title={sale.full_name}>
-                            {sale.full_name || 'Consumidor Final'}
-                        </td>
+    {recentSales.map((sale) => {
+        // 1. Lógica para detectar tipo de factura (Seguridad por si el campo no viene)
+        const isFiscal = sale.invoice_type === 'FISCAL';
 
-                        {/* Nueva Celda: Método de Pago */}
-                        <td className="px-4 py-3 text-center">
-                            <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded-lg text-[10px] font-bold text-gray-500 truncate max-w-[100px] inline-block" title={sale.payment_method}>
-                                {sale.payment_method || 'N/A'}
-                            </span>
-                        </td>
+        // 2. Tu lógica original de Donación (Preservada intacta)
+        const isDonationVisual = sale.status === 'DONADO' || 
+            (sale.payment_method && sale.payment_method.toUpperCase().includes('DONACI'));
 
-                        {/* Celda: Estatus Inteligente (Detecta Donación por texto también) */}
-                                <td className="px-4 py-3 text-center">
-                                    {(() => {
-                                        // LÓGICA VISUAL: Si dice 'DONADO' O si la descripción contiene 'DONACI'
-                                        const isDonationVisual = sale.status === 'DONADO' || 
-                                            (sale.payment_method && sale.payment_method.toUpperCase().includes('DONACI'));
+        return (
+            <tr key={sale.id} onClick={() => showSaleDetail(sale)} className="hover:bg-blue-50 cursor-pointer transition-colors group">
+                
+                {/* --- CAMBIO AQUÍ: ID con diferenciación Visual Minimalista --- */}
+                <td className="px-4 py-3 align-middle">
+                    <div className="flex flex-col items-start gap-1">
+                        <span className="font-black text-higea-blue text-sm leading-none">#{sale.id}</span>
+                        {/* Badge de Tipo de Documento */}
+                        <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-[4px] border transition-all ${
+                            isFiscal 
+                                ? 'bg-slate-800 text-white border-slate-800 shadow-sm' // Estilo Fiscal: Serio, Oscuro
+                                : 'bg-white text-gray-400 border-gray-200'             // Estilo Ticket: Sutil, Limpio
+                        }`}>
+                            {isFiscal ? '🧾 FISCAL' : 'TICKET'}
+                        </span>
+                    </div>
+                </td>
+                
+                {/* Fecha */}
+                <td className="px-4 py-3">{sale.full_date}</td>
+                
+                {/* Cliente */}
+                <td className="px-4 py-3 font-medium text-gray-700 truncate max-w-[150px]" title={sale.full_name}>
+                    {sale.full_name || 'Consumidor Final'}
+                </td>
 
-                                        return (
-                                            <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide border ${
-                                                sale.status === 'ANULADO'   ? 'bg-rose-50 text-rose-500 border-rose-100 line-through' :
-                                                sale.status === 'PENDIENTE' ? 'bg-amber-50 text-amber-600 border-amber-200' :
-                                                sale.status === 'PARCIAL'   ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
-                                                isDonationVisual            ? 'bg-yellow-50 text-yellow-600 border-yellow-200' : // <--- AQUI APLICA EL AMARILLO
-                                                'bg-emerald-50 text-emerald-600 border-emerald-200' // Pagado
-                                            }`}>
-                                                {/* Texto a mostrar */}
-                                                {isDonationVisual ? '🎁 DONADO' : sale.status}
-                                            </span>
-                                        );
-                                    })()}
-                                </td>
+                {/* Método de Pago */}
+                <td className="px-4 py-3 text-center">
+                    <span className="px-2 py-1 bg-gray-100 border border-gray-200 rounded-lg text-[10px] font-bold text-gray-500 truncate max-w-[100px] inline-block" title={sale.payment_method}>
+                        {sale.payment_method || 'N/A'}
+                    </span>
+                </td>
 
-                        {/* Montos (Se tachan si está anulado) */}
-                        <td className={`px-4 py-3 text-right font-black ${sale.status === 'ANULADO' ? 'text-slate-300 decoration-slate-300 line-through' : 'text-gray-800'}`}>
-                            Ref {parseFloat(sale.total_usd).toFixed(2)}
-                        </td>
-                        <td className={`px-4 py-3 text-right ${sale.status === 'ANULADO' ? 'text-slate-300 decoration-slate-300 line-through' : 'text-gray-500'}`}>
-                            Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}
-                        </td>
-                    </tr>
-                ))}
-            </tbody>
+                {/* Estatus Inteligente (Tu código original preservado) */}
+                <td className="px-4 py-3 text-center">
+                    <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide border ${
+                        sale.status === 'ANULADO'   ? 'bg-rose-50 text-rose-500 border-rose-100 line-through' :
+                        sale.status === 'PENDIENTE' ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                        sale.status === 'PARCIAL'   ? 'bg-indigo-50 text-indigo-600 border-indigo-200' :
+                        isDonationVisual            ? 'bg-yellow-50 text-yellow-600 border-yellow-200' :
+                        'bg-emerald-50 text-emerald-600 border-emerald-200'
+                    }`}>
+                        {isDonationVisual ? '🎁 DONADO' : sale.status}
+                    </span>
+                </td>
+
+                {/* Montos */}
+                <td className={`px-4 py-3 text-right font-black ${sale.status === 'ANULADO' ? 'text-slate-300 decoration-slate-300 line-through' : 'text-gray-800'}`}>
+                    Ref {parseFloat(sale.total_usd).toFixed(2)}
+                </td>
+                <td className={`px-4 py-3 text-right ${sale.status === 'ANULADO' ? 'text-slate-300 decoration-slate-300 line-through' : 'text-gray-500'}`}>
+                    Bs {parseFloat(sale.total_ves).toLocaleString('es-VE', { maximumFractionDigits: 0 })}
+                </td>
+            </tr>
+        );
+    })}
+</tbody>
         </table>
     </div>
 </div>
