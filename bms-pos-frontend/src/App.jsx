@@ -1649,17 +1649,18 @@ const promptOpenCash = async () => {
     }
 
 
-   // FUNCIÓN DE CARGA DE DATOS (BLINDADA)
+   // FUNCIÓN DE CARGA DE DATOS (CORREGIDA: CÁLCULO DE TASA INTELIGENTE)
     const fetchData = async () => {
         try {
             // 1. Cargar estado y configuración
             const statusRes = await axios.get(`${API_URL}/status`);
-            setBcvRate(statusRes.data.bcv_rate);
+            const currentBcvRate = statusRes.data.bcv_rate; // Guardamos la tasa actual para usarla de respaldo
+            
+            setBcvRate(currentBcvRate);
             setFallbackRate(statusRes.data.fallback_rate);
 
             // 2. Cargar Productos
             const prodRes = await axios.get(`${API_URL}/products`);
-            // Protección: Validar que data sea array antes de mapear
             const rawProducts = Array.isArray(prodRes.data) ? prodRes.data : [];
 
             const allProducts = rawProducts
@@ -1673,7 +1674,6 @@ const promptOpenCash = async () => {
 
             // 3. Reportes básicos
             const statsRes = await axios.get(`${API_URL}/reports/daily`);
-            // ❌ NO actualizamos setStats todavía para evitar el "Flash"
             const rawStats = statsRes.data; 
 
             const recentRes = await axios.get(`${API_URL}/reports/recent-sales`);
@@ -1683,44 +1683,39 @@ const promptOpenCash = async () => {
             setLowStock(Array.isArray(stockRes.data) ? stockRes.data : []);
 
             // ===========================================================================
-            // --- CORRECCIÓN CRÍTICA: FILTRO DOBLE (ESTATUS + DESCRIPCIÓN) ---
+            // --- CORRECCIÓN MATEMÁTICA: TASA INTELIGENTE PARA EVITAR CERO ---
             // ===========================================================================
             const salesRes = await axios.get(`${API_URL}/reports/sales-today`);
             const rawSales = Array.isArray(salesRes.data) ? salesRes.data : [];
 
-            // Conversión numérica
             const sales = rawSales.map(sale => ({
                 ...sale,
                 total_usd: parseFloat(sale.total_usd) || 0,
                 amount_paid_usd: parseFloat(sale.amount_paid_usd) || 0,
                 bcv_rate_snapshot: parseFloat(sale.bcv_rate_snapshot) || 0,
                 total_ves: parseFloat(sale.total_ves) || 0,
-                payment_method: sale.payment_method || '' // Asegurar que sea string
+                payment_method: sale.payment_method || ''
             }));
 
             setDailySalesList(sales);
 
-            // Recalculamos totales del Dashboard
+            // Cálculo interno
             let totalRef = 0;
             let totalBs = 0;
             let count = 0;
 
             sales.forEach(sale => {
-                // [LÓGICA BLINDADA]
-                // 1. Verificamos el Estatus
+                // 1. Filtros de Exclusión
                 const isStatusDonation = sale.status === 'DONADO';
-                
-                // 2. Verificamos la Descripción (Respaldo por si el estatus falló en guardado anterior)
                 const methodStr = (sale.payment_method || '').toUpperCase();
                 const isDescDonation = methodStr.includes('DONACI') || methodStr.includes('DONACIÓN');
 
-                // Si NO es anulado Y TAMPOCO es donación (por ninguno de los dos criterios), sumamos.
                 if (sale.status !== 'ANULADO' && !isStatusDonation && !isDescDonation) {
                     
+                    // 2. Base del cálculo: Lo que realmente se pagó
                     let montoReal = sale.amount_paid_usd;
-                    let montoRealBs = sale.total_ves;
 
-                    // Lógica de Avance de Efectivo (Restar Capital)
+                    // 3. Lógica de Avance (Restar Capital)
                     if (methodStr.includes('[CAP:')) {
                         try {
                             const match = sale.payment_method.match(/\[CAP:([\d\.]+)\]/);
@@ -1731,17 +1726,32 @@ const promptOpenCash = async () => {
                         } catch (e) { console.error("Error CAP:", e); }
                     }
 
+                    // 4. [CORRECCIÓN CRÍTICA] Tasa Inteligente
+                    // Si la venta no tiene tasa guardada (es 0), la calculamos (Total Bs / Total $)
+                    // Si eso falla, usamos la tasa del día (currentBcvRate)
+                    let tasaVenta = sale.bcv_rate_snapshot;
+                    if (!tasaVenta || tasaVenta === 0) {
+                        if (sale.total_usd > 0 && sale.total_ves > 0) {
+                            tasaVenta = sale.total_ves / sale.total_usd; // Deducimos la tasa
+                        } else {
+                            tasaVenta = currentBcvRate; // Usamos la tasa de hoy como último recurso
+                        }
+                    }
+
+                    // Calculamos los Bs Reales usando esa tasa segura
+                    let montoRealBs = montoReal * tasaVenta;
+
                     totalRef += montoReal;
                     totalBs += montoRealBs; 
                     count++;
                 }
             });
 
-            // ✅ ACTUALIZAMOS LA PANTALLA AHORA (SIN FLASH)
+            // ✅ Actualizar UI
             setStats({
-                ...rawStats,       // Mantenemos otros datos que vengan del backend
-                total_usd: totalRef, // Sobrescribimos con el total filtrado
-                total_ves: totalBs,  // Sobrescribimos con el total filtrado
+                ...rawStats,
+                total_usd: totalRef,
+                total_ves: totalBs,
                 sales_count: count
             });
             // ===========================================================================
@@ -1750,9 +1760,7 @@ const promptOpenCash = async () => {
             const creditsRes = await axios.get(`${API_URL}/reports/credit-pending`);
             const creditsData = Array.isArray(creditsRes.data) ? creditsRes.data : [];
             setPendingCredits(creditsData);
-
-            const overdue = creditsData.filter(c => c.is_overdue).length;
-            setOverdueCount(overdue);
+            setOverdueCount(creditsData.filter(c => c.is_overdue).length);
             
             const groupedRes = await axios.get(`${API_URL}/reports/credit-grouped`);
             setGroupedCredits(Array.isArray(groupedRes.data) ? groupedRes.data : []);
@@ -4767,7 +4775,7 @@ const printClosingReport = (shift) => {
                         {/* Badge de Tipo de Documento */}
                         <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-[4px] border transition-all ${
                             isFiscal 
-                                ? 'bg-slate-800 text-white border-slate-800 shadow-sm' // Estilo Fiscal: Serio, Oscuro
+                                ? 'bg-blue-50 text-blue-900 border-blue-200 shadow-sm' // Estilo Fiscal: Serio, Oscuro
                                 : 'bg-white text-gray-400 border-gray-200'             // Estilo Ticket: Sutil, Limpio
                         }`}>
                             {isFiscal ? '🧾 FISCAL' : 'TICKET'}
