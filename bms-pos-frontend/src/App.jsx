@@ -4706,7 +4706,18 @@ const printClosingReport = (shift) => {
                                     {lowStock.slice(0, 4).map((p, i) => (
                                         <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded-xl border border-red-50 shadow-sm">
                                             <span className="truncate w-3/4 font-medium text-gray-700 flex items-center gap-1">
-                                                <span className="text-base">{p.icon_emoji}</span> {p.name}
+                                                {/* CORRECCIÓN AQUÍ: Detectar imagen vs Emoji */}
+                                                {(p.icon_emoji && (p.icon_emoji.startsWith('data:image') || p.icon_emoji.startsWith('http'))) ? (
+                                                    <img 
+                                                        src={p.icon_emoji} 
+                                                        alt="img" 
+                                                        className="w-5 h-5 rounded-full object-cover border border-gray-100 flex-shrink-0"
+                                                    />
+                                                ) : (
+                                                    <span className="text-base">{p.icon_emoji || '📦'}</span>
+                                                )}
+                                                {/* Fin corrección */}
+                                                {p.name}
                                             </span>
                                             <span className="font-black text-red-500 bg-red-50 px-2 py-0.5 rounded-md">{p.stock}</span>
                                         </div>
