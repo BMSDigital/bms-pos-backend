@@ -7506,7 +7506,18 @@ const printClosingReport = (shift) => {
                                     {lowStock.map(p => (
                                         <tr key={p.id} className="hover:bg-red-50/50 transition-colors">
                                             <td className="px-3 py-3 font-bold text-gray-700 flex items-center gap-2">
-                                                <span className="text-xl">{p.icon_emoji}</span> {p.name}
+                                                {/* AQUÍ ESTÁ LA CORRECCIÓN: Detectar si es Imagen o Emoji */}
+                                                {(p.icon_emoji && (p.icon_emoji.startsWith('data:image') || p.icon_emoji.startsWith('http'))) ? (
+                                                    <img 
+                                                        src={p.icon_emoji} 
+                                                        alt={p.name} 
+                                                        className="w-8 h-8 rounded-full object-cover border border-gray-200"
+                                                    />
+                                                ) : (
+                                                    <span className="text-xl">{p.icon_emoji || '📦'}</span>
+                                                )}
+                                                {/* Fin de la corrección */}
+                                                {p.name}
                                             </td>
                                             <td className="px-3 py-3 text-center text-xs text-gray-400 bg-gray-50 rounded-lg m-1">{p.category}</td>
                                             <td className="px-3 py-3 text-right">
