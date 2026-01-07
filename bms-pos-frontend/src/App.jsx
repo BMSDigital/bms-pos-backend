@@ -2096,7 +2096,8 @@ const promptOpenCash = async () => {
 
     // --- GENERADOR DE HTML DE RECIBO (CORREGIDO: TASA HISTÓRICA + NOMBRE COMPLETO) ---
     // FUNCIÓN GENERADORA DE TICKET (DISEÑO UI MODERN/MINIMALISTA + BLINDAJE LEGAL)
-    const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0, historicalRate = null) => {
+    // Se agregó 'paymentMethod' al final para recibir el desglose de pagos
+    const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0, historicalRate = null, paymentMethod = 'NO ESPECIFICADO') => {
 
         const rate = historicalRate ? parseFloat(historicalRate) : bcvRate;
         
@@ -2351,6 +2352,13 @@ const promptOpenCash = async () => {
             <div class="ref-total" style="font-size:9px;">Tasa de Cambio BCV: Bs ${rate.toFixed(2)}</div>
         </div>
 
+        <div style="margin-top: 8px; border-top: 1px dashed #888; padding-top: 4px;">
+            <div class="bold" style="font-size: 9px;">MÉTODO DE PAGO:</div>
+            <div style="font-size: 9px; word-break: break-all; white-space: normal; line-height: 1.1; margin-top: 2px;">
+                ${paymentMethod}
+            </div>
+        </div>
+
         ${isCredit ? '<div class="text-center bold" style="margin-top:10px; padding:5px; border:1px solid #000; border-radius:4px;">VENTA A CRÉDITO - POR PAGAR</div>' : ''}
 
         <div class="legal-box text-justify">
@@ -2370,26 +2378,57 @@ const promptOpenCash = async () => {
     `;
     };
 
-    // FUNCIÓN UNIFICADA DE PROCESAMIENTO (BLINDADA CONTRA ACENTOS/MAYÚSCULAS)
+    // FUNCIÓN UNIFICADA DE PROCESAMIENTO (BLINDADA CONTRA ERRORES DE PAGO Y VISUALIZACIÓN)
     const processSale = async (isCreditFlow = false) => {
         
         // --- 1. DETECCIÓN ROBUSTA DEL TIPO DE VENTA ---
-        
-        // Limpiamos la variable para evitar errores si es undefined
         const currentMethodName = (typeof paymentMethod !== 'undefined' && paymentMethod) ? paymentMethod.toUpperCase() : '';
         
-        // DETECCIÓN DE DONACIÓN (Acepta: 'DONACION', 'DONACIÓN', 'Donacion', etc.)
+        // DETECCIÓN DE DONACIÓN
         const isDonationTab = currentMethodName.includes('DONACI'); 
         const isDonationSplit = isCreditFlow && (parseFloat(paymentShares['Donación']) || 0) > 0;
-        
-        // Variable definitiva
         const isDonationSale = isDonationTab || isDonationSplit;
 
         // DETECCIÓN DE CRÉDITO
         const isCreditSale = isCreditFlow && (parseFloat(paymentShares['Crédito']) || 0) > 0;
 
+        // --- VALIDACIÓN DE SEGURIDAD CRÍTICA: PAGOS INCOMPLETOS ---
+        // Solo validamos si NO es crédito y NO es donación
+        if (!isCreditSale && !isDonationSale) {
+            let totalPaidCalculated = 0;
+            
+            Object.keys(paymentShares).forEach(key => {
+                const amount = parseFloat(paymentShares[key]) || 0;
+                if (amount > 0) {
+                    const methodInfo = paymentMethods.find(m => m.name === key);
+                    // Si es Ref (Dólares), sumamos directo. Si es Bs, convertimos a Dólares usando la tasa actual.
+                    if (methodInfo?.currency === 'Ref') {
+                        totalPaidCalculated += amount;
+                    } else {
+                        // Importante: Usamos la tasa del momento (bcvRate) para validar
+                        totalPaidCalculated += (amount / bcvRate);
+                    }
+                }
+            });
+
+            // Usamos un margen de tolerancia de $0.10 para evitar bloqueos por redondeo
+            if (Math.abs(totalPaidCalculated - finalTotalUSD) > 0.10) {
+                 // Si pagó de MENOS, bloqueamos la venta
+                if (totalPaidCalculated < finalTotalUSD) {
+                    return Swal.fire({
+                        icon: 'warning',
+                        title: 'Pago Incompleto',
+                        text: `El monto ingresado ($${totalPaidCalculated.toFixed(2)}) no cubre el total de la venta ($${finalTotalUSD.toFixed(2)}). Faltan $${(finalTotalUSD - totalPaidCalculated).toFixed(2)}.`,
+                        confirmButtonText: 'Corregir Pagos',
+                        confirmButtonColor: '#EF4444'
+                    });
+                }
+            }
+        }
+        // --- FIN VALIDACIÓN DE SEGURIDAD ---
+
+
         // --- 2. VALIDACIONES DE DATOS (CON REDIRECCIÓN AL FORMULARIO) ---
-        
         // CASO A: FACTURA FISCAL
         if (isFiscalInvoice) {
             if (!customerData.full_name || !customerData.id_number) {
@@ -2402,7 +2441,6 @@ const promptOpenCash = async () => {
                     showCancelButton: true,
                     cancelButtonText: 'Cancelar'
                 }).then((result) => {
-                    // Si confirma, cerramos pagos y abrimos clientes
                     if (result.isConfirmed) {
                         setIsPaymentModalOpen(false);
                         setIsCustomerModalOpen(true);
@@ -2421,7 +2459,6 @@ const promptOpenCash = async () => {
                 confirmButtonText: 'Registrar Datos',
                 confirmButtonColor: isDonationSale ? '#F59E0B' : '#EF4444'
             }).then(() => {
-                // Lo llevamos directo al formulario
                 setIsPaymentModalOpen(false);
                 setIsCustomerModalOpen(true);
             });
@@ -2430,13 +2467,12 @@ const promptOpenCash = async () => {
         // --- 3. DEFINICIÓN DE ESTATUS ---
         let currentStatus = 'PAGADO'; 
         if (isCreditSale) currentStatus = 'PENDIENTE';
-        if (isDonationSale) currentStatus = 'DONADO'; // Estatus para la Base de Datos
+        if (isDonationSale) currentStatus = 'DONADO'; 
 
         // --- 4. DESCRIPCIÓN DEL PAGO ---
         let paymentDescription = '';
         
         if (isDonationSale) {
-            // FORZAMOS esta descripción para que fetchData la reconozca después
             paymentDescription = 'DONACIÓN (Salida de Inventario)';
         } else {
             const activeMethods = Object.keys(paymentShares).filter(k => (parseFloat(paymentShares[k]) || 0) > 0);
@@ -2445,12 +2481,10 @@ const promptOpenCash = async () => {
                 paymentDescription = activeMethods.map(m => {
                     const amt = paymentShares[m];
                     const methodData = paymentMethods.find(pm => pm.name === m);
-                    // Manejo seguro del símbolo de moneda
                     const symbol = methodData?.currency === 'Ref' ? 'Ref' : 'Bs'; 
                     return `${m}: ${symbol}${amt}`; 
                 }).join(' + ');
             } else {
-                // Fallback seguro
                 const safeName = currentMethodName || 'PAGO DIRECTO';
                 paymentDescription = `${safeName}: Ref ${finalTotalUSD.toFixed(2)}`;
             }
@@ -2476,13 +2510,13 @@ const promptOpenCash = async () => {
                 total_usd: finalTotalUSD,   
                 total_ves: totalVES,
 
-                status: currentStatus // Enviamos 'DONADO'
+                status: currentStatus 
             };
 
             Swal.fire({ title: `Procesando...`, didOpen: () => Swal.showLoading() });
 
             const res = await axios.post(`${API_URL}/sales`, saleData);
-            const { finalTotalUsd, saleId } = res.data;
+            const { saleId } = res.data;
 
             Swal.fire({
                 icon: 'success',
@@ -2491,10 +2525,20 @@ const promptOpenCash = async () => {
                 confirmButtonColor: isDonationSale ? '#F59E0B' : '#0056B3'
             });
 
-            // Visualización Previa
+            // Visualización Previa (CORREGIDA PARA ENVIAR DETALLES DE PAGO)
             if (isFiscalInvoice) {
-                // [CORRECCIÓN] Pasamos 'FISCAL' explícitamente para que el PDF diga "FACTURA"
-                const html = generateReceiptHTML(saleId || '000', customerData, cart, 'FISCAL');
+                // Aquí pasamos TODOS los parámetros requeridos, incluyendo paymentDescription al final
+                const html = generateReceiptHTML(
+                    saleId || '000', 
+                    customerData, 
+                    cart, 
+                    'FISCAL', 
+                    'PAGADO', 
+                    new Date(), 
+                    finalTotalUSD, 
+                    bcvRate, 
+                    paymentDescription // <--- ESTE ES EL DATO CLAVE QUE FALTABA
+                );
                 setReceiptPreview(html);
             }
 
