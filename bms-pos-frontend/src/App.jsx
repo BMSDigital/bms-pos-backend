@@ -455,7 +455,7 @@ function App() {
             const totalWithCommission = requestedBs + commissionAmount;
             
             addToCart({
-                id: Date.now(),
+                id: `ADV-${Date.now()}`,
                 name: 'Avance de Efectivo',
                 // El precio base para el sistema es la comisión (ganancia), 
                 // pero guardamos la metadata del avance para el cierre.
