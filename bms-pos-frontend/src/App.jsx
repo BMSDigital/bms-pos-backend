@@ -2002,14 +2002,14 @@ const promptOpenCash = async () => {
         setCustomerSearchResults([]);
     };
 
-    // --- GENERADOR DE HTML DE RECIBO (CORREGIDO: TASA HISTÓRICA + NOMBRE COMPLETO) ---
-    // FUNCIÓN GENERADORA DE TICKET (DISEÑO UI MODERN/MINIMALISTA + BLINDAJE LEGAL)
-    // Se agregó 'paymentMethod' al final para recibir el desglose de pagos
+    // =========================================================================
+    //  FUNCIÓN GENERADORA DE TICKET (CORREGIDA: REDONDEO A 2 DECIMALES EXACTOS)
+    //  Ubicación: Dentro de App, reemplaza la función anterior completa.
+    // =========================================================================
     const generateReceiptHTML = (saleId, customer, items, invoiceType = 'TICKET', saleStatus = 'PAGADO', createdAt = new Date(), totalSaleUsd = 0, historicalRate = null, paymentMethod = 'NO ESPECIFICADO') => {
 
         const rate = historicalRate ? parseFloat(historicalRate) : bcvRate;
         
-        // --- LÓGICA DE SEGURIDAD (Sin cambios) ---
         const isVoided = saleStatus === 'ANULADO';
 
         let itemsToPrint = items;
@@ -2028,7 +2028,7 @@ const promptOpenCash = async () => {
         let totalUsdGravable = 0;
         let hasAdvanceGlobal = false;
 
-        // --- CÁLCULOS MATEMÁTICOS (Sin cambios) ---
+        // 1. ITERACIÓN DE ITEMS (Ahora usando formatBs para precios individuales)
         const itemsHTML = itemsToPrint.map(item => {
             const priceUsd = parseFloat(item.price_at_moment_usd || item.price_usd || 0);
             const qty = parseFloat(item.quantity);
@@ -2039,6 +2039,7 @@ const promptOpenCash = async () => {
             let capitalTotalUsd = 0;
             let commissionTotalUsd = 0;
 
+            // Lógica de detección de Avance [CAP:...]
             if (item.name && (item.name.toUpperCase().includes('AVANCE') || item.name.includes('[CAP:'))) {
                 try {
                     const match = item.name.match(/\[CAP:\s*([\d\.,]+)\]/i);
@@ -2053,7 +2054,6 @@ const promptOpenCash = async () => {
                 } catch (e) { isAdvance = false; }
             }
 
-            // HTML MINIMALISTA PARA ITEMS (Sin bordes internos, solo alineación)
             if (isAdvance) {
                 const commissionBs = commissionTotalUsd * rate;
                 const capitalBs = capitalTotalUsd * rate;
@@ -2067,16 +2067,17 @@ const promptOpenCash = async () => {
                 }
                 totalRefBase += totalItemUsd;
 
+                // CORRECCIÓN AQUÍ: Usamos formatBs()
                 return `
                 <div class="item-row">
                     <div class="col-qty">${qty}</div>
                     <div class="col-desc">SERV. FINANCIERO (COMISIÓN)${isTaxable ? '' : ' (E)'}</div>
-                    <div class="col-price">${commissionBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                    <div class="col-price">${formatBs(commissionBs)}</div>
                 </div>
                 <div class="item-row" style="color:#555;">
                     <div class="col-qty">-</div>
                     <div class="col-desc">ENTREGA DE EFECTIVO (E)</div>
-                    <div class="col-price">${capitalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                    <div class="col-price">${formatBs(capitalBs)}</div>
                 </div>`;
             } else {
                 const subtotalItemBs = totalItemUsd * rate;
@@ -2092,15 +2093,17 @@ const promptOpenCash = async () => {
                 }
 
                 const cleanName = item.name.replace(/\[CAP:.*?\]/i, '').trim();
+                // CORRECCIÓN AQUÍ: Usamos formatBs()
                 return `
                 <div class="item-row">
                     <div class="col-qty">${qty}</div>
                     <div class="col-desc">${cleanName.substring(0, 30)}${exemptMark}</div>
-                    <div class="col-price">${subtotalItemBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</div>
+                    <div class="col-price">${formatBs(subtotalItemBs)}</div>
                 </div>`;
             }
         }).join('');
 
+        // CÁLCULOS FINALES
         const ivaBs = totalBsBase * 0.16;
         const totalGeneralBs = totalBsExento + totalBsBase + ivaBs;
         const ivaUsd = totalUsdGravable * 0.16;
@@ -2120,7 +2123,6 @@ const promptOpenCash = async () => {
 
         const dateStr = new Date(createdAt).toLocaleString('es-VE');
 
-        // --- PLANTILLA HTML/CSS MODERNA Y COMPACTA ---
         return `
     <!DOCTYPE html>
     <html>
@@ -2128,75 +2130,42 @@ const promptOpenCash = async () => {
         <meta charset="UTF-8">
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap');
-            
             @page { size: 80mm auto; margin: 0; }
-            
             body { 
-                width: 72mm; 
-                margin: 0 auto; 
-                padding: 5px 0;
-                font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-                font-size: 10px; 
-                line-height: 1.2;
-                color: #222; 
-                background: #fff; 
-                text-transform: uppercase;
+                width: 72mm; margin: 0 auto; padding: 5px 0;
+                font-family: 'Roboto', sans-serif; font-size: 10px; line-height: 1.2;
+                color: #222; background: #fff; text-transform: uppercase;
             }
-
-            /* Tipografía Numérica: Tabular nums hace que los números se alineen verticalmente perfecto */
             .nums { font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
-
-            /* Utilidades de Alineación */
             .text-center { text-align: center; }
             .text-right { text-align: right; }
             .text-justify { text-align: justify; }
             .bold { font-weight: 700; }
             .black { font-weight: 900; }
-            
-            /* Separadores Minimalistas */
             .divider { border-bottom: 1px dotted #888; margin: 6px 0; width: 100%; }
             .divider-bold { border-bottom: 2px solid #000; margin: 8px 0; width: 100%; }
-
-            /* Header Moderno */
             .header-title { font-size: 13px; margin-bottom: 2px; letter-spacing: 0.5px; }
             .header-meta { font-size: 9px; color: #444; }
             .doc-type { margin-top: 8px; font-size: 11px; background: #000; color: #fff; padding: 2px 0; border-radius: 4px; }
-
-            /* Grid de Cliente Compacto */
             .client-grid { display: flex; flex-wrap: wrap; margin-top: 5px; gap: 2px; }
             .client-row { display: flex; width: 100%; justify-content: space-between; }
             .label { color: #666; font-size: 9px; margin-right: 4px; }
-            .val { font-weight: 700; text-align: right; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-            /* Tabla de Productos Flex (Más control que table HTML) */
+            .val { font-weight: 700; text-align: right; flex: 1; overflow: hidden; white-space: nowrap; }
             .item-container { margin: 5px 0; }
             .item-header { display: flex; font-size: 8px; color: #666; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin-bottom: 4px; }
             .item-row { display: flex; margin-bottom: 3px; align-items: flex-start; }
-            
-            /* Columnas Definidas */
             .col-qty { width: 10%; text-align: center; font-weight: 700; }
             .col-desc { width: 65%; padding-right: 5px; line-height: 1.1; }
             .col-price { width: 25%; text-align: right; font-weight: 500; }
-
-            /* Totales Modernos */
             .totals-area { display: flex; flex-direction: column; align-items: flex-end; margin-top: 5px; }
             .total-row { display: flex; justify-content: space-between; width: 100%; margin-bottom: 2px; }
             .total-label { font-size: 9px; color: #444; }
             .total-val { font-size: 10px; font-weight: 700; }
-            
             .final-total { font-size: 16px; margin-top: 4px; padding-top: 4px; border-top: 1px solid #000; width: 100%; display: flex; justify-content: space-between; align-items: center; }
             .ref-total { font-size: 11px; color: #444; margin-top: 2px; text-align: right; width: 100%; }
-
-            /* Footer Legal Compacto */
             .legal-box { font-size: 8px; text-transform: none; color: #444; margin-top: 8px; line-height: 1.1; }
             .signature-line { margin-top: 30px; border-top: 1px solid #000; width: 60%; margin-left: auto; margin-right: auto; }
-            
-            /* Marca de Agua ANULADO */
-            .watermark {
-                position: fixed; top: 35%; left: 50%; transform: translate(-50%, -50%) rotate(-30deg);
-                font-size: 48px; color: rgba(200, 0, 0, 0.15); border: 4px solid rgba(200, 0, 0, 0.15);
-                padding: 10px; z-index: 999; font-weight: 900; letter-spacing: 5px; pointer-events: none;
-            }
+            .watermark { position: fixed; top: 35%; left: 50%; transform: translate(-50%, -50%) rotate(-30deg); font-size: 48px; color: rgba(200, 0, 0, 0.15); border: 4px solid rgba(200, 0, 0, 0.15); padding: 10px; z-index: 999; font-weight: 900; pointer-events: none; }
         </style>
     </head>
     <body>
@@ -2211,18 +2180,10 @@ const promptOpenCash = async () => {
         </div>
 
         <div class="client-grid">
-            <div class="client-row">
-                <span class="label">CLIENTE:</span>
-                <span class="val">${clientName}</span>
-            </div>
-            <div class="client-row">
-                <span class="label">DOC ID:</span>
-                <span class="val nums">${clientId}</span>
-            </div>
+            <div class="client-row"><span class="label">CLIENTE:</span><span class="val">${clientName}</span></div>
+            <div class="client-row"><span class="label">DOC ID:</span><span class="val nums">${clientId}</span></div>
             ${clientDir ? `<div class="client-row"><span class="label">DIR:</span><span class="val" style="font-size:8px;">${clientDir.substring(0, 30)}</span></div>` : ''}
-            
             <div class="divider"></div>
-            
             <div class="client-row" style="font-size: 9px;">
                 <span>FACT: <span class="bold nums">#${saleId.toString().padStart(6, '0')}</span></span>
                 <span class="nums">${dateStr}</span>
@@ -2246,15 +2207,15 @@ const promptOpenCash = async () => {
 
         <div class="totals-area nums">
             ${(isFiscal || totalBsBase > 0) ? `
-                <div class="total-row"><span class="total-label">Subtotal Exento:</span><span class="total-val">${totalBsExento.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
-                <div class="total-row"><span class="total-label">Base Imponible:</span><span class="total-val">${totalBsBase.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
-                <div class="total-row"><span class="total-label">IVA (16%):</span><span class="total-val">${ivaBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
+                <div class="total-row"><span class="total-label">Subtotal Exento:</span><span class="total-val">${formatBs(totalBsExento)}</span></div>
+                <div class="total-row"><span class="total-label">Base Imponible:</span><span class="total-val">${formatBs(totalBsBase)}</span></div>
+                <div class="total-row"><span class="total-label">IVA (16%):</span><span class="total-val">${formatBs(ivaBs)}</span></div>
                 <div class="divider" style="border-style: solid; opacity: 0.5;"></div>
             ` : ''}
 
             <div class="final-total">
                 <span class="black">TOTAL BS</span>
-                <span class="black" style="font-size:18px;">${totalGeneralBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                <span class="black" style="font-size:18px;">${formatBs(totalGeneralBs)}</span>
             </div>
             <div class="ref-total bold">REF: $${totalGeneralRef.toFixed(2)}</div>
             <div class="ref-total" style="font-size:9px;">Tasa de Cambio BCV: Bs ${rate.toFixed(2)}</div>
