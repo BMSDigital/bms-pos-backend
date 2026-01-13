@@ -1207,7 +1207,7 @@ app.post('/api/cash/open', async (req, res) => {
     }
 });
 
-// 2. Consultar Estado Actual de la Caja (BLINDADO: Regex flexible y Tasa asegurada)
+// 2. Consultar Estado Actual de la Caja (ADAPTACIÓN QUIRÚRGICA: Pagos Mixtos + Avances)
 app.get('/api/cash/current-status', async (req, res) => {
     try {
         const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' ORDER BY id DESC LIMIT 1");
@@ -1232,32 +1232,24 @@ app.get('/api/cash/current-status', async (req, res) => {
         };
 
         salesRes.rows.forEach(row => {
-            // Normalizamos el método de pago a mayúsculas para facilitar comparaciones
-            const pm = (row.payment_method || '').toUpperCase();
+            const pmRaw = row.payment_method || ''; // Mantenemos el original para split
+            const pm = pmRaw.toUpperCase();
             const amount = parseFloat(row.amount_paid_usd || 0);
             
-            // [CORRECCIÓN 1]: Asegurar Tasa. Si es 0 o null, usar la global.
+            // [CORRECCIÓN 1]: Asegurar Tasa
             const rateSnapshot = parseFloat(row.bcv_rate_snapshot);
             const rate = (rateSnapshot && rateSnapshot > 0) ? rateSnapshot : (globalBCVRate || 1);
 
-            // [CORRECCIÓN 2]: Lógica de Resta de Avance BLINDADA
-            // Usamos una Regex más flexible que permite espacios: [CAP: 20.00] o [CAP:20.00]
+            // [CORRECCIÓN 2]: Lógica de Resta de Avance (Tu código original blindado)
             if (pm.includes('[CAP:')) {
                 try {
-                    // Busca [CAP: seguido de números, puntos o comas
                     const match = pm.match(/\[CAP:\s*([\d\.,]+)\]/);
                     if (match && match[1]) {
-                        // Reemplazamos coma por punto por si acaso viene con formato europeo
                         const capitalStr = match[1].replace(',', '.');
                         const capitalUSD = parseFloat(capitalStr);
-
                         if (!isNaN(capitalUSD) && capitalUSD > 0) {
                             const capitalVES = capitalUSD * rate;
-                            
-                            // RESTAMOS DE LA CAJA FÍSICA
                             systemTotals.cash_ves -= capitalVES;
-
-                            console.log(`📉 Cierre Caja: Restado Bs ${capitalVES.toFixed(2)} por Avance de $${capitalUSD}`);
                         }
                     }
                 } catch (e) {
@@ -1265,15 +1257,41 @@ app.get('/api/cash/current-status', async (req, res) => {
                 }
             }
 
-            // [LÓGICA DE SUMA DE ENTRADAS]
-            if (pm.includes('DONACIÓN') || pm.includes('DONACION') || pm.includes('REGALO')) {
-                systemTotals.donations += amount;
+            // [EXCLUSIONES]
+            if (pm.includes('DONACIÓN') || pm.includes('REGALO')) { 
+                systemTotals.donations += amount; return; // Salimos del loop para este item
             }
-            else if (pm.includes('CRÉDITO') || pm.includes('CREDITO')) {
-                if (amount === 0) systemTotals.credits += 0;
+            if ((pm.includes('CRÉDITO') || pm.includes('CREDITO')) && !pm.includes('+')) {
+                if (amount === 0) systemTotals.credits += 0; return;
             }
-            else {
-                // Sumamos según el método de pago
+
+            // [LÓGICA DE SUMA DE ENTRADAS - AHORA CON SOPORTE PARA MIXTOS]
+            if (pm.includes(' + ')) {
+                // ---> CASO MIXTO (La nueva funcionalidad quirúrgica)
+                const parts = pmRaw.split(' + '); // Usamos pmRaw para mantener casing original si fuera necesario
+                parts.forEach(part => {
+                    const partUp = part.toUpperCase();
+                    // Extraemos el monto numérico del texto "Metodo: Bs 500"
+                    const matchNum = part.match(/:\s*(?:Bs\.?|USD|\$|Ref)?\s*([\d\.,]+)/i);
+                    
+                    if (matchNum && matchNum[1]) {
+                        // El valor viene en la moneda del método, no en USD global de la venta
+                        let val = parseFloat(matchNum[1].replace(',', '.')); 
+                        
+                        // Sumamos directo al saco correspondiente
+                        if (partUp.includes('EFECTIVO') && (partUp.includes('USD') || partUp.includes('REF'))) {
+                            systemTotals.cash_usd += val;
+                        } 
+                        else if (partUp.includes('EFECTIVO') && (partUp.includes('BS') || partUp.includes('BOLIVARES'))) {
+                            systemTotals.cash_ves += val;
+                        }
+                        else if (partUp.includes('ZELLE')) systemTotals.zelle += val;
+                        else if (partUp.includes('PAGO MÓVIL') || partUp.includes('MOVIL')) systemTotals.pm += val;
+                        else if (partUp.includes('PUNTO') || partUp.includes('TARJETA') || partUp.includes('DEBITO')) systemTotals.punto += val;
+                    }
+                });
+            } else {
+                // ---> CASO SIMPLE (Tu lógica original intacta)
                 if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) {
                     systemTotals.cash_usd += amount;
                 } else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) {
@@ -1300,6 +1318,7 @@ app.get('/api/cash/current-status', async (req, res) => {
     }
 });
 
+// Paso 3: Corrección en "Cerrar Caja" (/api/cash/close) - SOPORTE MIXTO Y AVANCES
 app.post('/api/cash/close', async (req, res) => {
     const { declared, notes } = req.body; 
     
@@ -1319,21 +1338,65 @@ app.post('/api/cash/close', async (req, res) => {
 
         let sys = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
         
+        // --- INICIO DE LÓGICA BLINDADA (Reemplazo del forEach anterior) ---
         salesRes.rows.forEach(row => {
-            const pm = (row.payment_method || '').toUpperCase();
+            const pmRaw = row.payment_method || '';
+            const pm = pmRaw.toUpperCase();
             const paid = parseFloat(row.amount_paid_usd || 0);
-            const rate = parseFloat(row.bcv_rate_snapshot || 0);
+            
+            // Aseguramos la tasa (igual que en el paso 2)
+            const rateSnapshot = parseFloat(row.bcv_rate_snapshot);
+            const rate = (rateSnapshot && rateSnapshot > 0) ? rateSnapshot : (globalBCVRate || 1);
 
-            // Excluir Donaciones y Créditos del "Sistema Espera" (Dinero)
+            // 1. EXCLUSIONES (Donaciones y Créditos puros)
             if (pm.includes('DONACIÓN') || pm.includes('DONACION') || pm.includes('REGALO')) return;
-            if (pm.includes('CRÉDITO') || pm.includes('CREDITO')) return; // Asumiendo que amount_paid_usd es 0 si es full crédito
+            if ((pm.includes('CRÉDITO') || pm.includes('CREDITO')) && !pm.includes('+')) return;
 
-            if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) sys.cash_usd += paid;
-            else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) sys.cash_ves += (paid * rate);
-            else if (pm.includes('ZELLE')) sys.zelle += paid;
-            else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) sys.pm += (paid * rate);
-            else if (pm.includes('PUNTO') || pm.includes('TARJETA')) sys.punto += (paid * rate);
+            // 2. RESTA DE AVANCES (Para que la caja cuadre al contar los billetes)
+            if (pm.includes('[CAP:')) {
+                try {
+                    const match = pm.match(/\[CAP:\s*([\d\.,]+)\]/);
+                    if (match && match[1]) {
+                        const capital = parseFloat(match[1].replace(',', '.'));
+                        // Restamos el capital entregado de la cuenta de Efectivo Bs
+                        if (!isNaN(capital)) sys.cash_ves -= (capital * rate);
+                    }
+                } catch (e) {}
+            }
+
+            // 3. DISTRIBUCIÓN DE PAGOS (Mixtos vs Simples)
+            if (pm.includes(' + ')) {
+                // ---> CASO MIXTO (La corrección clave)
+                const parts = pmRaw.split(' + ');
+                parts.forEach(part => {
+                    const partUp = part.toUpperCase();
+                    // Extraemos monto exacto del string (ej: "Punto: Bs 500")
+                    const matchNum = part.match(/:\s*(?:Bs\.?|USD|\$|Ref)?\s*([\d\.,]+)/i);
+
+                    if (matchNum && matchNum[1]) {
+                        let val = parseFloat(matchNum[1].replace(',', '.'));
+
+                        if (partUp.includes('EFECTIVO') && (partUp.includes('USD') || partUp.includes('REF'))) {
+                            sys.cash_usd += val;
+                        } 
+                        else if (partUp.includes('EFECTIVO') && (partUp.includes('BS') || partUp.includes('BOLIVARES'))) {
+                            sys.cash_ves += val;
+                        }
+                        else if (partUp.includes('ZELLE')) sys.zelle += val;
+                        else if (partUp.includes('PAGO MÓVIL') || partUp.includes('MOVIL')) sys.pm += val;
+                        else if (partUp.includes('PUNTO') || partUp.includes('TARJETA') || partUp.includes('DEBITO')) sys.punto += val;
+                    }
+                });
+            } else {
+                // ---> CASO SIMPLE (Tu lógica original mejorada con tasa segura)
+                if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) sys.cash_usd += paid;
+                else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) sys.cash_ves += (paid * rate);
+                else if (pm.includes('ZELLE')) sys.zelle += paid;
+                else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) sys.pm += (paid * rate);
+                else if (pm.includes('PUNTO') || pm.includes('TARJETA') || pm.includes('DEBITO')) sys.punto += (paid * rate);
+            }
         });
+        // --- FIN DE LÓGICA BLINDADA ---
 
         const expected_usd = parseFloat(shift.initial_cash_usd) + sys.cash_usd;
         const expected_ves = parseFloat(shift.initial_cash_ves) + sys.cash_ves;
