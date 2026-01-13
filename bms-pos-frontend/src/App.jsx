@@ -2247,7 +2247,7 @@ const promptOpenCash = async () => {
     `;
     };
 
-    // FUNCIÓN UNIFICADA DE PROCESAMIENTO (BLINDADA CONTRA ERRORES DE PAGO Y VISUALIZACIÓN)
+    // FUNCIÓN UNIFICADA DE PROCESAMIENTO (ADAPTADA: SOPORTE PARA CRÉDITO MIXTO / PARCIAL)
     const processSale = async (isCreditFlow = false) => {
         
         // --- 1. DETECCIÓN ROBUSTA DEL TIPO DE VENTA ---
@@ -2335,11 +2335,12 @@ const promptOpenCash = async () => {
 
         // --- 3. DEFINICIÓN DE ESTATUS ---
         let currentStatus = 'PAGADO'; 
-        if (isCreditSale) currentStatus = 'PENDIENTE';
+        if (isCreditSale) currentStatus = 'PENDIENTE'; // El backend lo cambiará a PARCIAL si enviamos dinero
         if (isDonationSale) currentStatus = 'DONADO'; 
 
-        // --- 4. DESCRIPCIÓN DEL PAGO ---
+        // --- 4. DESCRIPCIÓN DEL PAGO Y CÁLCULO DE ABONO INICIAL ---
         let paymentDescription = '';
+        let initialCashPayment = 0; // [NUEVO] Variable para calcular el abono inicial
         
         if (isDonationSale) {
             paymentDescription = 'DONACIÓN (Salida de Inventario)';
@@ -2348,8 +2349,18 @@ const promptOpenCash = async () => {
             
             if (activeMethods.length > 0) {
                 paymentDescription = activeMethods.map(m => {
-                    const amt = paymentShares[m];
+                    const amt = parseFloat(paymentShares[m]);
                     const methodData = paymentMethods.find(pm => pm.name === m);
+                    
+                    // [NUEVA LÓGICA] Si es Crédito Mixto, sumamos los pagos reales para enviarlos al backend
+                    if (isCreditSale && m !== 'Crédito' && m !== 'Donación') {
+                        if (methodData?.currency === 'Ref') {
+                            initialCashPayment += amt;
+                        } else {
+                            initialCashPayment += (amt / bcvRate);
+                        }
+                    }
+
                     const symbol = methodData?.currency === 'Ref' ? 'Ref' : 'Bs'; 
                     return `${m}: ${symbol}${amt}`; 
                 }).join(' + ');
@@ -2371,6 +2382,9 @@ const promptOpenCash = async () => {
                 })),
                 
                 is_credit: isCreditSale,
+                // [NUEVO] ENVIAMOS EL ABONO INICIAL (Esto activa el estatus PARCIAL en el servidor)
+                amount_paid: isCreditSale ? initialCashPayment.toFixed(2) : null,
+
                 customer_data: (isCreditSale || isFiscalInvoice || isDonationSale) ? customerData : null,
                 due_days: isCreditSale ? dueDays : null,
                 invoice_type: isFiscalInvoice ? 'FISCAL' : 'TICKET',
@@ -2396,7 +2410,6 @@ const promptOpenCash = async () => {
 
             // Visualización Previa (CORREGIDA PARA ENVIAR DETALLES DE PAGO)
             if (isFiscalInvoice) {
-                // Aquí pasamos TODOS los parámetros requeridos, incluyendo paymentDescription al final
                 const html = generateReceiptHTML(
                     saleId || '000', 
                     customerData, 
@@ -2406,7 +2419,7 @@ const promptOpenCash = async () => {
                     new Date(), 
                     finalTotalUSD, 
                     bcvRate, 
-                    paymentDescription // <--- ESTE ES EL DATO CLAVE QUE FALTABA
+                    paymentDescription 
                 );
                 setReceiptPreview(html);
             }

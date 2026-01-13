@@ -217,7 +217,7 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// 4. PROCESAR VENTA (INTEGRADO: LOTES, AVANCES, CLIENTES, CRÉDITO Y ETIQUETAS DE CAPITAL)
+// 4. PROCESAR VENTA (INTEGRADO: LOTES, AVANCES, CLIENTES, CRÉDITO MIXTO Y ETIQUETAS)
 app.post('/api/sales', async (req, res) => {
     const { 
         items, 
@@ -227,7 +227,8 @@ app.post('/api/sales', async (req, res) => {
         is_credit, 
         due_days, 
         invoice_type,
-        bcv_rate_snapshot 
+        bcv_rate_snapshot,
+        amount_paid // <--- [NUEVO] Recibimos el monto inicial pagado (si aplica)
     } = req.body;
 
     const client = await pool.connect();
@@ -236,14 +237,12 @@ app.post('/api/sales', async (req, res) => {
         await client.query('BEGIN'); // Iniciar transacción
 
         // --- 1. LÓGICA DE CLIENTE (GLOBAL) ---
-        // Sacada del "if" para que siempre funcione, sea Crédito, Contado o Fiscal.
         let finalCustomerId = null;
         if (customer_id) {
             finalCustomerId = customer_id;
         } else if (customer_data && customer_data.id) {
             finalCustomerId = customer_data.id;
         } 
-        // Recuperamos la capacidad de crear cliente al vuelo si tienes la función auxiliar
         else if (customer_data && typeof findOrCreateCustomer === 'function') {
              finalCustomerId = await findOrCreateCustomer(client, customer_data);
         }
@@ -252,36 +251,32 @@ app.post('/api/sales', async (req, res) => {
         let subtotalTaxableUsd = 0;
         let subtotalExemptUsd = 0;
 
-        // [NUEVO] VARIABLE PARA ACUMULAR LAS ETIQUETAS DE CAPITAL (Ej: " [CAP:50.00]")
+        // VARIABLE PARA ACUMULAR LAS ETIQUETAS DE CAPITAL
         let capitalTags = "";
 
         // --- 2. PRE-PROCESAMIENTO DE ITEMS (AVANCES) ---
-        // Aquí detectamos si es un servicio o avance antes de tocar stock
         const processedItems = [];
 
         for (const item of items) {
             let finalProductId = item.product_id;
             let isService = false;
 
-            // [NUEVO] DETECTAR ETIQUETA [CAP:...] EN EL NOMBRE QUE VIENE DEL FRONTEND
-            // Y guardarla en una variable para pegarla en la venta después.
+            // DETECTAR ETIQUETA [CAP:...] EN EL NOMBRE
             if (item.name && item.name.includes('[CAP:')) {
                 const match = item.name.match(/\[CAP:([\d\.]+)\]/);
                 if (match) {
-                    capitalTags += ` ${match[0]}`; // Acumulamos la etiqueta
+                    capitalTags += ` ${match[0]}`; 
                 }
             }
 
-            // DETECTAR SI ES UN AVANCE DE EFECTIVO (ID texto o empieza con ADV)
+            // DETECTAR SI ES UN AVANCE DE EFECTIVO
             if (isNaN(finalProductId) || (typeof finalProductId === 'string' && finalProductId.startsWith('ADV'))) {
                 
-                // 2.1 Buscar si ya existe el producto comodín "AVANCE DE EFECTIVO"
                 const serviceCheck = await client.query("SELECT id FROM products WHERE name = 'AVANCE DE EFECTIVO' LIMIT 1");
                 
                 if (serviceCheck.rows.length > 0) {
                     finalProductId = serviceCheck.rows[0].id;
                 } else {
-                    // 2.2 Si no existe, LO CREAMOS automáticamente
                     console.log("⚠️ Creando producto comodín 'AVANCE DE EFECTIVO'...");
                     const newService = await client.query(`
                         INSERT INTO products (name, category, price_usd, stock, is_taxable, status)
@@ -290,10 +285,9 @@ app.post('/api/sales', async (req, res) => {
                     `);
                     finalProductId = newService.rows[0].id;
                 }
-                isService = true; // Marcar para no descontar stock
+                isService = true; 
             }
 
-            // Guardamos el item corregido para usarlo abajo
             processedItems.push({ 
                 ...item, 
                 product_id: finalProductId, 
@@ -304,7 +298,6 @@ app.post('/api/sales', async (req, res) => {
 
         // --- 3. PROCESAR INVENTARIO (LOTES / FEFO) ---
         for (const item of processedItems) {
-            // Si es servicio (Avance), saltamos el descuento de inventario
             if (item.is_service) {
                 subtotalExemptUsd += parseFloat(item.price_usd) * parseInt(item.quantity);
                 continue; 
@@ -314,18 +307,17 @@ app.post('/api/sales', async (req, res) => {
             let qtyToDeduct = parseInt(item.quantity);
             const itemTotalBase = parseFloat(item.price_usd) * qtyToDeduct;
 
-            // 3.1 Calcular Subtotales Financieros
             if (item.is_taxable) subtotalTaxableUsd += itemTotalBase;
             else subtotalExemptUsd += itemTotalBase;
 
-            // 3.2 Buscar Lotes (FEFO: Primero en vencer, primero en salir)
+            // Buscar Lotes (FEFO)
             const batchesRes = await client.query(`
                 SELECT id, stock FROM product_batches 
                 WHERE product_id = $1 AND stock > 0 
                 ORDER BY expiration_date ASC NULLS LAST
             `, [productId]);
 
-            // 3.3 Descuento FEFO
+            // Descuento FEFO
             let remainingQty = qtyToDeduct;
             for (let batch of batchesRes.rows) {
                 if (remainingQty <= 0) break;
@@ -334,7 +326,7 @@ app.post('/api/sales', async (req, res) => {
                 remainingQty -= take;
             }
 
-            // 3.4 Actualizar Stock Total Maestro
+            // Actualizar Stock Maestro
             if (batchesRes.rows.length > 0) {
                  const finalStockRes = await client.query('SELECT COALESCE(SUM(stock), 0) as total FROM product_batches WHERE product_id = $1', [productId]);
                  const finalTotal = parseInt(finalStockRes.rows[0].total);
@@ -355,15 +347,25 @@ app.post('/api/sales', async (req, res) => {
         let dueDate = null;
         let amountPaidUsd = finalTotalUsd; 
         
-        // Lógica de Crédito (CORREGIDA)
+        // Lógica de Crédito (CORREGIDA PARA PAGOS MIXTOS)
         if (is_credit) {
             // Validación obligatoria
             if (!finalCustomerId) {
                 throw new Error("No se puede procesar venta a CRÉDITO sin seleccionar un Cliente.");
             }
 
-            saleStatus = 'PENDIENTE';
-            amountPaidUsd = 0; // CLAVE: Esto evita que sume al reporte diario de caja
+            // [LÓGICA MIXTA]: Usamos amount_paid si viene del frontend, sino es 0
+            const initialPayment = amount_paid ? parseFloat(amount_paid) : 0;
+
+            if (initialPayment > 0 && initialPayment < finalTotalUsd) {
+                // CASO 1: Paga una parte y debe el resto (Mixto)
+                saleStatus = 'PARCIAL';
+                amountPaidUsd = initialPayment; // A CAJA entra solo lo que pagó
+            } else {
+                // CASO 2: Crédito Total (No paga nada ahora)
+                saleStatus = 'PENDIENTE';
+                amountPaidUsd = 0; 
+            }
             
             const days = due_days ? parseInt(due_days) : 15;
             const date = new Date();
@@ -371,8 +373,7 @@ app.post('/api/sales', async (req, res) => {
             dueDate = date;
         }
 
-        // [NUEVO] CONCATENAR ETIQUETAS AL MÉTODO DE PAGO
-        // Así guardamos: "EFECTIVO USD [CAP:20.00]"
+        // Concatenar etiquetas al método de pago
         const finalPaymentMethod = (payment_method || 'CONTADO') + capitalTags;
 
         // --- 5. INSERTAR VENTA ---
@@ -386,7 +387,6 @@ app.post('/api/sales', async (req, res) => {
             RETURNING id
         `;
         
-        // [MODIFICADO] Usamos finalPaymentMethod en lugar de payment_method
         const saleValues = [
             finalTotalUsd.toFixed(2), totalVes.toFixed(2), rateToUse, finalPaymentMethod, saleStatus, finalCustomerId, dueDate,
             subtotalTaxableUsd.toFixed(2), subtotalExemptUsd.toFixed(2), IVA_RATE, ivaUsd.toFixed(2), amountPaidUsd.toFixed(2),
@@ -396,15 +396,13 @@ app.post('/api/sales', async (req, res) => {
         const saleResult = await client.query(saleQuery, saleValues);
         const saleId = saleResult.rows[0].id;
 
-        // --- 6. INSERTAR DETALLES Y KARDEX (Usando items procesados) ---
+        // --- 6. INSERTAR DETALLES Y KARDEX ---
         for (const item of processedItems) {
-            // A. Insertar Item de Venta
             await client.query(
                 `INSERT INTO sale_items (sale_id, product_id, quantity, price_at_moment_usd) VALUES ($1, $2, $3, $4)`,
                 [saleId, item.product_id, item.quantity, item.price_usd] 
             );
 
-            // B. Registrar Movimiento SOLO si no es servicio
             if (!item.is_service) {
                 const stockCheck = await client.query('SELECT stock FROM products WHERE id = $1', [item.product_id]);
                 const currentStockLog = stockCheck.rows[0] ? stockCheck.rows[0].stock : 0;
@@ -417,7 +415,7 @@ app.post('/api/sales', async (req, res) => {
         }
 
         await client.query('COMMIT');
-        console.log(`✅ Venta #${saleId} | Status: ${saleStatus} | Cliente: ${finalCustomerId || 'Consumidor Final'}`);
+        console.log(`✅ Venta #${saleId} | Status: ${saleStatus} | Pagado: $${amountPaidUsd.toFixed(2)}`);
         res.json({ success: true, saleId, message: 'Venta exitosa' });
 
     } catch (error) {
