@@ -389,102 +389,6 @@ function App() {
         });
     };
 	
-	// [NUEVO] FUNCIÓN DE VALIDACIÓN DE FONDOS PARA AVANCES
-    // Ubicación: Pegar esto antes del "return (" del componente App
-    const validateAndAddAdvance = async (e) => {
-        e.preventDefault(); // Evita que se recargue la página
-
-        // 1. Validaciones básicas
-        if (!advanceData.amountBs || parseFloat(advanceData.amountBs) <= 0) {
-            return Swal.fire('Error', 'Ingrese un monto válido', 'warning');
-        }
-
-        const requestedBs = parseFloat(advanceData.amountBs);
-
-        // 2. Consultar disponibilidad REAL en caja (Backend)
-        try {
-            Swal.fire({ 
-                title: 'Verificando fondos...', 
-                didOpen: () => Swal.showLoading(),
-                background: '#fff',
-                showConfirmButton: false
-            });
-            
-            const res = await axios.get(`${API_URL}/cash/current-status`);
-            Swal.close();
-
-            const status = res.data;
-            
-            // Si la caja no está abierta, no se puede sacar dinero
-            if (status.status !== 'ABIERTA') {
-                return Swal.fire('Caja Cerrada', 'Debe realizar la apertura de caja primero.', 'warning');
-            }
-
-            const sys = status.system_totals;
-            const initial = status.shift_info;
-
-            // --- FÓRMULA DE DISPONIBILIDAD ---
-            // (Base Inicial + Ventas Efectivo) - (Salidas Efectivo ya realizadas)
-            const cashInBs = parseFloat(initial.initial_cash_ves) + sys.cash_ves;
-            const cashOutBs = sys.cash_outflows_ves || 0;
-            const availableBs = cashInBs - cashOutBs;
-
-            // 3. COMPARAR: ¿Tengo suficiente billete?
-            if (requestedBs > availableBs) {
-                return Swal.fire({
-                    icon: 'error',
-                    title: '🚫 Fondos Insuficientes',
-                    html: `
-                        <div class="text-left font-sans">
-                            <p class="mb-3 text-slate-600">No hay suficiente efectivo físico en la gaveta.</p>
-                            <div class="bg-red-50 p-3 rounded border border-red-100 text-sm text-red-800">
-                                <p><strong>Solicitado:</strong> Bs ${requestedBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
-                                <p><strong>Disponible:</strong> Bs ${availableBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
-                                <hr class="border-red-200 my-1"/>
-                                <p><strong>Faltante:</strong> Bs ${(requestedBs - availableBs).toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
-                            </div>
-                            <p class="mt-2 text-xs text-slate-400 text-center">Debe ingresar más ventas en efectivo primero.</p>
-                        </div>
-                    `,
-                    confirmButtonColor: '#ef4444'
-                });
-            }
-
-            // 4. SI HAY FONDOS -> AGREGAR AL CARRITO (Tu lógica original)
-            const commissionAmount = requestedBs * (parseFloat(advanceData.commission) / 100);
-            const totalWithCommission = requestedBs + commissionAmount;
-            
-            addToCart({
-                id: `ADV-${Date.now()}`,
-                name: 'Avance de Efectivo',
-                // El precio base para el sistema es la comisión (ganancia), 
-                // pero guardamos la metadata del avance para el cierre.
-                price_usd: totalWithCommission / bcvRate, 
-                price_bs: totalWithCommission,
-                is_advance: true,
-                advance_amount_bs: requestedBs, // Lo que sale de caja
-                commission_bs: commissionAmount, // Lo que ganamos
-                commission_percent: advanceData.commission
-            });
-
-            // 5. CERRAR MODAL Y LIMPIAR
-            setShowAdvanceModal(false);
-            setAdvanceData({ amountBs: '', commission: 10 });
-            
-            Swal.fire({
-                icon: 'success',
-                title: 'Validado',
-                text: 'Avance agregado al carrito correctamente.',
-                timer: 1500,
-                showConfirmButton: false
-            });
-
-        } catch (error) {
-            console.error(error);
-            Swal.fire('Error', 'Error de conexión al verificar caja.', 'error');
-        }
-    };
-
     // 💡 MEJORA UX: Rango de fechas AUTOMÁTICO (Desde el 1° del mes hasta Hoy)
     const [reportDateRange, setReportDateRange] = useState(() => {
         const now = new Date();
@@ -4352,6 +4256,90 @@ const printClosingReport = (shift) => {
 
     doc.save(`Cierre_Fiscal_${shift.id}.pdf`);
 };
+
+// =========================================================================
+    //  FUNCIÓN CORREGIDA: VALIDAR Y AGREGAR AVANCE DE EFECTIVO
+    //  Ubicación: Pegar DENTRO del componente App, antes del "return ("
+    // =========================================================================
+    const validateAndAddAdvance = async (e) => {
+        e.preventDefault(); 
+
+        // 1. Validaciones
+        if (!advanceData.amountBs || parseFloat(advanceData.amountBs) <= 0) {
+            return Swal.fire('Error', 'Ingrese un monto válido', 'warning');
+        }
+
+        const requestedBs = parseFloat(advanceData.amountBs);
+
+        try {
+            Swal.fire({ title: 'Verificando fondos...', didOpen: () => Swal.showLoading(), showConfirmButton: false });
+            
+            // 2. Verificar Caja (Corregido para usar tu API_URL real)
+            const res = await axios.get(`${API_URL}/cash/current-status`);
+            Swal.close();
+
+            const status = res.data;
+            if (status.status !== 'ABIERTA') {
+                return Swal.fire('Caja Cerrada', 'Debe realizar la apertura de caja primero.', 'warning');
+            }
+
+            // 3. Calcular Disponibilidad
+            const sys = status.system_totals;
+            const initial = status.shift_info;
+            const cashInBs = parseFloat(initial.initial_cash_ves) + (sys.cash_ves || 0);
+            const cashOutBs = sys.cash_outflows_ves || 0;
+            const availableBs = cashInBs - cashOutBs;
+
+            if (requestedBs > availableBs) {
+                return Swal.fire({
+                    icon: 'error',
+                    title: '🚫 Fondos Insuficientes',
+                    text: `Disponible en caja: Bs ${availableBs.toLocaleString('es-VE', {minimumFractionDigits: 2})}`,
+                    confirmButtonColor: '#ef4444'
+                });
+            }
+
+            // 4. Agregar al Carrito
+            const commissionAmount = requestedBs * (parseFloat(advanceData.commission) / 100);
+            const totalWithCommission = requestedBs + commissionAmount;
+            
+            // Lógica de cálculo en USD
+            const totalInUsd = totalWithCommission / bcvRate;
+            const capitalInUsd = requestedBs / bcvRate; // Para etiqueta CAP
+
+            addToCart({
+                id: `ADV-${Date.now()}`,
+                name: `🔴 AVANCE EFECTIVO [CAP:${capitalInUsd.toFixed(2)}] (Entregar: Bs ${formatBs(requestedBs)})`,
+                price_usd: totalInUsd.toFixed(2), 
+                price_bs: formatBs(totalWithCommission),
+                is_advance: true,
+                stock: 999,
+                icon_emoji: "💸",
+                is_taxable: false,
+                quantity: 1,
+                category: "Servicios"
+            });
+
+            // 5. CERRAR MODAL (AQUÍ ESTABA EL ERROR)
+            // Corregido: Usamos el nombre real de tu variable de estado
+            setIsCashAdvanceOpen(false); 
+            
+            setAdvanceData({ amountBs: '', commission: 10 });
+            
+            Swal.fire({
+                icon: 'success',
+                title: 'Listo',
+                text: `Entregar Bs ${formatBs(requestedBs)} al cliente.`,
+                timer: 2000,
+                showConfirmButton: false
+            });
+
+        } catch (error) {
+            console.error("Error al procesar avance:", error);
+            // Mensaje de error real para que sepas qué pasa
+            Swal.fire('Error', `Fallo técnico: ${error.message}`, 'error');
+        }
+    };
 
     return (
         <div className="flex h-screen bg-[#F8FAFC] font-sans overflow-hidden text-gray-800">
