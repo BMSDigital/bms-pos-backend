@@ -5360,7 +5360,7 @@ const printClosingReport = (shift) => {
                             +
                         </button>
 
-                        {/* --- MODAL FORMULARIO DE CLIENTE (MANTENIDO IGUAL) --- */}
+                        {/* --- MODAL FORMULARIO DE CLIENTE (ADAPTADO QUIRÚRGICAMENTE) --- */}
                         {isCustomerFormOpen && (
                             <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
                                 <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-scale-up overflow-hidden">
@@ -5415,15 +5415,36 @@ const printClosingReport = (shift) => {
                                                 </div>
                                             </div>
 
-                                            <label className="text-xs font-bold text-gray-500 ml-1 mb-1 block">Dirección / Institución</label>
-                                            <input
-                                                type="text"
-                                                name="institution"
-                                                placeholder="Ej: Av. 20 con calle 10..."
-                                                value={customerForm.institution}
-                                                onChange={handleCustomerFormChange}
-                                                className="w-full border-2 border-gray-100 p-3 rounded-xl mb-4 focus:border-higea-blue outline-none"
-                                            />
+                                            {/* --- AQUÍ ESTÁ EL CAMBIO QUIRÚRGICO DEL FORMULARIO --- */}
+                                            <div className="mb-4">
+                                                <label className="block text-xs font-bold text-gray-500 ml-1 mb-1 flex justify-between">
+                                                    <span>Dirección / Domicilio Fiscal</span>
+                                                    <span className="text-[10px] text-emerald-600 font-normal self-end">
+                                                        * Obligatorio si pide Factura Fiscal
+                                                    </span>
+                                                </label>
+                                                <div className="relative">
+                                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                        </svg>
+                                                    </div>
+                                                    <input
+                                                        type="text"
+                                                        name="institution"
+                                                        placeholder="EJ: AV. 20 ENTRE CALLES 30 Y 31 (O SEDE HOSPITAL)"
+                                                        value={customerForm.institution || ''}
+                                                        onChange={(e) => setCustomerForm({ ...customerForm, institution: e.target.value.toUpperCase() })}
+                                                        className="w-full pl-10 pr-4 py-3 border-2 border-gray-100 rounded-xl focus:border-higea-blue outline-none uppercase transition-all"
+                                                    />
+                                                </div>
+                                                <p className="text-[10px] text-slate-400 mt-1 ml-1">
+                                                    Si es <b>Factura</b>: Ingrese Dirección Fiscal exacta. <br />
+                                                    Si es <b>Donación o Credito</b>: Ingrese Sede o Ubicación de entrega.
+                                                </p>
+                                            </div>
+                                            {/* --------------------------------------------------- */}
 
                                             <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 mb-6">
                                                 <label className="text-xs font-bold text-gray-500 block mb-2">Estatus del Cliente</label>
