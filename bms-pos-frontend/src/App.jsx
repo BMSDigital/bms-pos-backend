@@ -4258,13 +4258,12 @@ const printClosingReport = (shift) => {
 };
 
 // =========================================================================
-    //  FUNCIÓN CORREGIDA: VALIDAR Y AGREGAR AVANCE DE EFECTIVO
-    //  Ubicación: Pegar DENTRO del componente App, antes del "return ("
+    //  FUNCIÓN DE AVANCE (CORRECCIÓN: PRECISIÓN DECIMAL EXACTA)
+    //  Ubicación: Dentro de App, antes del return. Reemplaza la anterior.
     // =========================================================================
     const validateAndAddAdvance = async (e) => {
         e.preventDefault(); 
 
-        // 1. Validaciones
         if (!advanceData.amountBs || parseFloat(advanceData.amountBs) <= 0) {
             return Swal.fire('Error', 'Ingrese un monto válido', 'warning');
         }
@@ -4274,7 +4273,6 @@ const printClosingReport = (shift) => {
         try {
             Swal.fire({ title: 'Verificando fondos...', didOpen: () => Swal.showLoading(), showConfirmButton: false });
             
-            // 2. Verificar Caja (Corregido para usar tu API_URL real)
             const res = await axios.get(`${API_URL}/cash/current-status`);
             Swal.close();
 
@@ -4283,7 +4281,6 @@ const printClosingReport = (shift) => {
                 return Swal.fire('Caja Cerrada', 'Debe realizar la apertura de caja primero.', 'warning');
             }
 
-            // 3. Calcular Disponibilidad
             const sys = status.system_totals;
             const initial = status.shift_info;
             const cashInBs = parseFloat(initial.initial_cash_ves) + (sys.cash_ves || 0);
@@ -4299,18 +4296,25 @@ const printClosingReport = (shift) => {
                 });
             }
 
-            // 4. Agregar al Carrito
+            // 4. CÁLCULOS DE PRECISIÓN (El cambio clave está aquí)
             const commissionAmount = requestedBs * (parseFloat(advanceData.commission) / 100);
             const totalWithCommission = requestedBs + commissionAmount;
             
-            // Lógica de cálculo en USD
+            // NO usamos toFixed(2) aquí para no perder céntimos en la conversión.
+            // Usamos el valor flotante completo o con alta precisión (6 decimales)
             const totalInUsd = totalWithCommission / bcvRate;
-            const capitalInUsd = requestedBs / bcvRate; // Para etiqueta CAP
+            
+            // Para la etiqueta CAP (que lee el backend), usamos 4 decimales para que el cierre cuadre mejor
+            const capitalInUsd = requestedBs / bcvRate; 
 
             addToCart({
                 id: `ADV-${Date.now()}`,
-                name: `🔴 AVANCE EFECTIVO [CAP:${capitalInUsd.toFixed(2)}] (Entregar: Bs ${formatBs(requestedBs)})`,
-                price_usd: totalInUsd.toFixed(2), 
+                // En el nombre guardamos 4 decimales para que el backend reste con precisión
+                name: `🔴 AVANCE EFECTIVO [CAP:${capitalInUsd.toFixed(4)}] (Entregar: Bs ${formatBs(requestedBs)})`,
+                
+                // AQUÍ LA SOLUCIÓN: Pasamos el número crudo o con alta precisión para que la vuelta a Bs sea exacta
+                price_usd: totalInUsd, 
+                
                 price_bs: formatBs(totalWithCommission),
                 is_advance: true,
                 stock: 999,
@@ -4320,10 +4324,7 @@ const printClosingReport = (shift) => {
                 category: "Servicios"
             });
 
-            // 5. CERRAR MODAL (AQUÍ ESTABA EL ERROR)
-            // Corregido: Usamos el nombre real de tu variable de estado
             setIsCashAdvanceOpen(false); 
-            
             setAdvanceData({ amountBs: '', commission: 10 });
             
             Swal.fire({
@@ -4336,7 +4337,6 @@ const printClosingReport = (shift) => {
 
         } catch (error) {
             console.error("Error al procesar avance:", error);
-            // Mensaje de error real para que sepas qué pasa
             Swal.fire('Error', `Fallo técnico: ${error.message}`, 'error');
         }
     };
