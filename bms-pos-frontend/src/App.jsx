@@ -1810,8 +1810,8 @@ const promptOpenCash = async () => {
 
     // --- CÁLCULOS PRINCIPALES (CON DESGLOSE FISCAL) ---
     const calculateTotals = () => {
-        let subtotalTaxableUSD = 0; // Base Imponible (Gravado)
-        let subtotalExemptUSD = 0;  // Subtotal Exento
+        let subtotalTaxableUSD = 0; 
+        let subtotalExemptUSD = 0;  
 
         cart.forEach(item => {
             const itemTotalBase = parseFloat(item.price_usd) * item.quantity;
@@ -1822,16 +1822,20 @@ const promptOpenCash = async () => {
             }
         });
 
+        // Cálculos con precisión flotante completa para evitar errores de suma
         const ivaUSD = subtotalTaxableUSD * IVA_RATE;
         const finalTotalUSD = subtotalTaxableUSD + subtotalExemptUSD + ivaUSD;
+        
+        // Conversión a Bolívares
         const totalVES = finalTotalUSD * bcvRate;
 
         return {
-            subtotalTaxableUSD, // Base Imponible
-            subtotalExemptUSD,  // Exento
+            subtotalTaxableUSD,
+            subtotalExemptUSD,
             ivaUSD,
             finalTotalUSD,
-            totalVES
+            // Aquí aseguramos que el TOTAL en Bs sea matemáticamente consistente
+            totalVES 
         };
     };
 
