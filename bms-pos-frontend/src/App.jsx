@@ -4683,9 +4683,12 @@ const printClosingReport = (shift) => {
 
                             <div className="p-5 bg-white border-t border-gray-100">
                                 <div className="flex justify-between mb-4 items-end">
-                                    <span className="text-sm text-gray-500">Total Final a Pagar</span>
-                                    <span className="text-2xl font-black text-higea-blue">Bs {totalVES.toLocaleString('es-VE', { maximumFractionDigits: 0 })}</span>
-                                </div>
+								<span className="text-sm text-gray-500">Total Final a Pagar</span>
+							{/* 👇 AHORA MOSTRAMOS LOS 2 DECIMALES EXACTOS */}
+								<span className="text-2xl font-black text-higea-blue">
+								Bs {totalVES.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+							</span>
+							</div>
                                 <button onClick={handleOpenPayment} className="w-full bg-higea-red text-white font-bold py-3 rounded-xl shadow-lg hover:bg-red-700">COBRAR (Ref {finalTotalUSD.toFixed(2)})</button>
                                 {/* 💡 MEJORA UX: Botón de Cancelar Venta */}
                                 {cart.length > 0 && (
