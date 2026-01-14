@@ -4760,12 +4760,49 @@ const printClosingReport = (shift) => {
                             </div>
                         </div>
 
-                        {/* ÚLTIMAS TRANSACCIONES (Adaptado: Estatus Diferenciado + Método de Pago) */}
+                        {/* ÚLTIMAS TRANSACCIONES (MEJORADO NIVEL 2: Header con Monitor Diario) */}
 <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-    <div className="p-5 border-b border-gray-100 flex justify-between items-center">
-        <h3 className="font-bold text-gray-800">Últimas Transacciones</h3>
-        <span className="text-xs text-gray-400">Mostrando últimas 10</span>
+    
+    {/* --- INICIO BLOQUE QUIRÚRGICO NUEVO --- */}
+    <div className="p-5 border-b border-gray-100 flex flex-wrap justify-between items-center gap-3">
+        
+        {/* Título y Subtítulo mejorados */}
+        <div className="flex flex-col">
+            <h3 className="font-bold text-gray-800 text-lg tracking-tight flex items-center gap-2">
+                Últimas Transacciones
+                <span className="hidden md:inline-block px-2 py-0.5 rounded-md bg-gray-100 text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+                    En Vivo
+                </span>
+            </h3>
+            <span className="text-[10px] font-medium text-gray-400 mt-0.5">
+                Vista rápida de los 10 movimientos más recientes
+            </span>
+        </div>
+
+        {/* BOTÓN UI/UX "MONITOR DIARIO" (Trigger del Modal existente) */}
+        <button 
+            onClick={openDailySalesDetail} 
+            className="group flex items-center gap-3 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-600 hover:text-white rounded-xl transition-all duration-300 border border-indigo-100 hover:border-transparent shadow-sm hover:shadow-indigo-200 hover:-translate-y-0.5 active:scale-95"
+            title="Ver detalle completo de operaciones de hoy (Reporte X)"
+        >
+            {/* Icono con fondo blanco suave */}
+            <div className="flex items-center justify-center w-8 h-8 bg-white group-hover:bg-white/20 rounded-lg shadow-sm transition-colors text-base">
+                📋
+            </div>
+            
+            {/* Texto jerarquizado */}
+            <div className="flex flex-col items-start leading-none pr-1">
+                <span className="text-[9px] opacity-70 font-bold uppercase mb-0.5 group-hover:text-indigo-100">
+                    Ver Listado de Hoy
+                </span>
+                <span className="text-xs font-black tracking-wide">
+                    MONITOR DIARIO
+                </span>
+            </div>
+        </button>
     </div>
+    {/* --- FIN BLOQUE QUIRÚRGICO --- */}
+
     <div className="overflow-x-auto">
         <table className="w-full text-left text-xs md:text-sm text-gray-600">
             <thead className="bg-gray-50 text-gray-400 uppercase font-bold">
@@ -7580,195 +7617,205 @@ const printClosingReport = (shift) => {
                 </div>
             )}
 
-            {/* MODAL: VENTAS DE HOY DETALLADAS (CORREGIDO: CÁLCULOS VISUALES RESTAN CAPITAL) */}
-            {showDailySalesModal && (
-                <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-                    <div className="bg-white rounded-3xl w-full max-w-3xl h-[85vh] flex flex-col shadow-2xl animate-scale-up overflow-hidden">
+            {/* --- MODAL MONITOR DE OPERACIONES (REPORTE X) [UI/UX NIVEL 2] --- */}
+{showDailySalesModal && (
+    <div className="fixed inset-0 z-[80] bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+        <div className="bg-[#F8FAFC] rounded-[2rem] w-full max-w-4xl h-[90vh] flex flex-col shadow-2xl shadow-black/50 animate-scale-up overflow-hidden ring-1 ring-white/20 relative">
+            
+            {/* 1. HEADER PREMIUM (Estilo Panel de Control) */}
+            <div className="px-8 py-6 bg-white border-b border-slate-100 flex justify-between items-center shrink-0 z-20">
+                <div>
+                    <h3 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
+                        <span className="bg-indigo-600 text-white w-8 h-8 rounded-lg flex items-center justify-center text-lg shadow-md shadow-indigo-200">📊</span>
+                        Monitor de Operaciones
+                    </h3>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1 ml-11">
+                        Reporte X (Preliminar) • {new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' })}
+                    </p>
+                </div>
+                
+                {/* Botón Cerrar Sutil */}
+                <button 
+                    onClick={() => setShowDailySalesModal(false)} 
+                    className="w-10 h-10 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors flex items-center justify-center font-bold"
+                >
+                    ✕
+                </button>
+            </div>
 
-                        {/* --- HEADER CON BOTÓN DE CUADRE --- */}
-                        <div className="p-6 border-b flex justify-between items-center bg-blue-50">
+            {/* 2. RESUMEN KPI (TARJETAS SUPERIORES) */}
+            {(() => {
+                // Cálculos en tiempo real para los KPIs (Reutilizando tu lógica robusta)
+                const validSales = dailySalesList.filter(s => s.status !== 'ANULADO');
+                const totalBs = validSales.reduce((acc, curr) => {
+                    let net = curr.amount_paid_usd;
+                    if (curr.payment_method?.includes('[CAP:')) {
+                        const m = curr.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                        if (m) net -= parseFloat(m[1]);
+                    }
+                    return acc + (net * (curr.bcv_rate_snapshot || bcvRate));
+                }, 0);
+                const totalRef = validSales.reduce((acc, curr) => {
+                    let net = curr.amount_paid_usd;
+                    if (curr.payment_method?.includes('[CAP:')) {
+                        const m = curr.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                        if (m) net -= parseFloat(m[1]);
+                    }
+                    return acc + net;
+                }, 0);
+
+                return (
+                    <div className="grid grid-cols-3 gap-4 px-8 py-6 bg-slate-50 border-b border-slate-200/50 shrink-0">
+                        {/* KPI 1: Transacciones */}
+                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-black text-sm">#</div>
                             <div>
-                                <h3 className="font-black text-2xl text-higea-blue">Cierre de Caja - HOY</h3>
-                                <p className="text-sm text-blue-400 font-medium">{new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                                {/* BOTÓN DE GESTIÓN DE CIERRE (NUEVO) */}
-                                <button
-                                    onClick={handleCashClose}
-                                    className="bg-higea-blue hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-2 animate-pulse"
-                                >
-                                    <span>📠</span> <span className="hidden sm:inline">Realizar Cuadre</span>
-                                </button>
-
-                                <button onClick={() => setShowDailySalesModal(false)} className="bg-white w-10 h-10 rounded-full text-blue-500 font-bold shadow-sm hover:bg-blue-100 transition-colors">✕</button>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Movimientos</p>
+                                <p className="text-2xl font-black text-slate-800">{validSales.length}</p>
                             </div>
                         </div>
-
-                        <div className="flex-1 overflow-y-auto p-0 bg-gray-50/50">
-                            <table className="w-full text-sm text-left border-collapse">
-                                <thead className="bg-white text-gray-400 uppercase text-[10px] font-bold tracking-wider sticky top-0 shadow-sm z-10 border-b border-gray-100">
-                                    <tr>
-                                        <th className="px-6 py-4 text-left">Hora</th>
-                                        <th className="px-6 py-4 text-left">Cliente</th>
-                                        <th className="px-6 py-4 text-left">Método Pago</th>
-                                        <th className="px-6 py-4 text-right">Total Ref</th>
-                                        <th className="px-6 py-4 text-center">Acción</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-50 bg-white">
-                                    {dailySalesList.map(sale => (
-                                        <tr
-                                            key={sale.id}
-                                            // ACCIÓN 1: Click en toda la fila abre el detalle
-                                            onClick={() => showSaleDetail(sale)}
-                                            className="hover:bg-blue-50/60 transition-colors group cursor-pointer"
-                                        >
-                                            {/* HORA (Fuente Mono para alineación perfecta) */}
-                                            <td className="px-6 py-4 text-gray-500 font-mono text-xs whitespace-nowrap align-middle">
-                                                {new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </td>
-
-                                            {/* CLIENTE */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <div className="flex flex-col">
-                                                    <span className="font-bold text-gray-700 text-sm">{sale.full_name || 'Consumidor Final'}</span>
-                                                    <span className="text-[10px] text-gray-400 font-medium">ID Venta: #{sale.id}</span>
-                                                </div>
-                                            </td>
-
-                                            {/* MÉTODO DE PAGO (Estilo Badge/Etiqueta Elegante) */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <div className="flex items-center">
-                                                    <div className="max-w-[160px]" title={sale.payment_method}>
-                                                        <p className="bg-gray-100 text-gray-600 border border-gray-200 px-3 py-1 rounded-full text-xs font-medium truncate w-full text-center">
-                                                            {sale.payment_method}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </td>
-
-                                            {/* TOTAL REF (Alineado a la derecha, tipografía fuerte) */}
-                                            <td className="px-6 py-4 text-right align-middle">
-                                                <span className="font-black text-higea-blue text-base tracking-tight">
-                                                    {/* Corrección visual en la lista individual también */}
-                                                    Ref {(() => {
-                                                        let amount = parseFloat(sale.total_usd);
-                                                        // Visualmente restamos el capital si es avance para no confundir
-                                                        if (sale.payment_method && sale.payment_method.includes('[CAP:')) {
-                                                            const match = sale.payment_method.match(/\[CAP:([\d\.]+)\]/);
-                                                            if (match && match[1]) amount -= parseFloat(match[1]);
-                                                        }
-                                                        return amount.toFixed(2);
-                                                    })()}
-                                                </span>
-                                            </td>
-
-                                            {/* ACCIÓN (Botón Visual) */}
-                                            <td className="px-6 py-4 text-center align-middle">
-                                                <button
-                                                    // ACCIÓN 2: El botón también funciona (stopPropagation previene doble evento)
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        showSaleDetail(sale);
-                                                    }}
-                                                    className="p-2 text-gray-400 hover:text-higea-blue hover:bg-white bg-transparent rounded-full transition-all active:scale-95"
-                                                    title="Ver Detalles Completos"
-                                                >
-                                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                    </svg>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-
-                                    {/* ESTADO VACÍO */}
-                                    {dailySalesList.length === 0 && (
-                                        <tr>
-                                            <td colSpan="5" className="p-12 text-center text-gray-400 italic bg-gray-50/30">
-                                                <div className="flex flex-col items-center gap-2">
-                                                    <span className="text-2xl">💤</span>
-                                                    <span>No hay movimientos registrados hoy.</span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {/* Footer con Totales (CORREGIDO: RESTA EL CAPITAL DEL AVANCE) */}
-                        <div className="p-5 border-t bg-white flex flex-col md:flex-row justify-between items-center shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20 gap-4">
-                            <div className="text-xs font-bold text-gray-400 uppercase tracking-wide self-start md:self-center">
-                                {/* Solo cuenta las ventas válidas */}
-                                Transacciones: <span className="text-gray-800 text-lg ml-1">{dailySalesList.filter(s => s.status !== 'ANULADO').length}</span>
-
-                                {/* Opcional: Muestra cuántas anuladas hay por separado */}
-                                {dailySalesList.some(s => s.status === 'ANULADO') && (
-                                    <span className="ml-2 text-red-400 font-medium text-[10px]">
-                                        ({dailySalesList.filter(s => s.status === 'ANULADO').length} Anuladas)
-                                    </span>
-                                )}
+                        {/* KPI 2: Total Bs */}
+                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-slate-50 text-slate-600 flex items-center justify-center font-bold text-xs">Bs</div>
+                            <div>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Bolívares</p>
+                                <p className="text-xl font-black text-slate-700 truncate">Bs {totalBs.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</p>
                             </div>
-
-                            <div className="flex flex-col items-end">
-                                <p className="text-xs text-gray-400 font-bold uppercase mb-1">Total Recaudado (Dinero en Mano)</p>
-
-                                <div className="flex items-end gap-4">
-                                    {/* TOTAL EN BS (CORREGIDO) */}
-                                    <div className="text-right">
-                                        <span className="text-[10px] font-bold text-gray-400 block">EN BOLÍVARES</span>
-                                        <span className="text-xl font-bold text-gray-600">
-                                            Bs {dailySalesList.reduce((acc, curr) => {
-                                                if (curr.status === 'ANULADO') return acc;
-                                                
-                                                // 1. Obtenemos monto base
-                                                let netAmount = curr.amount_paid_usd;
-                                                
-                                                // 2. Si es Avance, restamos capital
-                                                if (curr.payment_method && curr.payment_method.includes('[CAP:')) {
-                                                    try {
-                                                        const match = curr.payment_method.match(/\[CAP:([\d\.]+)\]/);
-                                                        if (match && match[1]) netAmount -= parseFloat(match[1]);
-                                                    } catch (e) {}
-                                                }
-
-                                                // 3. Multiplicamos por la tasa de ESA venta
-                                                return acc + (netAmount * (curr.bcv_rate_snapshot || bcvRate));
-                                            }, 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
-                                        </span>
-                                    </div>
-
-                                    {/* TOTAL EN USD (CORREGIDO) */}
-                                    <div className="text-right border-l pl-4 border-gray-200">
-                                        <span className="text-[10px] font-bold text-higea-blue block">EN DÓLARES (REF)</span>
-                                        <span className="text-3xl font-black text-higea-blue leading-none">
-                                            Ref {dailySalesList.reduce((acc, curr) => {
-                                                if (curr.status === 'ANULADO') return acc;
-                                                
-                                                // 1. Obtenemos monto base
-                                                let netAmount = curr.amount_paid_usd;
-                                                
-                                                // 2. Si es Avance, restamos capital
-                                                if (curr.payment_method && curr.payment_method.includes('[CAP:')) {
-                                                    try {
-                                                        const match = curr.payment_method.match(/\[CAP:([\d\.]+)\]/);
-                                                        if (match && match[1]) netAmount -= parseFloat(match[1]);
-                                                    } catch (e) {}
-                                                }
-
-                                                return acc + netAmount;
-                                            }, 0).toFixed(2)}
-                                        </span>
-                                    </div>
-                                </div>
+                        </div>
+                        {/* KPI 3: Total Ref (Destacado) */}
+                        <div className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex items-center gap-4 relative overflow-hidden">
+                            <div className="absolute right-0 top-0 w-16 h-16 bg-indigo-50 rounded-bl-full -mr-2 -mt-2"></div>
+                            <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-md">$</div>
+                            <div className="relative z-10">
+                                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Total Divisas</p>
+                                <p className="text-2xl font-black text-indigo-700">Ref {totalRef.toFixed(2)}</p>
                             </div>
                         </div>
                     </div>
+                );
+            })()}
+
+            {/* 3. LISTADO DETALLADO (TABLA PRO) */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 pt-2">
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b border-slate-100 sticky top-0 z-10">
+                            <tr>
+                                <th className="px-5 py-4">Hora</th>
+                                <th className="px-5 py-4">ID / Cliente</th>
+                                <th className="px-5 py-4 text-center">Detalles Pago</th>
+                                <th className="px-5 py-4 text-right">Monto (Ref)</th>
+                                <th className="px-5 py-4 text-center">Estado</th>
+                                <th className="px-5 py-4 text-center">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {dailySalesList.map(sale => {
+                                const isVoid = sale.status === 'ANULADO';
+                                // Cálculo visual individual
+                                let displayAmount = parseFloat(sale.total_usd);
+                                if (sale.payment_method?.includes('[CAP:')) {
+                                    const m = sale.payment_method.match(/\[CAP:([\d\.]+)\]/);
+                                    if (m) displayAmount -= parseFloat(m[1]);
+                                }
+
+                                return (
+                                    <tr 
+                                        key={sale.id} 
+                                        onClick={() => showSaleDetail(sale)}
+                                        className={`group transition-all cursor-pointer ${isVoid ? 'bg-slate-50 opacity-60 grayscale' : 'hover:bg-indigo-50/30'}`}
+                                    >
+                                        <td className="px-5 py-4 font-mono text-xs text-slate-500">
+                                            {new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </td>
+                                        
+                                        <td className="px-5 py-4">
+                                            <div className="flex flex-col">
+                                                <span className={`font-bold text-sm ${isVoid ? 'text-slate-500 line-through' : 'text-slate-700 group-hover:text-indigo-700'}`}>
+                                                    {sale.full_name || 'Consumidor Final'}
+                                                </span>
+                                                <span className="text-[10px] font-mono text-slate-400">#{sale.id}</span>
+                                            </div>
+                                        </td>
+
+                                        <td className="px-5 py-4 text-center">
+                                            <span className="inline-block px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-200 max-w-[150px] truncate">
+                                                {sale.payment_method}
+                                            </span>
+                                        </td>
+
+                                        <td className="px-5 py-4 text-right">
+                                            <span className={`font-black font-mono text-sm ${isVoid ? 'text-slate-400' : 'text-slate-800'}`}>
+                                                {displayAmount.toFixed(2)}
+                                            </span>
+                                        </td>
+
+                                        <td className="px-5 py-4 text-center">
+                                            {isVoid ? (
+                                                <span className="px-2 py-0.5 rounded text-[9px] font-black bg-slate-200 text-slate-500 uppercase">Anulado</span>
+                                            ) : (
+                                                <span className="px-2 py-0.5 rounded text-[9px] font-black bg-emerald-50 text-emerald-600 uppercase tracking-wide border border-emerald-100">
+                                                    Procesado
+                                                </span>
+                                            )}
+                                        </td>
+
+                                        <td className="px-5 py-4 text-center">
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); showSaleDetail(sale); }}
+                                                className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-200 flex items-center justify-center transition-all shadow-sm group-hover:scale-105"
+                                            >
+                                                👁️
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                            
+                            {dailySalesList.length === 0 && (
+                                <tr>
+                                    <td colSpan="6" className="py-20 text-center">
+                                        <div className="inline-flex flex-col items-center opacity-40">
+                                            <span className="text-4xl mb-2">💤</span>
+                                            <span className="font-bold text-slate-500">Sin operaciones en este turno</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
                 </div>
-            )}
+            </div>
+
+            {/* 4. FOOTER FLOTANTE "GLASS" (ACCIONES) */}
+            <div className="px-8 py-5 bg-white/90 backdrop-blur-lg border-t border-slate-200 flex justify-between items-center shrink-0 z-30">
+                <div className="text-xs text-slate-400 font-medium">
+                    * Los montos en divisas son referenciales según tasa BCV.
+                </div>
+                
+                <div className="flex gap-4">
+                     {/* BOTÓN SECUNDARIO: Cerrar */}
+                     <button 
+                        onClick={() => setShowDailySalesModal(false)}
+                        className="px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-100 transition-colors text-sm"
+                    >
+                        Volver
+                    </button>
+                    
+                    {/* BOTÓN PRIMARIO: REALIZAR CUADRE (Acción Principal) */}
+                    <button 
+                        onClick={handleCashClose} 
+                        className="bg-slate-900 hover:bg-black text-white px-6 py-3 rounded-xl font-bold text-sm shadow-lg shadow-slate-900/20 hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center gap-3 active:scale-95"
+                    >
+                        <span>📠</span>
+                        <span>Auditar y Cerrar Caja (Z)</span>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+)}
 
             {/* --- MODAL DE VISUALIZACIÓN PREVIA DE FACTURA (CENTRADO) --- */}
             {receiptPreview && (
