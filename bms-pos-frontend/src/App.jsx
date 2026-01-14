@@ -2710,6 +2710,175 @@ const handlePaymentProcess = async (saleId, totalDebt, currentPaid) => {
     }
 };
 
+// --- NUEVA FUNCIÓN: PROCESO DE PAGO TOTAL (DISEÑO COMPACTO & DE IMPACTO) ---
+    const handlePayAll = async (customer) => {
+        const totalDebt = parseFloat(customer.remaining_balance);
+        const currentRate = typeof bcvRate !== 'undefined' ? bcvRate : 0;
+        
+        if (totalDebt <= 0) return Swal.fire('Solvente', 'El cliente no tiene deuda pendiente.', 'success');
+
+        // Definición de Métodos (Iconos y etiquetas)
+        const paymentMethods = [
+            { id: 'PAGO_MOVIL', label: 'Pago Móvil', icon: '📱' },
+            { id: 'PUNTO_VENTA', label: 'Punto Venta', icon: '💳' },
+            { id: 'EFECTIVO_USD', label: 'Efectivo $', icon: '💵' },
+            { id: 'EFECTIVO_BS', label: 'Efectivo Bs', icon: '🇻🇪' },
+            { id: 'ZELLE', label: 'Zelle', icon: '🇺🇸' },
+            { id: 'TRANSFERENCIA', label: 'Transf.', icon: '🏦' },
+        ];
+
+        const { value: formValues } = await Swal.fire({
+            title: '', // Dejamos vacío para control total desde HTML
+            padding: 0, // 🔥 CLAVE: Elimina bordes blancos predeterminados
+            width: 380, // Ancho fijo ideal para "Look & Feel" móvil
+            html: `
+                <div class="font-sans text-left overflow-hidden rounded-t-2xl">
+                    <div class="bg-gradient-to-br from-rose-600 to-pink-600 p-6 text-white relative shadow-lg">
+                        <div class="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
+                        
+                        <div class="relative z-10 flex justify-between items-end">
+                            <div>
+                                <h3 class="text-[10px] font-bold text-rose-100 uppercase tracking-widest mb-1 opacity-90">Total a Saldar</h3>
+                                <div class="flex items-baseline gap-1">
+                                    <span class="text-lg font-medium text-rose-200">$</span>
+                                    <span class="text-4xl font-black tracking-tight text-white">${totalDebt.toFixed(2)}</span>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="bg-white/20 backdrop-blur-md border border-white/30 px-3 py-1 rounded-lg">
+                                    <p class="text-[9px] text-rose-50 font-bold uppercase">Tasa BCV</p>
+                                    <p class="text-sm font-bold text-white">Bs ${(totalDebt * currentRate).toLocaleString('es-VE', {minimumFractionDigits: 2})}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="p-5 bg-white space-y-4">
+                        
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wide ml-1 mb-2 block">Selecciona Método</label>
+                            <div class="grid grid-cols-3 gap-2">
+                                ${paymentMethods.map(m => `
+                                    <button type="button" class="pay-all-method relative group flex flex-col items-center justify-center py-2.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-white hover:border-rose-200 transition-all duration-200" 
+                                        data-value="${m.id}">
+                                        <div class="absolute inset-0 bg-rose-50/50 rounded-xl opacity-0 transition-opacity duration-200 group-[.selected]:opacity-100"></div>
+                                        
+                                        <span class="relative z-10 text-xl mb-0.5 filter grayscale group-hover:grayscale-0 group-[.selected]:grayscale-0 transition-all scale-90 group-[.selected]:scale-110 duration-200">${m.icon}</span>
+                                        <span class="relative z-10 text-[9px] font-bold text-slate-500 group-hover:text-rose-600 group-[.selected]:text-rose-700 uppercase">${m.label}</span>
+                                    </button>
+                                `).join('')}
+                            </div>
+                            <input type="hidden" id="swal-payall-method" value="PAGO_MOVIL">
+                        </div>
+
+                        <div class="relative group">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <span class="text-slate-400 text-sm opacity-50">📝</span>
+                            </div>
+                            <input id="swal-payall-ref" 
+                                class="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:bg-white focus:ring-2 focus:ring-rose-500/10 focus:border-rose-500 transition-all placeholder:text-slate-400" 
+                                placeholder="Referencia o nota (Opcional)">
+                        </div>
+                    </div>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'CONFIRMAR PAGO',
+            confirmButtonColor: '#e11d48', // Rose-600 (Coherente con el header)
+            cancelButtonText: 'Cancelar',
+            cancelButtonColor: '#94a3b8',
+            focusConfirm: false,
+            // Estilos para los botones fuera del HTML
+            customClass: {
+                popup: 'rounded-2xl shadow-2xl border border-slate-100', // Sin padding aquí
+                actions: 'p-4 bg-slate-50 border-t border-slate-100 gap-3 !mt-0', // Footer gris claro
+                confirmButton: 'w-full shadow-lg shadow-rose-500/30 font-bold py-3 rounded-xl text-xs uppercase tracking-widest hover:scale-[1.02] transition-transform',
+                cancelButton: 'w-full bg-white text-slate-400 border border-slate-200 font-bold py-3 rounded-xl text-xs uppercase tracking-widest hover:bg-slate-100 hover:text-slate-600'
+            },
+            didOpen: () => {
+                const popup = Swal.getPopup();
+                const methodInput = popup.querySelector('#swal-payall-method');
+                const cards = popup.querySelectorAll('.pay-all-method');
+
+                // Lógica Visual Mejorada (Clase 'selected')
+                const selectMethod = (card) => {
+                    // Limpiamos estilos anteriores
+                    cards.forEach(c => {
+                        c.classList.remove('selected', 'ring-2', 'ring-rose-500', 'border-transparent');
+                    });
+                    
+                    // Aplicamos estilo activo
+                    card.classList.add('selected', 'ring-2', 'ring-rose-500', 'border-transparent');
+                    
+                    // Animación sutil (Feedback táctil)
+                    card.animate([
+                        { transform: 'scale(0.95)' },
+                        { transform: 'scale(1)' }
+                    ], { duration: 150 });
+
+                    methodInput.value = card.dataset.value;
+                };
+
+                cards.forEach(card => card.addEventListener('click', () => selectMethod(card)));
+                
+                // Preseleccionar
+                if(cards[0]) selectMethod(cards[0]);
+            },
+            preConfirm: () => {
+                return {
+                    method: document.getElementById('swal-payall-method').value,
+                    ref: document.getElementById('swal-payall-ref').value
+                };
+            }
+        });
+
+        if (formValues) {
+            try {
+                // Loader también minimalista
+                Swal.fire({ 
+                    title: '', 
+                    html: '<div class="mt-2"><div class="text-rose-600 font-bold text-sm uppercase animate-pulse">Procesando Transacción...</div></div>', 
+                    width: 300,
+                    padding: '2rem',
+                    showConfirmButton: false,
+                    didOpen: () => Swal.showLoading() 
+                });
+                
+                const paymentDetails = `${formValues.method} (PAGO TOTAL) ${formValues.ref ? `[Ref: ${formValues.ref}]` : ''}`;
+
+                await axios.post(`${API_URL}/credits/customer/${customer.customer_id}/pay-all`, {
+                    paymentDetails
+                });
+
+                await Swal.fire({
+                    icon: 'success',
+                    title: '¡Cuenta Saldada!',
+                    text: 'Operación completada exitosamente.',
+                    confirmButtonColor: '#e11d48',
+                    confirmButtonText: 'ENTENDIDO',
+                    customClass: {
+                        popup: 'rounded-2xl',
+                        confirmButton: 'rounded-xl font-bold px-8'
+                    }
+                });
+
+                // Refrescar datos
+                const res = await axios.get(`${API_URL}/credits/customer/${customer.customer_id}`);
+                setCustomerCreditsDetails(res.data);
+                fetchData(); 
+
+            } catch (error) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: error.response?.data?.error || 'Falló el proceso.',
+                    confirmButtonColor: '#334155',
+                    customClass: { popup: 'rounded-2xl' }
+                });
+            }
+        }
+    };
+
     // --- Funciones de Reporte de Crédito ---
     const markAsPaid = async (saleId) => {
         let paymentMethod = '';
@@ -4888,328 +5057,407 @@ const printClosingReport = (shift) => {
 </div>
                     </div>
                 ) : view === 'CREDIT_REPORT' ? (
-                    /* --- MÓDULO DE CRÉDITO (REDISEÑO CON BÚSQUEDA Y PAGINACIÓN) --- */
-                    <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50">
+    /* --- MÓDULO DE CRÉDITO (REDISEÑO MINIMALISTA DE ALTO IMPACTO) --- */
+    <div className="p-4 md:p-8 overflow-y-auto h-full animate-slide-up bg-slate-50 font-sans">
 
-                        {/* Si NO hay cliente seleccionado, mostramos la LISTA GENERAL */}
-                        {!selectedCreditCustomer ? (
-                            <>
-                                {/* CABECERA Y CONTROLES */}
-                                <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                                    <div>
-                                        <h2 className="text-2xl font-black text-gray-800">Cartera de Crédito</h2>
-                                        <p className="text-sm text-gray-500">Gestión de cuentas por cobrar consolidadas</p>
+        {/* --- VISTA 1: LISTADO GENERAL DE CLIENTES --- */}
+        {!selectedCreditCustomer ? (
+            <>
+                {/* CABECERA Y CONTROLES */}
+                <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-6">
+                    <div>
+                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Cartera de Crédito</h2>
+                        <p className="text-sm text-slate-500 font-medium">Gestión consolidada de cuentas por cobrar</p>
+                    </div>
+
+                    {/* BARRA DE BÚSQUEDA MODERNA */}
+                    <div className="relative w-full md:w-80 group">
+                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <svg className="w-5 h-5 text-slate-400 group-focus-within:text-higea-blue transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Buscar por nombre, cédula o RIF..."
+                            value={creditSearchQuery}
+                            onChange={(e) => setCreditSearchQuery(e.target.value)}
+                            className="w-full pl-11 pr-4 py-3.5 bg-white rounded-2xl border border-slate-200 focus:border-higea-blue focus:ring-4 focus:ring-blue-500/10 outline-none shadow-sm text-sm font-medium transition-all placeholder:text-slate-400"
+                        />
+                    </div>
+                </div>
+
+                {/* CONTENEDOR DE LA LISTA */}
+                <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
+
+                    {/* ENCABEZADO TABLA (SOLO PC) */}
+                    <div className="hidden md:grid grid-cols-12 bg-slate-50/50 p-5 text-[11px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">
+                        <div className="col-span-4 pl-2">Cliente / Deudor</div>
+                        <div className="col-span-2">Identificación</div>
+                        <div className="col-span-1 text-center">Facturas</div>
+                        <div className="col-span-2 text-right">Deuda Total</div>
+                        <div className="col-span-2 text-right text-rose-500">Restante</div>
+                        <div className="col-span-1 text-center">Acción</div>
+                    </div>
+
+                    {/* LISTADO DE DATOS */}
+                    <div className="divide-y divide-slate-50">
+                        {(() => {
+                            const creditsPerPage = 10;
+                            const indexOfLastCredit = creditCurrentPage * creditsPerPage;
+                            const indexOfFirstCredit = indexOfLastCredit - creditsPerPage;
+                            const currentCredits = filteredCredits.slice(indexOfFirstCredit, indexOfLastCredit);
+                            const totalCreditPages = Math.ceil(filteredCredits.length / creditsPerPage);
+
+                            if (filteredCredits.length === 0) {
+                                return (
+                                    <div className="p-16 text-center flex flex-col items-center justify-center text-slate-400">
+                                        <div className="text-6xl mb-4 opacity-50">🎉</div>
+                                        <h3 className="text-lg font-bold text-slate-600">¡Todo al día!</h3>
+                                        <p className="text-sm">No se encontraron deudas pendientes con este criterio.</p>
                                     </div>
+                                );
+                            }
 
-                                    {/* BARRA DE BÚSQUEDA */}
-                                    <div className="relative w-full md:w-72">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-                                        <input
-                                            type="text"
-                                            placeholder="Buscar cliente o ID..."
-                                            value={creditSearchQuery}
-                                            onChange={(e) => setCreditSearchQuery(e.target.value)}
-                                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:border-higea-blue outline-none shadow-sm text-sm"
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* CONTENEDOR DE LA LISTA */}
-                                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-
-                                    {/* ENCABEZADO TABLA (SOLO PC) */}
-                                    <div className="hidden md:grid grid-cols-12 bg-gray-50 p-4 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                                        <div className="col-span-4">Cliente / Deudor</div>
-                                        <div className="col-span-2">Identificación</div>
-                                        <div className="col-span-1 text-center">Facturas</div>
-                                        <div className="col-span-2 text-right">Deuda Total</div>
-                                        <div className="col-span-2 text-right text-higea-red">Restante</div>
-                                        <div className="col-span-1 text-center">Acción</div>
-                                    </div>
-
-                                    {/* LISTADO DE DATOS */}
-                                    <div className="divide-y divide-gray-100">
-                                        {(() => {
-                                            const creditsPerPage = 10;
-                                            const indexOfLastCredit = creditCurrentPage * creditsPerPage;
-                                            const indexOfFirstCredit = indexOfLastCredit - creditsPerPage;
-                                            const currentCredits = filteredCredits.slice(indexOfFirstCredit, indexOfLastCredit);
-                                            const totalCreditPages = Math.ceil(filteredCredits.length / creditsPerPage);
-
-                                            if (filteredCredits.length === 0) {
-                                                return (
-                                                    <div className="p-12 text-center flex flex-col items-center justify-center text-gray-400">
-                                                        <div className="text-4xl mb-2">🎉</div>
-                                                        <p>No se encontraron deudas pendientes.</p>
-                                                    </div>
-                                                );
-                                            }
-
-                                            return (
-                                                <>
-                                                    {currentCredits.map((client) => (
-                                                        <div
-                                                            key={client.customer_id}
-                                                            onClick={() => openCustomerCredits(client)}
-                                                            className="p-4 hover:bg-blue-50 transition-colors cursor-pointer group"
-                                                        >
-                                                            {/* VISTA DESKTOP */}
-                                                            <div className="hidden md:grid grid-cols-12 items-center gap-2">
-                                                                <div className="col-span-4 font-bold text-gray-800 flex items-center gap-3">
-                                                                    <div className="h-8 w-8 rounded-full bg-blue-100 text-higea-blue flex items-center justify-center text-xs font-bold">
-                                                                        {client.full_name.charAt(0)}
-                                                                    </div>
-                                                                    {client.full_name}
-                                                                </div>
-                                                                <div className="col-span-2 text-xs text-gray-500 font-mono">{client.id_number}</div>
-                                                                <div className="col-span-1 text-center">
-                                                                    <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded-lg text-xs font-bold">{client.total_bills}</span>
-                                                                </div>
-                                                                <div className="col-span-2 text-right text-gray-400 text-xs font-medium">Ref {parseFloat(client.total_debt).toFixed(2)}</div>
-                                                                <div className="col-span-2 text-right font-black text-higea-red text-sm">Ref {parseFloat(client.remaining_balance).toFixed(2)}</div>
-                                                                <div className="col-span-1 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                    <span className="text-xs font-bold text-higea-blue hover:underline">Ver →</span>
-                                                                </div>
-                                                            </div>
-
-                                                            {/* VISTA MÓVIL */}
-                                                            <div className="md:hidden flex justify-between items-center">
-                                                                <div className="flex items-center gap-3">
-                                                                    <div className="h-10 w-10 rounded-full bg-blue-50 text-higea-blue flex items-center justify-center font-bold">
-                                                                        {client.full_name.charAt(0)}
-                                                                    </div>
-                                                                    <div>
-                                                                        <p className="font-bold text-gray-800 text-sm line-clamp-1">{client.full_name}</p>
-                                                                        <p className="text-xs text-gray-400">{client.total_bills} facturas pendientes</p>
-                                                                    </div>
-                                                                </div>
-                                                                <div className="text-right">
-                                                                    <p className="text-[10px] text-gray-400 uppercase">Por Pagar</p>
-                                                                    <p className="font-black text-higea-red text-lg">Ref {parseFloat(client.remaining_balance).toFixed(2)}</p>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    ))}
-
-                                                    {/* PAGINACIÓN */}
-                                                    {totalCreditPages > 1 && (
-                                                        <div className="p-4 border-t border-gray-100 flex justify-center items-center gap-4 bg-white">
-                                                            <button
-                                                                onClick={() => setCreditCurrentPage(prev => Math.max(1, prev - 1))}
-                                                                disabled={creditCurrentPage === 1}
-                                                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
-                                                            >
-                                                                Anterior
-                                                            </button>
-                                                            <span className="text-xs font-bold text-gray-500">Pág {creditCurrentPage} de {totalCreditPages}</span>
-                                                            <button
-                                                                onClick={() => setCreditCurrentPage(prev => Math.min(totalCreditPages, prev + 1))}
-                                                                disabled={creditCurrentPage === totalCreditPages}
-                                                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100 disabled:opacity-50 hover:bg-gray-200 transition-colors"
-                                                            >
-                                                                Siguiente
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </>
-                                            );
-                                        })()}
-                                    </div>
-                                </div>
-                            </>
-                        ) : (
-                            /* VISTA DE DETALLE (FACTURAS DEL CLIENTE) - MEJORADA CON PAGINACIÓN Y UX MÓVIL */
-                            <div className="bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden animate-slide-up h-full flex flex-col">
-
-                                {/* CABECERA FIJA DEL CLIENTE */}
-                                <div className="p-5 border-b border-gray-100 bg-blue-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
-                                    <div>
-                                        <button
-                                            onClick={() => setSelectedCreditCustomer(null)}
-                                            className="text-gray-500 hover:text-higea-blue font-bold text-xs mb-2 flex items-center gap-1 transition-colors px-2 py-1 hover:bg-white rounded-lg"
+                            return (
+                                <>
+                                    {currentCredits.map((client) => (
+                                        <div
+                                            key={client.customer_id}
+                                            onClick={() => openCustomerCredits(client)}
+                                            className="p-4 hover:bg-blue-50/50 transition-all cursor-pointer group relative overflow-hidden"
                                         >
-                                            <span>←</span> Volver al listado
-                                        </button>
-                                        <h3 className="text-xl md:text-2xl font-black text-higea-blue leading-tight">
-                                            {selectedCreditCustomer.full_name}
-                                        </h3>
-                                        <div className="flex flex-wrap gap-3 mt-1">
-                                            <span className="text-xs font-mono bg-white border border-gray-200 px-2 py-0.5 rounded text-gray-500">
-                                                🆔 {selectedCreditCustomer.id_number}
-                                            </span>
-                                            {selectedCreditCustomer.phone && (
-                                                <span className="text-xs bg-white border border-gray-200 px-2 py-0.5 rounded text-gray-500">
-                                                    📞 {selectedCreditCustomer.phone}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
+                                            {/* Efecto Hover Lateral */}
+                                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-higea-blue scale-y-0 group-hover:scale-y-100 transition-transform origin-center"></div>
 
-                                    <div className="w-full md:w-auto bg-white p-4 rounded-2xl border border-blue-100 shadow-sm flex justify-between md:block items-center">
-                                        <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-0 md:mb-1">Deuda Total</p>
-                                        <p className="text-2xl md:text-3xl font-black text-higea-red">Ref {parseFloat(selectedCreditCustomer.remaining_balance).toFixed(2)}</p>
-                                    </div>
-                                </div>
-
-                                {/* CONTENEDOR DE LISTA CON SCROLL */}
-                                <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
-
-                                    {/* LÓGICA DE PAGINACIÓN */}
-                                    {(() => {
-                                        const itemsPerPage = 5; // Menos ítems por página para que se vea bien en móviles
-                                        const indexOfLastItem = detailsCurrentPage * itemsPerPage;
-                                        const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-                                        const currentInvoices = customerCreditsDetails.slice(indexOfFirstItem, indexOfLastItem);
-                                        const totalPages = Math.ceil(customerCreditsDetails.length / itemsPerPage);
-
-                                        return (
-                                            <>
-                                                {/* --- VERSIÓN ESCRITORIO (TABLA) --- */}
-                                                <div className="hidden md:block bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-                                                    <table className="w-full text-left text-sm text-gray-600">
-                                                        <thead className="bg-gray-50 text-gray-400 uppercase font-bold tracking-wider text-xs border-b border-gray-100">
-                                                            <tr>
-                                                                <th className="px-6 py-4"># Venta</th>
-                                                                <th className="px-6 py-4">Fechas</th>
-                                                                <th className="px-6 py-4 text-right">Total</th>
-                                                                <th className="px-6 py-4 text-right">Abonado</th>
-                                                                <th className="px-6 py-4 text-right">Restante</th>
-                                                                <th className="px-6 py-4 text-center">Estado</th>
-                                                                <th className="px-6 py-4 text-center">Acción</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-gray-100">
-                                                            {currentInvoices.map((sale) => (
-                                                                <tr
-                                                                    key={sale.id}
-                                                                    // ACCIÓN PRINCIPAL: Clic en fila abre el detalle de la venta
-                                                                    onClick={() => showSaleDetail(sale)}
-                                                                    className={`hover:bg-blue-50 transition-colors cursor-pointer ${sale.is_overdue ? 'bg-red-50/20' : ''}`}
-                                                                >
-                                                                    <td className="px-6 py-4 font-bold text-higea-blue">#{sale.id}</td>
-                                                                    <td className="px-6 py-4">
-                                                                        <div className="text-xs text-gray-500">Emisión: {new Date(sale.created_at).toLocaleDateString()}</div>
-                                                                        <div className={`text-xs font-bold ${sale.is_overdue ? 'text-red-600' : 'text-gray-400'}`}>
-                                                                            Vence: {new Date(sale.due_date).toLocaleDateString()}
-                                                                        </div>
-                                                                    </td>
-                                                                    <td className="px-6 py-4 text-right">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
-                                                                    <td className="px-6 py-4 text-right text-green-600 font-medium">Ref {parseFloat(sale.amount_paid_usd || 0).toFixed(2)}</td>
-                                                                    <td className="px-6 py-4 text-right">
-                                                                        <span className="font-black text-gray-800 text-base">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</span>
-                                                                    </td>
-                                                                    <td className="px-6 py-4 text-center">
-                                                                        <span className={`px-2 py-1 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-100 text-orange-600' : 'bg-yellow-100 text-yellow-600'}`}>
-                                                                            {sale.status}
-                                                                        </span>
-                                                                        {sale.is_overdue && <div className="text-[9px] text-red-600 font-black mt-1">VENCIDA</div>}
-                                                                    </td>
-                                                                    <td className="px-6 py-4 text-center">
-                                                                        <div className="flex justify-center gap-2">
-                                                                            <button
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation(); // <--- EVITA QUE SE ABRA EL DETALLE DOS VECES
-                                                                                    showSaleDetail(sale);
-                                                                                }}
-                                                                                className="p-2 text-gray-400 hover:text-higea-blue bg-white border border-gray-200 rounded-lg shadow-sm z-10 relative"
-                                                                                title="Ver Detalle"
-                                                                            >
-                                                                                👁️
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation(); // <--- EVITA QUE SE ABRA EL DETALLE AL QUERER ABONAR
-                                                                                    handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0));
-                                                                                }}
-                                                                                className="bg-green-500 text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-green-600 shadow-md active:scale-95 transition-all z-10 relative"
-                                                                            >
-                                                                                Abonar
-                                                                            </button>
-																			
-                                                                        </div>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-
-                                                {/* --- VERSIÓN MÓVIL (TARJETAS) --- */}
-                                                <div className="md:hidden space-y-3">
-                                                    {currentInvoices.map((sale) => (
-                                                        <div key={sale.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
-                                                            {/* Indicador lateral de estado */}
-                                                            <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${sale.is_overdue ? 'bg-red-500' : (sale.status === 'PARCIAL' ? 'bg-orange-400' : 'bg-yellow-400')}`}></div>
-
-                                                            <div className="pl-3">
-                                                                <div className="flex justify-between items-start mb-2">
-                                                                    <div>
-                                                                        <span className="font-black text-lg text-gray-800">#{sale.id}</span>
-                                                                        <p className="text-[10px] text-gray-400">Emisión: {new Date(sale.created_at).toLocaleDateString()}</p>
-                                                                    </div>
-                                                                    <div className="text-right">
-                                                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sale.status === 'PARCIAL' ? 'bg-orange-50 text-orange-600' : 'bg-yellow-50 text-yellow-600'}`}>
-                                                                            {sale.status}
-                                                                        </span>
-                                                                        {sale.is_overdue && <p className="text-[10px] font-bold text-red-500 mt-1">¡VENCIDA!</p>}
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="flex justify-between items-end bg-gray-50 p-2 rounded-lg mb-3">
-                                                                    <div>
-                                                                        <p className="text-[10px] text-gray-400">Total Original</p>
-                                                                        <p className="text-xs font-medium text-gray-600">Ref {parseFloat(sale.total_usd).toFixed(2)}</p>
-                                                                    </div>
-                                                                    <div className="text-right">
-                                                                        <p className="text-[10px] text-higea-red font-bold uppercase">Deuda Restante</p>
-                                                                        <p className="text-xl font-black text-higea-red">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</p>
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="flex gap-2">
-                                                                    <button onClick={() => showSaleDetail(sale)} className="flex-1 py-2 text-xs font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                                                                        Ver Detalle
-                                                                    </button>
-                                                                    <button
-                                                                        onClick={() => handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0))}
-                                                                        className="flex-1 py-2 text-xs font-bold text-white bg-green-500 rounded-lg shadow-md active:scale-95 transition-all"
-                                                                    >
-                                                                        Abonar
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-
-                                                {/* --- CONTROLES DE PAGINACIÓN (COMUNES) --- */}
-                                                {totalPages > 1 && (
-                                                    <div className="mt-4 flex justify-center items-center gap-4 py-2">
-                                                        <button
-                                                            onClick={() => setDetailsCurrentPage(prev => Math.max(1, prev - 1))}
-                                                            disabled={detailsCurrentPage === 1}
-                                                            className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-gray-200 disabled:opacity-50 disabled:bg-gray-50 shadow-sm"
-                                                        >
-                                                            Anterior
-                                                        </button>
-                                                        <span className="text-xs font-bold text-gray-500 bg-white px-3 py-2 rounded-lg border border-gray-100 shadow-sm">
-                                                            Página {detailsCurrentPage} de {totalPages}
-                                                        </span>
-                                                        <button
-                                                            onClick={() => setDetailsCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                                                            disabled={detailsCurrentPage === totalPages}
-                                                            className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-gray-200 disabled:opacity-50 disabled:bg-gray-50 shadow-sm"
-                                                        >
-                                                            Siguiente
-                                                        </button>
+                                            {/* VISTA DESKTOP */}
+                                            <div className="hidden md:grid grid-cols-12 items-center gap-4">
+                                                <div className="col-span-4 flex items-center gap-4 pl-2">
+                                                    <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-blue-100 to-blue-50 text-higea-blue flex items-center justify-center text-sm font-black shadow-sm group-hover:shadow-md transition-all group-hover:scale-110">
+                                                        {client.full_name.charAt(0)}
                                                     </div>
-                                                )}
-                                            </>
-                                        );
-                                    })()}
-                                </div>
+                                                    <div>
+                                                        <p className="font-bold text-slate-700 text-sm">{client.full_name}</p>
+                                                        <p className="text-[10px] text-slate-400 font-medium">Cliente Recurrente</p>
+                                                    </div>
+                                                </div>
+                                                <div className="col-span-2">
+                                                    <span className="bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide border border-slate-200">
+                                                        {client.id_number}
+                                                    </span>
+                                                </div>
+                                                <div className="col-span-1 text-center">
+                                                    <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-full text-xs font-bold border border-orange-100">
+                                                        {client.total_bills}
+                                                    </span>
+                                                </div>
+                                                <div className="col-span-2 text-right text-slate-400 text-xs font-bold">
+                                                    Ref {parseFloat(client.total_debt).toFixed(2)}
+                                                </div>
+                                                <div className="col-span-2 text-right">
+                                                    <span className="text-rose-600 font-black text-sm bg-rose-50 px-2 py-1 rounded-lg">
+                                                        Ref {parseFloat(client.remaining_balance).toFixed(2)}
+                                                    </span>
+                                                </div>
+                                                <div className="col-span-1 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity transform translate-x-2 group-hover:translate-x-0">
+                                                    <div className="bg-white border border-slate-200 p-2 rounded-xl shadow-sm hover:border-higea-blue hover:text-higea-blue transition-colors">
+                                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                                                        </svg>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* VISTA MÓVIL (CARD) */}
+                                            <div className="md:hidden flex justify-between items-center">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-12 w-12 rounded-2xl bg-blue-50 text-higea-blue flex items-center justify-center font-black text-lg shadow-sm">
+                                                        {client.full_name.charAt(0)}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-bold text-slate-800 text-sm line-clamp-1">{client.full_name}</p>
+                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                            <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 font-bold">{client.total_bills} facturas</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-[9px] text-rose-400 uppercase font-bold tracking-wider mb-0.5">Pendiente</p>
+                                                    <p className="font-black text-rose-600 text-lg tracking-tight">Ref {parseFloat(client.remaining_balance).toFixed(2)}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {/* PAGINACIÓN MODERNA */}
+                                    {totalCreditPages > 1 && (
+                                        <div className="p-4 border-t border-slate-100 flex justify-center items-center gap-2 bg-slate-50/50">
+                                            <button
+                                                onClick={() => setCreditCurrentPage(prev => Math.max(1, prev - 1))}
+                                                disabled={creditCurrentPage === 1}
+                                                className="p-2 rounded-xl hover:bg-white hover:shadow-sm disabled:opacity-30 transition-all text-slate-500"
+                                            >
+                                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+                                            </button>
+                                            
+                                            <div className="px-4 py-1.5 bg-white rounded-xl border border-slate-200 shadow-sm text-xs font-bold text-slate-600">
+                                                Página {creditCurrentPage} de {totalCreditPages}
+                                            </div>
+
+                                            <button
+                                                onClick={() => setCreditCurrentPage(prev => Math.min(totalCreditPages, prev + 1))}
+                                                disabled={creditCurrentPage === totalCreditPages}
+                                                className="p-2 rounded-xl hover:bg-white hover:shadow-sm disabled:opacity-30 transition-all text-slate-500"
+                                            >
+                                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
+                                            </button>
+                                        </div>
+                                    )}
+                                </>
+                            );
+                        })()}
+                    </div>
+                </div>
+            </>
+        ) : (
+            /* --- VISTA 2: DETALLE DEL CLIENTE (FACTURAS & PAGOS) --- */
+            <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden animate-slide-up h-full flex flex-col relative">
+                
+                {/* CABECERA FIJA DEL CLIENTE (STICKY) */}
+                <div className="p-6 border-b border-slate-100 bg-white/80 backdrop-blur-md sticky top-0 z-20 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                    
+                    {/* Info Cliente */}
+                    <div>
+                        <button
+                            onClick={() => setSelectedCreditCustomer(null)}
+                            className="group flex items-center gap-2 text-slate-400 hover:text-higea-blue transition-colors mb-3 pl-1"
+                        >
+                            <div className="bg-slate-100 p-1 rounded-lg group-hover:bg-blue-100 transition-colors">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M15 19l-7-7 7-7" /></svg>
                             </div>
-                        )}
+                            <span className="text-xs font-bold uppercase tracking-wide">Volver al listado</span>
+                        </button>
+                        
+                        <div className="flex items-center gap-3">
+                            <h3 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight leading-none">
+                                {selectedCreditCustomer.full_name}
+                            </h3>
+                            {/* Badges Info */}
+                            <div className="flex gap-2">
+                                <span className="px-2 py-1 bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 font-mono flex items-center gap-1">
+                                    🆔 {selectedCreditCustomer.id_number}
+                                </span>
+                                {selectedCreditCustomer.phone && (
+                                    <span className="hidden md:flex px-2 py-1 bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 items-center gap-1">
+                                        📞 {selectedCreditCustomer.phone}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* --- BOTÓN DE IMPACTO: SALDAR TODO (TU NUEVO CÓDIGO) --- */}
+                    <button
+                        onClick={() => handlePayAll(selectedCreditCustomer)}
+                        className="w-full md:w-auto group relative overflow-hidden bg-gradient-to-br from-rose-600 to-rose-700 p-1 rounded-2xl shadow-xl shadow-rose-500/20 hover:shadow-rose-500/40 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                    >
+                        <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl p-4 flex items-center gap-5 border border-white/10 relative overflow-hidden">
+                             {/* Brillo decorativo */}
+                            <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full blur-2xl -mr-6 -mt-6 group-hover:bg-white/20 transition-all"></div>
+
+                            <div>
+                                <p className="text-[10px] text-rose-100 uppercase font-bold tracking-widest mb-0.5 flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-200 animate-pulse shadow-[0_0_8px_rgba(255,255,255,0.8)]"></span>
+                                    Deuda Total
+                                </p>
+                                <p className="text-3xl font-black text-white tracking-tight drop-shadow-sm leading-none">
+                                    Ref {parseFloat(selectedCreditCustomer.remaining_balance).toFixed(2)}
+                                </p>
+                            </div>
+                            
+                            <div className="bg-white/10 p-3 rounded-xl backdrop-blur-sm border border-white/10 group-hover:bg-white group-hover:text-rose-600 text-white transition-all duration-300">
+                                <svg className="w-6 h-6 transform group-hover:rotate-12 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                </svg>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+
+                {/* CONTENEDOR DE LISTA CON SCROLL */}
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-50/50">
+
+                    {/* LÓGICA DE PAGINACIÓN */}
+                    {(() => {
+                        const itemsPerPage = 5;
+                        const indexOfLastItem = detailsCurrentPage * itemsPerPage;
+                        const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+                        const currentInvoices = customerCreditsDetails.slice(indexOfFirstItem, indexOfLastItem);
+                        const totalPages = Math.ceil(customerCreditsDetails.length / itemsPerPage);
+
+                        return (
+                            <>
+                                {/* --- VERSIÓN ESCRITORIO (TABLA MODERNA) --- */}
+                                <div className="hidden md:block bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-50 text-slate-400 uppercase font-bold tracking-wider text-[10px] border-b border-slate-100">
+                                            <tr>
+                                                <th className="px-6 py-4"># Venta</th>
+                                                <th className="px-6 py-4">Fechas</th>
+                                                <th className="px-6 py-4 text-right">Total Orig.</th>
+                                                <th className="px-6 py-4 text-right">Abonado</th>
+                                                <th className="px-6 py-4 text-right">Restante</th>
+                                                <th className="px-6 py-4 text-center">Estado</th>
+                                                <th className="px-6 py-4 text-center">Acciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50 text-sm">
+                                            {currentInvoices.map((sale) => (
+                                                <tr
+                                                    key={sale.id}
+                                                    onClick={() => showSaleDetail(sale)}
+                                                    className={`hover:bg-blue-50/30 transition-colors cursor-pointer group ${sale.is_overdue ? 'bg-rose-50/30' : ''}`}
+                                                >
+                                                    <td className="px-6 py-4">
+                                                        <span className="font-black text-slate-700 bg-slate-100 px-2 py-1 rounded-lg">#{sale.id}</span>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="flex flex-col gap-1">
+                                                            <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                                                                📅 {new Date(sale.created_at).toLocaleDateString()}
+                                                            </div>
+                                                            {sale.is_overdue && (
+                                                                <span className="text-[9px] font-black text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded w-fit border border-rose-100">
+                                                                    ¡VENCIDA!
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right font-bold text-slate-400">Ref {parseFloat(sale.total_usd).toFixed(2)}</td>
+                                                    <td className="px-6 py-4 text-right font-bold text-emerald-500">Ref {parseFloat(sale.amount_paid_usd || 0).toFixed(2)}</td>
+                                                    <td className="px-6 py-4 text-right">
+                                                        <span className="font-black text-rose-600 text-base">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-center">
+                                                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
+                                                            sale.status === 'PARCIAL' 
+                                                                ? 'bg-orange-50 text-orange-600 border-orange-100' 
+                                                                : 'bg-yellow-50 text-yellow-600 border-yellow-100'
+                                                        }`}>
+                                                            {sale.status}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="flex justify-center gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); showSaleDetail(sale); }}
+                                                                className="p-2 text-slate-400 hover:text-higea-blue hover:bg-white hover:shadow-md hover:-translate-y-0.5 transition-all bg-slate-50 border border-slate-200 rounded-xl"
+                                                                title="Ver Detalle"
+                                                            >
+                                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0));
+                                                                }}
+                                                                className="flex items-center gap-1 px-3 py-2 bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-500/20 hover:bg-emerald-600 hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 transition-all"
+                                                            >
+                                                                <span>$</span> Abonar
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* --- VERSIÓN MÓVIL (TARJETAS MODERNAS) --- */}
+                                <div className="md:hidden space-y-4 pb-20">
+                                    {currentInvoices.map((sale) => (
+                                        <div key={sale.id} className="bg-white p-5 rounded-[1.5rem] border border-slate-100 shadow-sm relative overflow-hidden">
+                                            {/* Indicador lateral */}
+                                            <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${sale.is_overdue ? 'bg-rose-500' : 'bg-orange-400'}`}></div>
+
+                                            <div className="pl-2">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div>
+                                                        <span className="font-black text-xl text-slate-800 tracking-tight">#{sale.id}</span>
+                                                        <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">
+                                                            {new Date(sale.created_at).toLocaleDateString()}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide border ${
+                                                            sale.status === 'PARCIAL' ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-yellow-50 text-yellow-600 border-yellow-100'
+                                                        }`}>
+                                                            {sale.status}
+                                                        </span>
+                                                        {sale.is_overdue && <p className="text-[9px] font-black text-rose-500 mt-1.5 animate-pulse">● VENCIDA</p>}
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex justify-between items-end bg-slate-50 p-3 rounded-xl mb-4 border border-slate-100">
+                                                    <div>
+                                                        <p className="text-[9px] text-slate-400 uppercase font-bold tracking-wider">Total</p>
+                                                        <p className="text-xs font-bold text-slate-500">Ref {parseFloat(sale.total_usd).toFixed(2)}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-[9px] text-rose-500 font-bold uppercase tracking-wider mb-0.5">Pendiente</p>
+                                                        <p className="text-xl font-black text-rose-600 tracking-tight">Ref {parseFloat(sale.remaining_amount).toFixed(2)}</p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <button 
+                                                        onClick={() => showSaleDetail(sale)} 
+                                                        className="py-3 text-xs font-bold text-slate-600 bg-white border-2 border-slate-100 rounded-xl hover:border-slate-300 transition-colors"
+                                                    >
+                                                        Ver Detalle
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handlePaymentProcess(sale.id, parseFloat(sale.total_usd), parseFloat(sale.amount_paid_usd || 0))}
+                                                        className="py-3 text-xs font-bold text-white bg-emerald-500 rounded-xl shadow-lg shadow-emerald-500/30 hover:bg-emerald-600 active:scale-95 transition-all"
+                                                    >
+                                                        Abonar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* --- PAGINACIÓN DETALLES --- */}
+                                {totalPages > 1 && (
+                                    <div className="mt-6 flex justify-center items-center gap-3 pb-4">
+                                        <button
+                                            onClick={() => setDetailsCurrentPage(prev => Math.max(1, prev - 1))}
+                                            disabled={detailsCurrentPage === 1}
+                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-500 hover:border-higea-blue hover:text-higea-blue disabled:opacity-30 transition-all shadow-sm"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+                                        </button>
+                                        
+                                        <span className="text-xs font-bold text-slate-600 bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-sm min-w-[100px] text-center">
+                                            Pág. {detailsCurrentPage} / {totalPages}
+                                        </span>
+                                        
+                                        <button
+                                            onClick={() => setDetailsCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                                            disabled={detailsCurrentPage === totalPages}
+                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-500 hover:border-higea-blue hover:text-higea-blue disabled:opacity-30 transition-all shadow-sm"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
+                                        </button>
+                                    </div>
+                                )}
+                            </>
+                        );
+                    })()}
+                </div>
+            </div>
+        )}
                     </div>
                 ) : view === 'CUSTOMERS' ? (
                     /* MÓDULO DE CLIENTES (UX MEJORADA: BOTONES FIJOS) */

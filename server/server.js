@@ -655,6 +655,64 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
     }
 });
 
+// --- NUEVO ENDPOINT: SALDAR TODA LA DEUDA DE UN CLIENTE (Mejora Nivel 2) ---
+app.post('/api/credits/customer/:id/pay-all', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { id } = req.params;
+        const { paymentDetails, isFiscal } = req.body;
+
+        await client.query('BEGIN');
+
+        // 1. Buscar todas las ventas pendientes de este cliente (que no estén PAGADO)
+        // Nota: Filtramos status != 'PAGADO'.
+        const pendingSales = await client.query(`
+            SELECT id, total_usd, amount_paid_usd 
+            FROM sales 
+            WHERE customer_id = $1 AND status != 'PAGADO'
+        `, [id]);
+
+        if (pendingSales.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'El cliente está solvente (sin deuda pendiente).' });
+        }
+
+        let totalProcessed = 0;
+
+        // 2. Iterar y actualizar cada venta a PAGADO
+        for (const sale of pendingSales.rows) {
+            const total = parseFloat(sale.total_usd);
+            // Aseguramos que amount_paid_usd sea igual al total
+            
+            await client.query(`
+                UPDATE sales 
+                SET status = 'PAGADO', 
+                    amount_paid_usd = total_usd, 
+                    updated_at = NOW() -- Es buena práctica registrar cuándo se pagó
+                WHERE id = $1
+            `, [sale.id]);
+
+            totalProcessed += (total - parseFloat(sale.amount_paid_usd || 0));
+        }
+
+        // 3. Confirmar transacción
+        await client.query('COMMIT');
+        
+        console.log(`✅ Deuda saldada para Cliente ID ${id}. Monto Total: $${totalProcessed}`);
+        res.json({ 
+            message: 'Todas las deudas han sido saldadas exitosamente.', 
+            total_paid: totalProcessed 
+        });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error("❌ Error en Pay-All:", err.message);
+        res.status(500).json({ error: 'Error al procesar el pago masivo: ' + err.message });
+    } finally {
+        client.release();
+    }
+});
+
 // H. Detalle de Venta (CORREGIDO: AHORA TRAE DATOS DEL CLIENTE)
 app.get('/api/sales/:id', async (req, res) => {
     try {
