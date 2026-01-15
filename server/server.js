@@ -1647,6 +1647,71 @@ app.get('/api/inventory/history/:id', async (req, res) => {
     }
 });
 
+// ==========================================
+//      NUEVO: MÓDULO DE REPORTES LEGALES (VENEZUELA)
+// ==========================================
+
+// 1. DATA PARA LIBRO DE VENTAS (SENIAT)
+app.get('/api/reports/legal/sales-book', async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        
+        // Usamos COALESCE para que si control_number es NULL, use el formato '00-ID'
+        const result = await pool.query(`
+            SELECT 
+                s.id, 
+                s.created_at, 
+                s.invoice_type,
+                s.status,
+                COALESCE(s.control_number, '00-' || s.id) as control_number, 
+                c.full_name, 
+                c.id_number,
+                s.bcv_rate_snapshot as tasa,
+                s.total_ves,
+                s.subtotal_taxable_usd,
+                s.subtotal_exempt_usd,
+                s.iva_usd,
+                s.iva_rate
+            FROM sales s
+            LEFT JOIN customers c ON s.customer_id = c.id
+            WHERE DATE(s.created_at) BETWEEN $1 AND $2
+            ORDER BY s.created_at ASC
+        `, [startDate, endDate]);
+        
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Error en Libro de Ventas:", err); // Log más detallado
+        res.status(500).json({ error: err.message });
+    }
+});
+// 2. DATA PARA ANÁLISIS DE VENCIMIENTO (Cartera de Crédito Legal)
+app.get('/api/reports/legal/aged-debt', async (req, res) => {
+    try {
+        // Obtenemos solo deudas pendientes
+        const result = await pool.query(`
+            SELECT 
+                c.full_name, 
+                c.id_number,
+                c.phone,
+                s.id as invoice_id,
+                s.created_at as emission_date,
+                s.due_date,
+                s.total_usd,
+                s.amount_paid_usd,
+                (s.total_usd - s.amount_paid_usd) as balance_usd,
+                s.bcv_rate_snapshot as tasa_historica
+            FROM sales s
+            JOIN customers c ON s.customer_id = c.id
+            WHERE s.status IN ('PENDIENTE', 'PARCIAL')
+            ORDER BY c.full_name ASC, s.created_at ASC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND (REACT) --- //
 // 1. Decirle a Express que busque en la carpeta dist (que se crea en el build)
 // Se asume la estructura: /bms-pos-backend/server (aquí estamos) y /bms-pos-backend/bms-pos-frontend

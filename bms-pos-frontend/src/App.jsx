@@ -1176,6 +1176,284 @@ const promptOpenCash = async () => {
 
         doc.save(`Toma_Fisica_Inventario_${new Date().toISOString().split('T')[0]}.pdf`);
     };
+	
+	// --- NUEVO: REPORTE LEGAL DE CARTERA DE CRÉDITO (DISEÑO CORPORATIVO) ---
+    const printLegalDebtReport = async () => {
+        try {
+            Swal.fire({ title: 'Generando Reporte Legal...', didOpen: () => Swal.showLoading() });
+            const res = await axios.get(`${API_URL}/reports/legal/aged-debt`);
+            const debts = res.data;
+            Swal.close();
+
+            if (debts.length === 0) return Swal.fire('Sin Deudas', 'No hay cuentas por cobrar pendientes.', 'info');
+
+            const doc = new jsPDF('l', 'mm', 'a4'); // Horizontal
+            const pageWidth = doc.internal.pageSize.width;
+
+            // --- PALETA CORPORATIVA (Igual al Inventario) ---
+            const colors = {
+                header: [30, 41, 59],    // Slate 800
+                accent: [225, 29, 43],   // Higea Red
+                text: [51, 65, 85],      // Slate 700
+                bg: [241, 245, 249]      // Slate 100
+            };
+
+            // 1. ENCABEZADO FORMAL
+            doc.setFillColor(...colors.header);
+            doc.rect(0, 0, pageWidth, 35, 'F');
+
+            // Título Principal
+            doc.setFontSize(16);
+            doc.setTextColor(255, 255, 255);
+            doc.setFont('helvetica', 'bold');
+            doc.text("RELACIÓN ANALÍTICA DE CUENTAS POR COBRAR", 14, 12);
+
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.text("CONTROL DE CARTERA DE CRÉDITO Y VENCIMIENTOS", 14, 18);
+
+            // Datos Fiscales
+            doc.setFontSize(9);
+            doc.text("RIF: J-30521322-4", 14, 24);
+            doc.text("Razón Social: VOLUNTARIADO HIGEA C.A.", 14, 29);
+
+            // Datos de Fecha y Tasa
+            const dateStr = new Date().toLocaleDateString('es-VE');
+            doc.text(`Fecha de Corte: ${dateStr}`, pageWidth - 14, 12, { align: 'right' });
+            doc.text(`Tasa de Cambio Cierre: Bs ${formatBs(bcvRate)}`, pageWidth - 14, 18, { align: 'right' });
+            doc.text(`Expresado en: Bolívares (Bs) y Divisas (Ref)`, pageWidth - 14, 24, { align: 'right' });
+
+            // 2. TABLA ANALÍTICA
+            autoTable(doc, {
+                startY: 40,
+                head: [['CLIENTE / RAZÓN SOCIAL', 'RIF/CI', 'N° FACT', 'EMISIÓN', 'VENCIMIENTO', 'DÍAS VENC.', 'SALDO (REF)', 'SALDO (BS)']],
+                body: debts.map(d => {
+                    const daysOverdue = Math.ceil((new Date() - new Date(d.due_date)) / (1000 * 60 * 60 * 24));
+                    const balanceBs = parseFloat(d.balance_usd) * bcvRate; // Valorizado a tasa actual (Norma Contable)
+                    
+                    return [
+                        d.full_name.substring(0, 35),
+                        d.id_number,
+                        `#${d.invoice_id}`,
+                        new Date(d.emission_date).toLocaleDateString('es-VE'),
+                        new Date(d.due_date).toLocaleDateString('es-VE'),
+                        daysOverdue > 0 ? `${daysOverdue}` : 'Vigente',
+                        formatUSD(d.balance_usd),
+                        formatBs(balanceBs)
+                    ];
+                }),
+                styles: { fontSize: 8, cellPadding: 3 },
+                headStyles: { 
+                    fillColor: colors.header, 
+                    textColor: 255, 
+                    fontStyle: 'bold', 
+                    halign: 'center' 
+                },
+                columnStyles: {
+                    0: { cellWidth: 60 },
+                    5: { halign: 'center', fontStyle: 'bold' },
+                    6: { halign: 'right', fontStyle: 'bold' },
+                    7: { halign: 'right', fontStyle: 'bold', textColor: [0, 0, 0] }
+                },
+                alternateRowStyles: { fillColor: colors.bg },
+                didParseCell: function(data) {
+                    // Resaltar vencidos en Rojo (Igual que tu lógica original pero con estilos mejorados)
+                    if (data.section === 'body' && data.column.index === 5) {
+                        const val = parseInt(data.cell.raw);
+                        if (!isNaN(val) && val > 0) {
+                            data.cell.styles.textColor = [220, 53, 69]; // Rojo
+                        } else {
+                            data.cell.styles.textColor = [40, 167, 69]; // Verde
+                        }
+                    }
+                }
+            });
+
+            // 3. TOTALES AL PIE
+            const totalRef = debts.reduce((acc, curr) => acc + parseFloat(curr.balance_usd), 0);
+            const totalBs = totalRef * bcvRate;
+            
+            const finalY = doc.lastAutoTable.finalY + 10;
+            
+            // Cuadro de Totales
+            doc.setFillColor(245, 245, 245);
+            doc.setDrawColor(200, 200, 200);
+            doc.roundedRect(pageWidth - 90, finalY, 76, 20, 2, 2, 'FD');
+
+            doc.setFontSize(9);
+            doc.setTextColor(50);
+            doc.text("TOTAL POR COBRAR (REF):", pageWidth - 85, finalY + 6);
+            doc.text("TOTAL POR COBRAR (BS):", pageWidth - 85, finalY + 14);
+
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(0);
+            doc.text(`$${formatUSD(totalRef)}`, pageWidth - 18, finalY + 6, { align: 'right' });
+            doc.text(`Bs ${formatBs(totalBs)}`, pageWidth - 18, finalY + 14, { align: 'right' });
+
+            // Pie Legal
+            doc.setFontSize(7);
+            doc.setTextColor(150);
+            doc.setFont('helvetica', 'normal');
+            doc.text("Este reporte refleja las cuentas por cobrar pendientes valorizadas a la tasa de cambio actual.", 14, finalY + 5);
+            doc.text("Base Legal: Normas Internacionales de Información Financiera (NIC 21) y Normativa Nacional Vigente.", 14, finalY + 9);
+
+            // Línea de Firma
+            doc.setDrawColor(150);
+            doc.line(14, finalY + 25, 80, finalY + 25);
+            doc.text("Gerencia de Cobranzas", 30, finalY + 29);
+
+            doc.save(`Cartera_Credito_Legal_${new Date().toISOString().split('T')[0]}.pdf`);
+
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'No se pudo generar el reporte', 'error');
+        }
+    };
+
+    // --- NUEVO: LIBRO DE VENTAS SENIAT (DISEÑO CORPORATIVO) ---
+    const printSalesBookPDF = async () => {
+        try {
+            Swal.fire({ title: 'Generando Libro de Ventas...', didOpen: () => Swal.showLoading() });
+            
+            const res = await axios.get(`${API_URL}/reports/legal/sales-book`, {
+                params: { startDate: reportDateRange.start, endDate: reportDateRange.end }
+            });
+            const sales = res.data;
+            Swal.close();
+
+            if (sales.length === 0) return Swal.fire('Vacio', 'No hay ventas en este rango', 'info');
+
+            const doc = new jsPDF('l', 'mm', 'a4');
+            const pageWidth = doc.internal.pageSize.width;
+
+            // --- PALETA CORPORATIVA ---
+            const colors = {
+                header: [30, 41, 59],
+                bg: [248, 250, 252]
+            };
+
+            // 1. ENCABEZADO RIGUROSO
+            doc.setFillColor(...colors.header);
+            doc.rect(0, 0, pageWidth, 35, 'F');
+
+            doc.setFontSize(16);
+            doc.setTextColor(255, 255, 255);
+            doc.setFont('helvetica', 'bold');
+            doc.text('LIBRO DE VENTAS', 14, 12);
+            
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.text('CUMPLIMIENTO PROVIDENCIA ADMINISTRATIVA 0071', 14, 18);
+
+            // Datos Contribuyente
+            doc.setFontSize(9);
+            doc.text(`Contribuyente: VOLUNTARIADO HIGEA C.A.`, 14, 24);
+            doc.text(`RIF: J-30521322-4`, 14, 29);
+
+            // Período
+            doc.text(`Período Fiscal:`, pageWidth - 14, 12, { align: 'right' });
+            doc.setFont('helvetica', 'bold');
+            doc.text(`${new Date(reportDateRange.start).toLocaleDateString()} al ${new Date(reportDateRange.end).toLocaleDateString()}`, pageWidth - 14, 18, { align: 'right' });
+
+            // 2. TABLA FISCAL
+            autoTable(doc, {
+                startY: 40,
+                head: [[
+                    'FECHA', 'RIF/CI', 'RAZÓN SOCIAL / CLIENTE', 'N° FACT', 'N° CTRL', 
+                    'TOTAL VENTAS (Bs)', 'EXENTO (Bs)', 'BASE IMP. (Bs)', 'IVA (16%)', 'RET.'
+                ]],
+                body: sales.map(s => {
+                    const rate = parseFloat(s.tasa);
+                    // Cálculos en Bolívares usando la tasa del día de la venta
+                    const exentoBs = parseFloat(s.subtotal_exempt_usd) * rate;
+                    const baseBs = parseFloat(s.subtotal_taxable_usd) * rate;
+                    const ivaBs = parseFloat(s.iva_usd) * rate;
+                    const totalBs = parseFloat(s.total_ves);
+
+                    return [
+                        new Date(s.created_at).toLocaleDateString('es-VE'),
+                        s.id_number || 'GENERICO',
+                        (s.full_name || 'Consumidor Final').substring(0, 25),
+                        s.id,
+                        s.control_number || `00-${s.id}`,
+                        formatBs(totalBs),
+                        formatBs(exentoBs),
+                        formatBs(baseBs),
+                        formatBs(ivaBs),
+                        '0,00'
+                    ];
+                }),
+                styles: { fontSize: 7, cellPadding: 2.5 },
+                headStyles: { 
+                    fillColor: colors.header, // Ahora usa el azul oscuro corporativo en lugar de negro puro
+                    textColor: 255, 
+                    fontStyle: 'bold',
+                    halign: 'center'
+                },
+                alternateRowStyles: { fillColor: colors.bg },
+                columnStyles: {
+                    0: { cellWidth: 20 },
+                    5: { halign: 'right', fontStyle: 'bold' },
+                    6: { halign: 'right' },
+                    7: { halign: 'right' },
+                    8: { halign: 'right' },
+                    9: { halign: 'right' }
+                }
+            });
+
+            // 3. RESUMEN FISCAL AL PIE (Diseño Tabla)
+            const totalBase = sales.reduce((acc, s) => acc + (parseFloat(s.subtotal_taxable_usd) * parseFloat(s.tasa)), 0);
+            const totalIva = sales.reduce((acc, s) => acc + (parseFloat(s.iva_usd) * parseFloat(s.tasa)), 0);
+            const totalExento = sales.reduce((acc, s) => acc + (parseFloat(s.subtotal_exempt_usd) * parseFloat(s.tasa)), 0);
+            const totalGeneral = totalBase + totalIva + totalExento;
+
+            let finalY = doc.lastAutoTable.finalY + 10;
+
+            // Título Resumen
+            doc.setFontSize(10);
+            doc.setTextColor(0);
+            doc.setFont('helvetica', 'bold');
+            doc.text('RESUMEN DEL PERÍODO (En Bolívares):', 14, finalY);
+
+            // Tabla de Resumen Manual (Más limpia)
+            autoTable(doc, {
+                startY: finalY + 2,
+                head: [['CONCEPTO', 'BASE IMPONIBLE', 'DÉBITO FISCAL (IVA)']],
+                body: [
+                    ['Ventas Internas No Gravadas (Exentas)', formatBs(totalExento), '0,00'],
+                    ['Ventas Internas Gravadas (16%)', formatBs(totalBase), formatBs(totalIva)],
+                    ['TOTALES', formatBs(totalBase + totalExento), formatBs(totalIva)]
+                ],
+                theme: 'grid',
+                styles: { fontSize: 8, cellPadding: 2 },
+                headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold' },
+                columnStyles: {
+                    1: { halign: 'right' },
+                    2: { halign: 'right' }
+                },
+                tableWidth: 140,
+                margin: { left: 14 }
+            });
+
+            // Pie de Página
+            const bottomY = doc.lastAutoTable.finalY + 10;
+            doc.setFontSize(7);
+            doc.setTextColor(150);
+            doc.text("Declaración jurada sin tachaduras ni enmiendas.", 14, bottomY);
+            
+            // Firma
+            doc.setDrawColor(0);
+            doc.line(200, bottomY, 270, bottomY);
+            doc.text("Firma del Contribuyente / Rep. Legal", 215, bottomY + 4);
+
+            doc.save(`Libro_Ventas_${reportDateRange.start}.pdf`);
+
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'No se pudo generar el Libro de Ventas', 'error');
+        }
+    };
 
     // --- FUNCIÓN INTELIGENTE PARA EXPORTAR CSV (Soporta: Inventario, Ventas, Historial y Resumen) ---
     const downloadCSV = (data, fileName) => {
@@ -5065,27 +5343,32 @@ const printClosingReport = (shift) => {
             <>
                 {/* CABECERA Y CONTROLES */}
                 <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-6">
-                    <div>
-                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Cartera de Crédito</h2>
-                        <p className="text-sm text-slate-500 font-medium">Gestión consolidada de cuentas por cobrar</p>
-                    </div>
+    <div>
+        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Cartera de Crédito</h2>
+        <p className="text-sm text-slate-500 font-medium">Gestión consolidada de cuentas por cobrar</p>
+    </div>
+    
+    <div className="flex items-center gap-3 w-full md:w-auto">
+        {/* BOTÓN NUEVO: REPORTE LEGAL */}
+        <button 
+            onClick={printLegalDebtReport}
+            className="bg-slate-800 text-white px-4 py-3.5 rounded-2xl shadow-lg shadow-slate-300 hover:bg-slate-700 hover:scale-105 transition-all active:scale-95 flex items-center gap-2 text-sm font-bold whitespace-nowrap"
+        >
+            <span>⚖️</span> Reporte Legal
+        </button>
 
-                    {/* BARRA DE BÚSQUEDA MODERNA */}
-                    <div className="relative w-full md:w-80 group">
-                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                            <svg className="w-5 h-5 text-slate-400 group-focus-within:text-higea-blue transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
-                        </div>
-                        <input
-                            type="text"
-                            placeholder="Buscar por nombre, cédula o RIF..."
-                            value={creditSearchQuery}
-                            onChange={(e) => setCreditSearchQuery(e.target.value)}
-                            className="w-full pl-11 pr-4 py-3.5 bg-white rounded-2xl border border-slate-200 focus:border-higea-blue focus:ring-4 focus:ring-blue-500/10 outline-none shadow-sm text-sm font-medium transition-all placeholder:text-slate-400"
-                        />
-                    </div>
-                </div>
+        {/* BARRA DE BÚSQUEDA EXISTENTE */}
+        <div className="relative w-full md:w-64 group">
+            {/* ... tu input de búsqueda existente ... */}
+             <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+            </div>
+            <input type="text" placeholder="Buscar..." value={creditSearchQuery} onChange={(e) => setCreditSearchQuery(e.target.value)} className="w-full pl-11 pr-4 py-3.5 bg-white rounded-2xl border border-slate-200 focus:border-higea-blue outline-none shadow-sm text-sm font-medium" />
+        </div>
+    </div>
+</div>
 
                 {/* CONTENEDOR DE LA LISTA */}
                 <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
@@ -6592,6 +6875,13 @@ const printClosingReport = (shift) => {
 >
     <span>🔐</span> Cierres
 </button>
+
+<button 
+    onClick={() => setReportTab('LEGAL')} 
+    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 whitespace-nowrap ${reportTab === 'LEGAL' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+>
+    <span>⚖️</span> Legales
+</button>
                             </div>
                         </div>
 
@@ -7162,6 +7452,62 @@ const printClosingReport = (shift) => {
                     )}
                 </tbody>
             </table>
+        </div>
+    </div>
+)}
+
+{reportTab === 'LEGAL' && (
+    <div className="bg-white rounded-[2rem] shadow-xl border border-slate-200 p-8 animate-fade-in h-[80vh] flex flex-col">
+        <div className="border-b border-slate-100 pb-6 mb-6">
+            <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                <span className="text-3xl">🇻🇪</span> Reportes Fiscales y Legales
+            </h3>
+            <p className="text-slate-500 mt-1">Documentación adaptada a providencias del SENIAT y Normas Contables.</p>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-8 items-start">
+            {/* TARJETA: LIBRO DE VENTAS */}
+            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 w-full md:w-1/2 hover:shadow-lg transition-all">
+                <div className="flex items-center gap-4 mb-4">
+                    <div className="bg-blue-600 text-white p-3 rounded-2xl text-2xl">📘</div>
+                    <div>
+                        <h4 className="font-bold text-lg text-slate-800">Libro de Ventas</h4>
+                        <p className="text-xs text-slate-500">Formato Seniat (Providencia 0071)</p>
+                    </div>
+                </div>
+                
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200">
+                        <span className="text-xs font-bold text-slate-400 pl-2">PERÍODO:</span>
+                        <input type="date" value={reportDateRange.start} onChange={(e) => setReportDateRange({...reportDateRange, start: e.target.value})} className="outline-none text-sm font-bold text-slate-700 bg-transparent"/>
+                        <span className="text-slate-300">➜</span>
+                        <input type="date" value={reportDateRange.end} onChange={(e) => setReportDateRange({...reportDateRange, end: e.target.value})} className="outline-none text-sm font-bold text-slate-700 bg-transparent"/>
+                    </div>
+
+                    <button onClick={printSalesBookPDF} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-blue-200 active:scale-95 transition-all">
+                        Descargar Libro PDF
+                    </button>
+                </div>
+            </div>
+
+            {/* TARJETA: ESTADO DE CUENTA */}
+            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 w-full md:w-1/2 hover:shadow-lg transition-all">
+                <div className="flex items-center gap-4 mb-4">
+                    <div className="bg-emerald-600 text-white p-3 rounded-2xl text-2xl">📋</div>
+                    <div>
+                        <h4 className="font-bold text-lg text-slate-800">Relación de Cobranza</h4>
+                        <p className="text-xs text-slate-500">Análisis de Vencimiento y Deuda</p>
+                    </div>
+                </div>
+                
+                <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+                    Genera un reporte detallado de todas las cuentas por cobrar pendientes, clasificadas por días de vencimiento y valorizadas en Bolívares a la tasa actual.
+                </p>
+
+                <button onClick={printLegalDebtReport} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-200 active:scale-95 transition-all">
+                    Descargar Reporte Deuda
+                </button>
+            </div>
         </div>
     </div>
 )}
