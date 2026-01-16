@@ -1335,7 +1335,7 @@ app.post('/api/cash/open', async (req, res) => {
     }
 });
 
-// 2. Consultar Estado Actual de la Caja (ADAPTACIÓN QUIRÚRGICA: Pagos Mixtos + Avances)
+// 2. Consultar Estado Actual de la Caja (CORREGIDO: Lógica Exacta Inicial vs Abonos + Filtro Anulados)
 app.get('/api/cash/current-status', async (req, res) => {
     try {
         const shiftRes = await pool.query("SELECT * FROM cash_shifts WHERE status = 'ABIERTA' ORDER BY id DESC LIMIT 1");
@@ -1343,95 +1343,103 @@ app.get('/api/cash/current-status', async (req, res) => {
 
         const shift = shiftRes.rows[0];
 
+        // A. Buscar VENTAS NUEVAS del turno (Solo vivas, no anuladas)
         const salesRes = await pool.query(`
-            SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
+            SELECT id, payment_method, amount_paid_usd, bcv_rate_snapshot 
             FROM sales 
             WHERE created_at >= $1 AND status != 'ANULADO'
         `, [shift.opened_at]);
 
+        // B. Buscar ABONOS del turno (FILTRANDO que la venta padre NO esté anulada)
+        // [CORRECCIÓN CLAVE]: El JOIN asegura que si anulas el ticket, el abono también desaparece del cierre.
+        const creditsRes = await pool.query(`
+            SELECT cp.sale_id, cp.amount_usd, cp.payment_method 
+            FROM credit_payments cp
+            JOIN sales s ON cp.sale_id = s.id
+            WHERE cp.payment_date >= $1 AND s.status != 'ANULADO'
+        `, [shift.opened_at]);
+
         let systemTotals = { 
-            cash_usd: 0, 
-            cash_ves: 0, 
-            zelle: 0, 
-            pm: 0, 
-            punto: 0,
-            credits: 0,
-            donations: 0
+            cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0,
+            credits: 0, donations: 0
         };
 
-        salesRes.rows.forEach(row => {
-            const pmRaw = row.payment_method || ''; // Mantenemos el original para split
-            const pm = pmRaw.toUpperCase();
-            const amount = parseFloat(row.amount_paid_usd || 0);
-            
-            // [CORRECCIÓN 1]: Asegurar Tasa
-            const rateSnapshot = parseFloat(row.bcv_rate_snapshot);
-            const rate = (rateSnapshot && rateSnapshot > 0) ? rateSnapshot : (globalBCVRate || 1);
+        // --- FUNCIÓN HELPER DE SUMA (Reutilizable) ---
+        const processPayment = (pmRaw, amount, rate) => {
+            const pm = (pmRaw || '').toUpperCase();
 
-            // [CORRECCIÓN 2]: Lógica de Resta de Avance (Tu código original blindado)
+            // Exclusiones
+            if (pm.includes('DONACIÓN') || pm.includes('REGALO')) { systemTotals.donations += amount; return; }
+            if ((pm.includes('CRÉDITO') || pm.includes('CREDITO')) && !pm.includes('+') && !pm.includes('LIQ.')) {
+                if (amount === 0) systemTotals.credits += 0; return;
+            }
+
+            // Resta de Avances (Capital)
             if (pm.includes('[CAP:')) {
                 try {
                     const match = pm.match(/\[CAP:\s*([\d\.,]+)\]/);
                     if (match && match[1]) {
-                        const capitalStr = match[1].replace(',', '.');
-                        const capitalUSD = parseFloat(capitalStr);
-                        if (!isNaN(capitalUSD) && capitalUSD > 0) {
-                            const capitalVES = capitalUSD * rate;
-                            systemTotals.cash_ves -= capitalVES;
-                        }
+                        const capital = parseFloat(match[1].replace(',', '.'));
+                        if (!isNaN(capital)) systemTotals.cash_ves -= (capital * rate);
                     }
-                } catch (e) {
-                    console.error("Error procesando Avance en Cierre:", e);
-                }
+                } catch (e) {}
             }
 
-            // [EXCLUSIONES]
-            if (pm.includes('DONACIÓN') || pm.includes('REGALO')) { 
-                systemTotals.donations += amount; return; // Salimos del loop para este item
-            }
-            if ((pm.includes('CRÉDITO') || pm.includes('CREDITO')) && !pm.includes('+')) {
-                if (amount === 0) systemTotals.credits += 0; return;
-            }
-
-            // [LÓGICA DE SUMA DE ENTRADAS - AHORA CON SOPORTE PARA MIXTOS]
+            // Lógica Mixta (+) y Simple
             if (pm.includes(' + ')) {
-                // ---> CASO MIXTO (La nueva funcionalidad quirúrgica)
-                const parts = pmRaw.split(' + '); // Usamos pmRaw para mantener casing original si fuera necesario
+                const parts = pmRaw.split(' + '); 
                 parts.forEach(part => {
                     const partUp = part.toUpperCase();
-                    // Extraemos el monto numérico del texto "Metodo: Bs 500"
                     const matchNum = part.match(/:\s*(?:Bs\.?|USD|\$|Ref)?\s*([\d\.,]+)/i);
-                    
                     if (matchNum && matchNum[1]) {
-                        // El valor viene en la moneda del método, no en USD global de la venta
-                        let val = parseFloat(matchNum[1].replace(',', '.')); 
-                        
-                        // Sumamos directo al saco correspondiente
-                        if (partUp.includes('EFECTIVO') && (partUp.includes('USD') || partUp.includes('REF'))) {
-                            systemTotals.cash_usd += val;
-                        } 
-                        else if (partUp.includes('EFECTIVO') && (partUp.includes('BS') || partUp.includes('BOLIVARES'))) {
-                            systemTotals.cash_ves += val;
-                        }
+                        let val = parseFloat(matchNum[1].replace(',', '.'));
+                        if (partUp.includes('EFECTIVO') && (partUp.includes('USD') || partUp.includes('REF'))) systemTotals.cash_usd += val;
+                        else if (partUp.includes('EFECTIVO') && (partUp.includes('BS') || partUp.includes('BOLIVARES'))) systemTotals.cash_ves += val;
                         else if (partUp.includes('ZELLE')) systemTotals.zelle += val;
                         else if (partUp.includes('PAGO MÓVIL') || partUp.includes('MOVIL')) systemTotals.pm += val;
-                        else if (partUp.includes('PUNTO') || partUp.includes('TARJETA') || partUp.includes('DEBITO')) systemTotals.punto += val;
+                        else if (partUp.includes('PUNTO') || partUp.includes('TARJETA')) systemTotals.punto += val;
                     }
                 });
             } else {
-                // ---> CASO SIMPLE (Tu lógica original intacta)
-                if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) {
-                    systemTotals.cash_usd += amount;
-                } else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) {
-                    systemTotals.cash_ves += (amount * rate);
-                } else if (pm.includes('ZELLE')) {
-                    systemTotals.zelle += amount;
-                } else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) {
-                    systemTotals.pm += (amount * rate);
-                } else if (pm.includes('PUNTO') || pm.includes('TARJETA') || pm.includes('DEBITO')) {
-                    systemTotals.punto += (amount * rate);
-                }
+                if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) systemTotals.cash_usd += amount;
+                else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) systemTotals.cash_ves += (amount * rate);
+                else if (pm.includes('ZELLE')) systemTotals.zelle += amount;
+                else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) systemTotals.pm += (amount * rate);
+                else if (pm.includes('PUNTO') || pm.includes('TARJETA') || pm.includes('DEBITO')) systemTotals.punto += (amount * rate);
             }
+        };
+
+        // --- PASO 1: PROCESAR VENTAS NUEVAS (Separando Inicial vs Historial) ---
+        salesRes.rows.forEach(row => {
+            const totalPaid = parseFloat(row.amount_paid_usd || 0);
+            
+            // Calculamos cuánto de ese total corresponde a ABONOS hechos en este mismo turno
+            const abonosEnEsteTurno = creditsRes.rows
+                .filter(c => c.sale_id === row.id)
+                .reduce((sum, c) => sum + parseFloat(c.amount_usd || 0), 0);
+
+            // El "Pago Inicial" es el total menos los abonos. 
+            // Esto evita duplicar montos y permite usar el método de pago correcto para cada parte.
+            const initialPayment = totalPaid - abonosEnEsteTurno;
+
+            if (initialPayment > 0.005) {
+                // Tomamos solo la PRIMERA PARTE del string de métodos (antes de cualquier " || ")
+                // Así evitamos que el parser lea métodos viejos o futuros mezclados.
+                const initialMethod = (row.payment_method || '').split(' || ')[0];
+                
+                const rateSnapshot = parseFloat(row.bcv_rate_snapshot);
+                const rate = (rateSnapshot && rateSnapshot > 0) ? rateSnapshot : (globalBCVRate || 1);
+                
+                processPayment(initialMethod, initialPayment, rate);
+            }
+        });
+
+        // --- PASO 2: PROCESAR ABONOS (Usando sus métodos y montos específicos) ---
+        creditsRes.rows.forEach(row => {
+            // Procesamos TODOS los abonos encontrados (ya filtramos anulados en el SQL)
+            // Usamos la tasa actual global para los cobros de deuda
+            const amount = parseFloat(row.amount_usd || 0);
+            processPayment(row.payment_method, amount, globalBCVRate || 1);
         });
 
         res.json({
@@ -1446,7 +1454,7 @@ app.get('/api/cash/current-status', async (req, res) => {
     }
 });
 
-// Paso 3: Corrección en "Cerrar Caja" (/api/cash/close) - SOPORTE MIXTO Y AVANCES
+// Paso 3: Corrección en "Cerrar Caja" (/api/cash/close) - EXACTITUD TOTAL (SOLUCIÓN DEFINITIVA)
 app.post('/api/cash/close', async (req, res) => {
     const { declared, notes } = req.body; 
     
@@ -1458,74 +1466,90 @@ app.post('/api/cash/close', async (req, res) => {
         if (shiftRes.rows.length === 0) throw new Error('No hay caja abierta.');
         const shift = shiftRes.rows[0];
 
-        // Recálculo de seguridad (Misma lógica que arriba)
+        // A. Ventas del Turno (Sin anuladas)
         const salesRes = await client.query(`
-            SELECT payment_method, amount_paid_usd, bcv_rate_snapshot 
+            SELECT id, payment_method, amount_paid_usd, bcv_rate_snapshot 
             FROM sales WHERE created_at >= $1 AND status != 'ANULADO'
+        `, [shift.opened_at]);
+
+        // B. Abonos del Turno (JOIN sales para filtrar anuladas y evitar errores en el cierre)
+        const creditsRes = await client.query(`
+            SELECT cp.sale_id, cp.amount_usd, cp.payment_method 
+            FROM credit_payments cp
+            JOIN sales s ON cp.sale_id = s.id
+            WHERE cp.payment_date >= $1 AND s.status != 'ANULADO'
         `, [shift.opened_at]);
 
         let sys = { cash_usd: 0, cash_ves: 0, zelle: 0, pm: 0, punto: 0 };
         
-        // --- INICIO DE LÓGICA BLINDADA (Reemplazo del forEach anterior) ---
-        salesRes.rows.forEach(row => {
-            const pmRaw = row.payment_method || '';
-            const pm = pmRaw.toUpperCase();
-            const paid = parseFloat(row.amount_paid_usd || 0);
+        // --- FUNCIÓN HELPER BLINDADA ---
+        const processPayment = (pmRaw, amount, rate) => {
+            const pm = (pmRaw || '').toUpperCase();
             
-            // Aseguramos la tasa (igual que en el paso 2)
-            const rateSnapshot = parseFloat(row.bcv_rate_snapshot);
-            const rate = (rateSnapshot && rateSnapshot > 0) ? rateSnapshot : (globalBCVRate || 1);
+            if (pm.includes('DONACIÓN') || pm.includes('REGALO')) return;
+            if ((pm.includes('CRÉDITO') || pm.includes('CREDITO')) && !pm.includes('+') && !pm.includes('LIQ.')) return;
 
-            // 1. EXCLUSIONES (Donaciones y Créditos puros)
-            if (pm.includes('DONACIÓN') || pm.includes('DONACION') || pm.includes('REGALO')) return;
-            if ((pm.includes('CRÉDITO') || pm.includes('CREDITO')) && !pm.includes('+')) return;
-
-            // 2. RESTA DE AVANCES (Para que la caja cuadre al contar los billetes)
             if (pm.includes('[CAP:')) {
                 try {
                     const match = pm.match(/\[CAP:\s*([\d\.,]+)\]/);
                     if (match && match[1]) {
                         const capital = parseFloat(match[1].replace(',', '.'));
-                        // Restamos el capital entregado de la cuenta de Efectivo Bs
                         if (!isNaN(capital)) sys.cash_ves -= (capital * rate);
                     }
                 } catch (e) {}
             }
 
-            // 3. DISTRIBUCIÓN DE PAGOS (Mixtos vs Simples)
             if (pm.includes(' + ')) {
-                // ---> CASO MIXTO (La corrección clave)
                 const parts = pmRaw.split(' + ');
                 parts.forEach(part => {
                     const partUp = part.toUpperCase();
-                    // Extraemos monto exacto del string (ej: "Punto: Bs 500")
                     const matchNum = part.match(/:\s*(?:Bs\.?|USD|\$|Ref)?\s*([\d\.,]+)/i);
-
                     if (matchNum && matchNum[1]) {
                         let val = parseFloat(matchNum[1].replace(',', '.'));
-
-                        if (partUp.includes('EFECTIVO') && (partUp.includes('USD') || partUp.includes('REF'))) {
-                            sys.cash_usd += val;
-                        } 
-                        else if (partUp.includes('EFECTIVO') && (partUp.includes('BS') || partUp.includes('BOLIVARES'))) {
-                            sys.cash_ves += val;
-                        }
+                        if (partUp.includes('EFECTIVO') && (partUp.includes('USD') || partUp.includes('REF'))) sys.cash_usd += val;
+                        else if (partUp.includes('EFECTIVO') && (partUp.includes('BS') || partUp.includes('BOLIVARES'))) sys.cash_ves += val;
                         else if (partUp.includes('ZELLE')) sys.zelle += val;
                         else if (partUp.includes('PAGO MÓVIL') || partUp.includes('MOVIL')) sys.pm += val;
-                        else if (partUp.includes('PUNTO') || partUp.includes('TARJETA') || partUp.includes('DEBITO')) sys.punto += val;
+                        else if (partUp.includes('PUNTO') || partUp.includes('TARJETA')) sys.punto += val;
                     }
                 });
             } else {
-                // ---> CASO SIMPLE (Tu lógica original mejorada con tasa segura)
-                if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) sys.cash_usd += paid;
-                else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) sys.cash_ves += (paid * rate);
-                else if (pm.includes('ZELLE')) sys.zelle += paid;
-                else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) sys.pm += (paid * rate);
-                else if (pm.includes('PUNTO') || pm.includes('TARJETA') || pm.includes('DEBITO')) sys.punto += (paid * rate);
+                if (pm.includes('EFECTIVO') && (pm.includes('USD') || pm.includes('REF'))) sys.cash_usd += amount;
+                else if (pm.includes('EFECTIVO') && (pm.includes('BS') || pm.includes('BOLIVARES'))) sys.cash_ves += (amount * rate);
+                else if (pm.includes('ZELLE')) sys.zelle += amount;
+                else if (pm.includes('PAGO MÓVIL') || pm.includes('MOVIL')) sys.pm += (amount * rate);
+                else if (pm.includes('PUNTO') || pm.includes('TARJETA') || pm.includes('DEBITO')) sys.punto += (amount * rate);
+            }
+        };
+        
+        // 1. Procesar Ventas (Calculando Inicial Neto para evitar duplicados y "montos raros")
+        salesRes.rows.forEach(row => {
+            const totalPaid = parseFloat(row.amount_paid_usd || 0);
+            
+            // Restamos los abonos de este turno para aislar el pago inicial puro
+            const abonosEnEsteTurno = creditsRes.rows
+                .filter(c => c.sale_id === row.id)
+                .reduce((sum, c) => sum + parseFloat(c.amount_usd || 0), 0);
+
+            const initialPayment = totalPaid - abonosEnEsteTurno;
+
+            if (initialPayment > 0.005) {
+                // Usamos solo el primer método del historial (el inicial) para limpieza de datos
+                const initialMethod = (row.payment_method || '').split(' || ')[0];
+                const rateSnapshot = parseFloat(row.bcv_rate_snapshot);
+                const rate = (rateSnapshot && rateSnapshot > 0) ? rateSnapshot : (globalBCVRate || 1);
+                
+                processPayment(initialMethod, initialPayment, rate);
             }
         });
-        // --- FIN DE LÓGICA BLINDADA ---
 
+        // 2. Procesar Abonos (Filtrados por ANULADO en SQL)
+        creditsRes.rows.forEach(row => {
+            const amount = parseFloat(row.amount_usd || 0);
+            processPayment(row.payment_method, amount, globalBCVRate || 1);
+        });
+
+        // --- CÁLCULO FINAL ---
         const expected_usd = parseFloat(shift.initial_cash_usd) + sys.cash_usd;
         const expected_ves = parseFloat(shift.initial_cash_ves) + sys.cash_ves;
 
