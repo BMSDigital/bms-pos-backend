@@ -428,14 +428,11 @@ app.post('/api/sales', async (req, res) => {
 });
 
 // --- REPORTES Y CRÉDITOS ---
-
 app.get('/api/reports/daily', async (req, res) => {
     const client = await pool.connect(); // Usamos cliente para control de transacciones
     try {
-        // 1. Buscamos las ventas de hoy. 
-        // [OPTIMIZACIÓN]: Consultamos directamente la tabla 'sales'.
-        // No hace falta unir con productos porque la etiqueta [CAP:...] ya está guardada en 'payment_method'.
-        const result = await client.query(`
+        // 1. Buscamos las ventas de hoy (Para pago inicial y Avances)
+        const salesResult = await client.query(`
             SELECT 
                 id, 
                 amount_paid_usd, 
@@ -446,31 +443,68 @@ app.get('/api/reports/daily', async (req, res) => {
             AND status != 'ANULADO'
         `);
 
-        // 2. Variables para acumular los totales
-        let totalIngresoBrutoUSD = 0;   // Todo el dinero que entró (Ventas + Capital Avances)
+        // 2. [NUEVO] Buscamos los ABONOS de hoy (De tabla credit_payments)
+        // Esto traerá pagos de créditos viejos Y abonos de hoy
+        const paymentsResult = await client.query(`
+            SELECT sale_id, amount_usd, payment_method
+            FROM credit_payments
+            WHERE DATE(payment_date AT TIME ZONE 'America/Caracas') = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'America/Caracas')
+        `);
+
+        // 3. Variables para acumular los totales
+        let totalIngresoBrutoUSD = 0;   // Todo el dinero que entró
         let totalIngresoBrutoVES = 0;   // Equivalente en Bs
         let totalCapitalAvances = 0;    // Dinero que salió (Capital prestado)
 
-        // Recorremos cada venta encontrada
-        result.rows.forEach(row => {
-            const paid = parseFloat(row.amount_paid_usd || 0);
+        // [ADAPTACIÓN]: Objeto para desglosar modalidades (Requerido para el Cierre de Caja)
+        const methodsBreakdown = {
+            "EFECTIVO": 0,
+            "PAGO MOVIL": 0,
+            "PUNTO": 0,
+            "ZELLE": 0,
+            "BIOPAGO": 0,
+            "OTROS": 0
+        };
+
+        // Función auxiliar interna para sumar al desglose sin alterar la estructura principal
+        const addToBreakdown = (methodString, amountUSD) => {
+            const m = (methodString || "").toUpperCase();
+            if (m.includes("EFECTIVO") || m.includes("DIVISA")) methodsBreakdown["EFECTIVO"] += amountUSD;
+            else if (m.includes("MOVIL") || m.includes("MÓVIL")) methodsBreakdown["PAGO MOVIL"] += amountUSD;
+            else if (m.includes("PUNTO") || m.includes("TARJETA")) methodsBreakdown["PUNTO"] += amountUSD;
+            else if (m.includes("ZELLE")) methodsBreakdown["ZELLE"] += amountUSD;
+            else if (m.includes("BIOPAGO")) methodsBreakdown["BIOPAGO"] += amountUSD;
+            else methodsBreakdown["OTROS"] += amountUSD;
+        };
+
+        // --- A. PROCESAR VENTAS DE HOY (Calculamos solo el PAGO INICIAL) ---
+        salesResult.rows.forEach(row => {
+            const totalPaidInDb = parseFloat(row.amount_paid_usd || 0);
             const rate = parseFloat(row.bcv_rate_snapshot || globalBCVRate);
             
-            // Sumamos al total bruto (lo que entró en caja físicamente)
-            totalIngresoBrutoUSD += paid;
-            totalIngresoBrutoVES += (paid * rate);
+            // [AJUSTE QUIRÚRGICO]: Restamos los abonos hechos hoy a esta venta específica
+            // para no sumarlos dos veces (ya que sales.amount_paid_usd tiene el acumulado).
+            const abonosHoyParaEstaVenta = paymentsResult.rows
+                .filter(p => p.sale_id === row.id)
+                .reduce((sum, p) => sum + parseFloat(p.amount_usd), 0);
+
+            // El "Pago Inicial" real es el total pagado menos lo que se abonó después
+            const pagoInicial = totalPaidInDb - abonosHoyParaEstaVenta;
+
+            if (pagoInicial > 0) {
+                totalIngresoBrutoUSD += pagoInicial;
+                totalIngresoBrutoVES += (pagoInicial * rate);
+                
+                // [NUEVO] Sumar al desglose (Detecta si fue PM, Zelle, etc.)
+                addToBreakdown(row.payment_method, pagoInicial);
+            }
 
             // [LÓGICA BLINDADA]: Detectar Avance leyendo el Método de Pago
-            // Ejemplo de dato en BD: "PAGO MÓVIL [CAP:50.00]"
             if (row.payment_method && row.payment_method.includes('[CAP:')) {
                 try {
-                    // Extraemos el número que está dentro de los corchetes
                     const capMatch = row.payment_method.match(/\[CAP:([\d\.]+)\]/);
                     if (capMatch && capMatch[1]) {
-                        const capital = parseFloat(capMatch[1]);
-                        
-                        // Acumulamos este capital para restarlo al final
-                        totalCapitalAvances += capital;
+                        totalCapitalAvances += parseFloat(capMatch[1]);
                     }
                 } catch (e) {
                     console.error("Error leyendo etiqueta CAP:", e);
@@ -478,18 +512,30 @@ app.get('/api/reports/daily', async (req, res) => {
             }
         });
 
-        // 3. Calculamos la Venta Neta (Ganancia Real)
-        // Fórmula: Todo lo que entró - El capital que entregamos al cliente
+        // --- B. [NUEVO] PROCESAR ABONOS DE HOY (Sumamos lo recuperado) ---
+        paymentsResult.rows.forEach(payment => {
+            const amount = parseFloat(payment.amount_usd);
+            // Para abonos usamos la tasa actual (flujo de caja del momento)
+            const rate = globalBCVRate; 
+
+            totalIngresoBrutoUSD += amount;
+            totalIngresoBrutoVES += (amount * rate);
+
+            // [NUEVO] Sumar al desglose (Detecta si el abono fue en PM, Zelle, etc.)
+            addToBreakdown(payment.payment_method, amount);
+        });
+
+        // 4. Calculamos la Venta Neta (Ganancia Real)
         const ventaNetaUSD = totalIngresoBrutoUSD - totalCapitalAvances;
-        
-        // Ajustamos también los Bolívares proporcionalmente
         const ventaNetaVES = totalIngresoBrutoVES - (totalCapitalAvances * globalBCVRate);
 
-        // 4. Enviamos la respuesta con los NOMBRES EXACTOS que tu Frontend espera
+        // 5. Enviamos la respuesta
         res.json({
-            total_transactions: result.rowCount, // Cantidad de facturas emitidas hoy
-            total_usd: ventaNetaUSD.toFixed(2),  // <--- ¡AQUÍ ESTÁ LA SOLUCIÓN! Solo muestra tu ganancia.
-            total_ves: ventaNetaVES.toFixed(2)
+            // Sumamos transacciones de ventas nuevas + transacciones de abonos
+            total_transactions: salesResult.rowCount + paymentsResult.rowCount, 
+            total_usd: ventaNetaUSD.toFixed(2),
+            total_ves: ventaNetaVES.toFixed(2),
+            breakdown: methodsBreakdown // <--- [SOLUCIÓN FINAL] Se envía el detalle para cuadrar caja
         });
 
     } catch (err) {
@@ -595,7 +641,7 @@ app.get('/api/credits/customer/:id', async (req, res) => {
     }
 });
 
-// G. Abonar o Saldar Crédito (MEJORADO: Soporta parciales)
+// G. Abonar o Saldar Crédito (MEJORADO: Soporta parciales y CIERRE DE CAJA HOY)
 app.post('/api/sales/:id/pay-credit', async (req, res) => {
     const { id } = req.params;
     const { paymentDetails, amountUSD } = req.body; 
@@ -631,7 +677,7 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
             newStatus = 'PAGADO';
         }
 
-        // 3. Actualizar
+        // 3. Actualizar la venta (Acumular pago y concatenar historial en el string)
         const updateQuery = `
             UPDATE sales 
             SET status = $1, 
@@ -642,10 +688,17 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
         `;
         const logMsg = `[Abono: $${payAmount.toFixed(2)} - ${paymentDetails}]`;
         
-        await client.query(updateQuery, [newStatus, newPaid, logMsg, id]);
+        await client.query(updateQuery, [newStatus, newPaid.toFixed(2), logMsg, id]);
+
+        // 4. [NUEVO - QUIRÚRGICO] Insertar en Historial de Abonos (Para que viaje al Cierre de Caja DE HOY)
+        // Esto permite que el reporte diario sume este dinero sin importar si la venta fue hace meses.
+        await client.query(`
+            INSERT INTO credit_payments (sale_id, amount_usd, payment_method)
+            VALUES ($1, $2, $3)
+        `, [id, payAmount.toFixed(2), paymentDetails]);
 
         await client.query('COMMIT');
-        res.json({ success: true, message: 'Abono registrado.', newStatus, remaining: total - newPaid });
+        res.json({ success: true, message: 'Abono registrado correctamente.', newStatus, remaining: total - newPaid });
 
     } catch (err) {
         await client.query('ROLLBACK');
@@ -655,7 +708,7 @@ app.post('/api/sales/:id/pay-credit', async (req, res) => {
     }
 });
 
-// --- NUEVO ENDPOINT: SALDAR TODA LA DEUDA DE UN CLIENTE (Mejora Nivel 2) ---
+// --- NUEVO ENDPOINT: SALDAR TODA LA DEUDA DE UN CLIENTE (Mejora Nivel 2 - CORREGIDO) ---
 app.post('/api/credits/customer/:id/pay-all', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -664,17 +717,19 @@ app.post('/api/credits/customer/:id/pay-all', async (req, res) => {
 
         await client.query('BEGIN');
 
-        // 1. Buscar todas las ventas pendientes de este cliente (que no estén PAGADO)
-        // Nota: Filtramos status != 'PAGADO'.
+        // 1. Buscar todas las ventas pendientes de este cliente
+        // [CORRECCIÓN QUIRÚRGICA]: Agregamos validación para ignorar ANULADOS y solo tomar deudas activas.
         const pendingSales = await client.query(`
             SELECT id, total_usd, amount_paid_usd 
             FROM sales 
-            WHERE customer_id = $1 AND status != 'PAGADO'
+            WHERE customer_id = $1 
+            AND status IN ('PENDIENTE', 'PARCIAL') 
+            AND status != 'ANULADO'
         `, [id]);
 
         if (pendingSales.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'El cliente está solvente (sin deuda pendiente).' });
+            return res.status(400).json({ error: 'El cliente está solvente (sin deuda pendiente activa).' });
         }
 
         let totalProcessed = 0;
@@ -682,17 +737,34 @@ app.post('/api/credits/customer/:id/pay-all', async (req, res) => {
         // 2. Iterar y actualizar cada venta a PAGADO
         for (const sale of pendingSales.rows) {
             const total = parseFloat(sale.total_usd);
-            // Aseguramos que amount_paid_usd sea igual al total
-            
-            await client.query(`
-                UPDATE sales 
-                SET status = 'PAGADO', 
-                    amount_paid_usd = total_usd, 
-                    updated_at = NOW() -- Es buena práctica registrar cuándo se pagó
-                WHERE id = $1
-            `, [sale.id]);
+            const paid = parseFloat(sale.amount_paid_usd || 0);
+            const debt = total - paid; // Calculamos lo que se va a pagar en este momento
 
-            totalProcessed += (total - parseFloat(sale.amount_paid_usd || 0));
+            // Solo procesamos si hay deuda real (evita errores de decimales)
+            if (debt > 0.005) {
+                
+                // A. Actualizar la Venta: 
+                // - Cambiamos status a PAGADO
+                // - Concatenamos el método de pago (sin borrar el historial)
+                // - Actualizamos fecha de modificación
+                await client.query(`
+                    UPDATE sales 
+                    SET status = 'PAGADO', 
+                        amount_paid_usd = total_usd, 
+                        payment_method = payment_method || ' || ' || $1,
+                        updated_at = NOW() 
+                    WHERE id = $2
+                `, [`LIQ. TOTAL: ${paymentDetails}`, sale.id]);
+
+                // B. [NUEVO] Insertar en Historial de Abonos (Para que cuadre la CAJA DE HOY)
+                // Esto garantiza que el dinero entre en el reporte diario "sales-today" y "daily"
+                await client.query(`
+                    INSERT INTO credit_payments (sale_id, amount_usd, payment_method)
+                    VALUES ($1, $2, $3)
+                `, [sale.id, debt.toFixed(2), `LIQ. TOTAL: ${paymentDetails}`]);
+
+                totalProcessed += debt;
+            }
         }
 
         // 3. Confirmar transacción
@@ -700,7 +772,7 @@ app.post('/api/credits/customer/:id/pay-all', async (req, res) => {
         
         console.log(`✅ Deuda saldada para Cliente ID ${id}. Monto Total: $${totalProcessed}`);
         res.json({ 
-            message: 'Todas las deudas han sido saldadas exitosamente.', 
+            message: 'Todas las deudas han sido saldadas exitosamente y registradas en caja.', 
             total_paid: totalProcessed 
         });
 

@@ -125,6 +125,16 @@ CREATE TABLE IF NOT EXISTS product_batches (
     quantity INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 10. Historial de Abonos (NUEVO: Para Cuentas por Cobrar)
+-- Esta tabla permite registrar cuándo entró el dinero exactamente, independientemente de cuándo se hizo la venta.
+CREATE TABLE IF NOT EXISTS credit_payments (
+    id SERIAL PRIMARY KEY,
+    sale_id INTEGER REFERENCES sales(id),
+    amount_usd DECIMAL(10, 2) NOT NULL,
+    payment_method VARCHAR(150), -- Guardará el detalle ej: "PAGO_MOVIL [Ref: 1234]"
+    payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 (async () => {
